@@ -73,8 +73,12 @@ export default defineConfig({
     { path: '/login', component: 'login' },
     { path: '/setup', component: 'setup' },
     {
+      // 布局文件刻意放在 src/layouts/MainLayout.tsx 而非 src/layouts/index.tsx：
+      // 后者是 Umi 4 的「全局布局约定」路径，会被自动包裹到 ALL 路由（含 /login、
+      // /setup、404），且与下方显式 component 叠加，导致 / 路由渲染出两层布局（双导航栏、
+      // 双内容区）。现在仅作为 / 路由的布局组件，/login、/setup、404 保持顶层独立。
       path: '/',
-      component: '@/layouts/index',
+      component: '@/layouts/MainLayout',
       routes: [
         { path: '/', component: 'index' },
         { path: '/records', component: 'records/index' },
