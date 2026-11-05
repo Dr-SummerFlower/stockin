@@ -32,7 +32,8 @@ export interface Env {
   readonly backupDir: string;
   readonly tmpDir: string;
   readonly dbFile: string;
-  readonly staticRoot: string;
+  /** 仅当显式设置 WEB_DIST_DIR（或自测覆盖）时才非 undefined；否则由 app.ts 用 defaultStaticRoot() 兜底。 */
+  readonly staticRoot?: string;
   readonly backupKeepCount: number;
   readonly tmpfsBytes: number;
   readonly minFreeBytes: number;
@@ -120,20 +121,26 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     'backups',
   );
   const tmpDir: string = resolveDir(overrides.tmpDir ?? process.env.TMP_DIR, cwd, 'tmp');
-  const staticRoot: string = resolveDir(
-    overrides.staticRoot ?? process.env.WEB_DIST_DIR,
-    cwd,
-    path.join('..', 'web', 'dist'),
-  );
+  // 静态根：仅当显式设置 WEB_DIST_DIR（或自测覆盖）时才解析为具体路径；
+  // 未设置时留 undefined，由 app.ts 的 defaultStaticRoot() 从 __filename 反推
+  // apps/web/dist，保证「裸跑 node dist/index.js」时不受 cwd 影响（修复 A4）。
+  const rawStaticRoot: string | undefined = overrides.staticRoot ?? process.env.WEB_DIST_DIR;
+  const staticRoot: string | undefined = rawStaticRoot
+    ? path.resolve(cwd, rawStaticRoot)
+    : undefined;
 
   // §7.2 / Hono 官方对大小写不敏感文件系统的安全警告：三卷绝不能落进静态托管根。
-  for (const [label, dir] of [
-    ['DATA_DIR', dataDir],
-    ['BACKUP_DIR', backupDir],
-    ['TMP_DIR', tmpDir],
-  ] as const) {
-    if (isUnderDirectory(dir, staticRoot)) {
-      throw new RangeError(`[env] ${label} 不得位于静态托管根之下: ${dir}`);
+  // 仅在静态根明确指定时才校验（未指定时由 app.ts 用 defaultStaticRoot() 兜底，
+  // 该兜底从 __filename 反推，与 cwd 无关）。
+  if (staticRoot !== undefined) {
+    for (const [label, dir] of [
+      ['DATA_DIR', dataDir],
+      ['BACKUP_DIR', backupDir],
+      ['TMP_DIR', tmpDir],
+    ] as const) {
+      if (isUnderDirectory(dir, staticRoot)) {
+        throw new RangeError(`[env] ${label} 不得位于静态托管根之下: ${dir}`);
+      }
     }
   }
 

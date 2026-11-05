@@ -79,10 +79,10 @@ export interface AppDeps {
 
 /** 构造完整 Hono 应用（不含监听）。 */
 export function createApp(deps: AppDeps): Hono<AppEnv> {
-  // A4：优先级 = 自测覆盖 > WEB_DIST_DIR（env.staticRoot，由 loadEnv 解析并校验）>
-  // defaultStaticRoot()（从 __filename 反推的容器/开发形态兜底）。
-  // 插入 deps.env.staticRoot 后，WEB_DIST_DIR 才真正改变静态托管根；
-  // T05 容器在 WORKDIR=/app 下运行时显式设置 WEB_DIST_DIR=/app/apps/web/dist。
+  // A4：静态根优先级 = 自测覆盖(deps.staticRoot) > WEB_DIST_DIR(env.staticRoot) >
+  // defaultStaticRoot()（从 __filename 反推 apps/web/dist，与 cwd 无关）。
+  // env.staticRoot 仅在显式设置 WEB_DIST_DIR 时非 undefined，故裸跑时回落到
+  // defaultStaticRoot()；T05 容器在 WORKDIR=/app 下显式 WEB_DIST_DIR=/app/apps/web/dist。
   const staticRoot: string =
     deps.staticRoot ?? deps.env.staticRoot ?? defaultStaticRoot();
   assertStaticRootSafe(deps.env, staticRoot);
