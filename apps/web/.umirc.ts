@@ -17,6 +17,12 @@ import { defineConfig } from 'umi';
 // 导致 `umi dev`（默认 8000）的 /api 代理打到 127.0.0.1:3000，而 Hono 后端在 8080，
 // 上游无响应 → 浏览器侧表现为 `GET /api/auth/init-status` 504 Gateway Timeout。
 const serverPort: string = env.SERVER_PORT ?? '8080';
+// dev 代理：把 /api 转发到后端，并把 Origin/Referer 重写为后端期望的同源字面量，
+// 否则浏览器源（http://localhost:8000）与后端 PUBLIC_ORIGIN（http://…:8080）端口不同
+// 会触发 CSRF 403（仅写方法受 CSRF 约束，故 GET 能 200、POST 登录/退出全 403）。
+// 仅 dev 生效；生产由 Hono 同源托管 web/dist，无代理、无此问题。目标与重写源均对齐
+// PUBLIC_ORIGIN（缺省 http://127.0.0.1:8080，与后端默认一致）。
+const apiTarget: string = env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${serverPort}`;
 
 export default defineConfig({
   outputPath: 'dist',
@@ -53,8 +59,13 @@ export default defineConfig({
   // mfsu 保持现状（Node 26.13.0 / Umi 4.7.31 已实测构建通过），不做改动。
   proxy: {
     '/api': {
-      target: `http://127.0.0.1:${serverPort}`,
+      target: apiTarget,
       changeOrigin: true,
+      // 开发态重建同源：让后端 CSRF 校验看到的是 PUBLIC_ORIGIN 而非浏览器 8000 源。
+      headers: {
+        origin: apiTarget,
+        referer: `${apiTarget}/`,
+      },
     },
   },
   routes: [
