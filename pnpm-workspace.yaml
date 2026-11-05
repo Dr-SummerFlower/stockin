@@ -1,0 +1,17 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 12 起 settings 从 package.json 的 "pnpm" 字段迁入本文件，且构建脚本
+# 放行改用 allowBuilds map（onlyBuiltDependencies 已是 legacy、不再生效）。
+# strictDepBuilds 默认为 true，未登记的依赖构建脚本会让 install 直接失败。
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  core-js: true
+  core-js-pure: true
+  es5-ext: true
+
+# umi 4.7.31 发布时间距当前不足 7 天，pnpm 12 默认的 minimumReleaseAge
+# 会拒绝安装；本项目为个人自用且版本由锁文件固定，关闭该成熟度检查。
+minimumReleaseAge: 0

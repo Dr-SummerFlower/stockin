@@ -1,0 +1,27 @@
+{
+  "name": "stockin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "个人自用进货统计 Web 应用（pnpm workspace monorepo）",
+  "engines": {
+    "node": "26.13.0",
+    "pnpm": "12"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean"
+  },
+  "devDependencies": {
+    "@types/node": "^26",
+    "tsx": "^4",
+    "typescript": "^5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  }
+}

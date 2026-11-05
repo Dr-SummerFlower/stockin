@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.umi*
+!.umirc.ts
+!.umirc.*.ts
+*.tsbuildinfo
+data/
+backups/
+tmp/
+*.log
+.selfcheck_failed
+.workbuddy/

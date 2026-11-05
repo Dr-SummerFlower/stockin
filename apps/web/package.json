@@ -1,0 +1,26 @@
+{
+  "name": "@stockin/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "umi build",
+    "dev": "umi dev",
+    "typecheck": "umi setup && tsc -p tsconfig.json --noEmit",
+    "clean": "node -e \"const fs=require('node:fs'); for (const p of ['dist','src/.umi','src/.umi-production','.umi','node_modules/.cache']) fs.rmSync(p,{recursive:true,force:true});\""
+  },
+  "dependencies": {
+    "@stockin/domain": "workspace:*",
+    "@stockin/shared": "workspace:*",
+    "ahooks": "^3",
+    "antd": "^5",
+    "react": "^18",
+    "react-dom": "^18",
+    "umi": "^4.7.31"
+  },
+  "devDependencies": {
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@umijs/plugins": "^4",
+    "typescript": "^5"
+  }
+}
