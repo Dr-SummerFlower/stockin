@@ -61,23 +61,41 @@ export function assertNodeVersion(expected: string = NODE_VERSION_EXPECTED): voi
   }
 }
 
-/** 解析迁移脚本目录：兼容 tsx(src) / tsc(dist) / 显式 env 覆盖三种形态。 */
+/**
+ * 解析迁移脚本目录（QA 修复 A3：**完全不依赖 process.cwd()**）。
+ *
+ * tsc 只编译 `.ts`，不会把 `001_init.sql` 拷进 dist；QA 实测
+ * `apps/server/dist/repositories/migrations/` 里只有 `runner.js`。
+ * 因此每个候选都以「目录内存在 001_init.sql」判定，避免选中空目录。
+ *
+ * 优先级：
+ *  ① `BootstrapOptions.migrationsDir` / `MIGRATIONS_DIR` 显式覆盖；
+ *  ② 编译产物内 migrations 目录（`<dist>/repositories/migrations`）——
+ *     T05 Dockerfile 会把 `001_init.sql` 一并拷进 dist；
+ *  ③ 从 `__filename` 反推的源码目录（`<root>/src/repositories/migrations`）——
+ *     本机 / tsx 开发形态；
+ *  ④ 兼容 `rootDir=src` 时 `<root>/dist/src/*.js` 的编译形态。
+ *
+ * `node apps/server/dist/index.js` 在任意 cwd 下都能命中 ②（容器）或 ③（本机）。
+ */
 export function resolveMigrationsDir(explicit?: string): string {
+  const here: string = path.dirname(__filename);
+  const marker = '001_init.sql';
   const candidates: string[] = [
     explicit ?? '',
     process.env.MIGRATIONS_DIR ?? '',
-    path.join(__dirname, 'repositories', 'migrations'),
-    path.join(__dirname, '..', 'src', 'repositories', 'migrations'),
-    path.resolve(process.cwd(), 'src', 'repositories', 'migrations'),
+    path.join(here, 'repositories', 'migrations'),
+    path.join(here, '..', 'src', 'repositories', 'migrations'),
+    path.join(here, '..', '..', 'src', 'repositories', 'migrations'),
   ].filter((item) => item !== '');
   for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, '001_init.sql'))) {
+    if (fs.existsSync(path.join(candidate, marker))) {
       return candidate;
     }
   }
   throw new BootstrapError(
-    `[BOOTSTRAP] 找不到 001_init.sql，已尝试: ${candidates.join(' | ')}。` +
-      'T05 runtime 镜像必须把 migrations/*.sql 一并拷入（或设置 MIGRATIONS_DIR）。',
+    `[BOOTSTRAP] 找不到 ${marker}，已尝试: ${candidates.join(' | ')}。` +
+      'T05 runtime 镜像必须把 migrations/*.sql 一并拷入 dist（或设置 MIGRATIONS_DIR）。',
   );
 }
 

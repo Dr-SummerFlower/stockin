@@ -79,7 +79,12 @@ export interface AppDeps {
 
 /** 构造完整 Hono 应用（不含监听）。 */
 export function createApp(deps: AppDeps): Hono<AppEnv> {
-  const staticRoot: string = deps.staticRoot ?? defaultStaticRoot();
+  // A4：优先级 = 自测覆盖 > WEB_DIST_DIR（env.staticRoot，由 loadEnv 解析并校验）>
+  // defaultStaticRoot()（从 __filename 反推的容器/开发形态兜底）。
+  // 插入 deps.env.staticRoot 后，WEB_DIST_DIR 才真正改变静态托管根；
+  // T05 容器在 WORKDIR=/app 下运行时显式设置 WEB_DIST_DIR=/app/apps/web/dist。
+  const staticRoot: string =
+    deps.staticRoot ?? deps.env.staticRoot ?? defaultStaticRoot();
   assertStaticRootSafe(deps.env, staticRoot);
   const document: IndexDocument = deps.indexDocument ?? readIndexDocument(staticRoot);
   const spaFallback = createSpaFallback(document);
@@ -106,7 +111,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   );
   app.use('*', createAuthGuard());
   app.use('*', createInitGuard(deps.repositories.meta));
-  app.use('*', createCacheControlMiddleware());
+  // A1：把 index.html 的内容 ETag 传入缓存中间件，保证 `/`、`/index.html`、
+  // SPA fallback（如 `/records`）三者 ETag 一致。
+  app.use('*', createCacheControlMiddleware(document));
 
   // 业务端点（路径自带 /api 前缀，故挂在根路径下）。
   app.route('/', createApiRouter(deps));
