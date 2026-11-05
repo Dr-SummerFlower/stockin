@@ -1,0 +1,153 @@
+/**
+ * 错误码常量表、消息模板与 HTTP 映射。
+ *
+ * 依据：设计文档 v1.1 §3.5——错误信封 `{ code, message, details?, requestId }`；
+ * 错误码分段 AUTH_/VALID_/RECORD_/EXCEL_/COMMON_；HTTP 严格限定
+ * 400/401/403/404/409/413/422/429/500/503。
+ */
+import { HTTP_STATUS, ERROR_SEGMENT, type HttpStatus, type ErrorSegment } from './enums';
+
+export const ErrorCode = {
+  AUTH_REQUIRED: 'AUTH_REQUIRED',
+  AUTH_INVALID_CREDENTIALS: 'AUTH_INVALID_CREDENTIALS',
+  AUTH_INIT_REQUIRED: 'AUTH_INIT_REQUIRED',
+  AUTH_INIT_COMPLETED: 'AUTH_INIT_COMPLETED',
+  AUTH_CSRF_FAILED: 'AUTH_CSRF_FAILED',
+  AUTH_RATE_LIMITED: 'AUTH_RATE_LIMITED',
+
+  VALID_FAILED: 'VALID_FAILED',
+  VALID_BODY_TOO_LARGE: 'VALID_BODY_TOO_LARGE',
+
+  RECORD_NOT_FOUND: 'RECORD_NOT_FOUND',
+  RECORD_CONFLICT: 'RECORD_CONFLICT',
+  RECORD_DUPLICATE: 'RECORD_DUPLICATE',
+  RECORD_VERSION_CONFLICT: 'RECORD_VERSION_CONFLICT',
+
+  EXCEL_UNSUPPORTED_FILE: 'EXCEL_UNSUPPORTED_FILE',
+  EXCEL_HEADER_MISMATCH: 'EXCEL_HEADER_MISMATCH',
+  EXCEL_ROW_INVALID: 'EXCEL_ROW_INVALID',
+  EXCEL_DUPLICATE: 'EXCEL_DUPLICATE',
+  EXCEL_TOO_MANY_ROWS: 'EXCEL_TOO_MANY_ROWS',
+  EXCEL_FORMULA_FORBIDDEN: 'EXCEL_FORMULA_FORBIDDEN',
+  EXCEL_DEADLINE: 'EXCEL_DEADLINE',
+
+  COMMON_BAD_REQUEST: 'COMMON_BAD_REQUEST',
+  COMMON_FORBIDDEN: 'COMMON_FORBIDDEN',
+  COMMON_NOT_FOUND: 'COMMON_NOT_FOUND',
+  COMMON_BUSY: 'COMMON_BUSY',
+  COMMON_NOT_READY: 'COMMON_NOT_READY',
+  COMMON_INTERNAL: 'COMMON_INTERNAL',
+} as const;
+export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
+
+/** 错误码 → HTTP 状态，取值全部落在 HTTP_STATUS_WHITELIST 内。 */
+export const ERROR_HTTP_MAP: Readonly<Record<ErrorCode, HttpStatus>> = {
+  AUTH_REQUIRED: HTTP_STATUS.UNAUTHORIZED,
+  AUTH_INVALID_CREDENTIALS: HTTP_STATUS.UNAUTHORIZED,
+  AUTH_INIT_REQUIRED: HTTP_STATUS.FORBIDDEN,
+  AUTH_INIT_COMPLETED: HTTP_STATUS.CONFLICT,
+  AUTH_CSRF_FAILED: HTTP_STATUS.FORBIDDEN,
+  AUTH_RATE_LIMITED: HTTP_STATUS.TOO_MANY_REQUESTS,
+
+  VALID_FAILED: HTTP_STATUS.UNPROCESSABLE_ENTITY,
+  VALID_BODY_TOO_LARGE: HTTP_STATUS.PAYLOAD_TOO_LARGE,
+
+  RECORD_NOT_FOUND: HTTP_STATUS.NOT_FOUND,
+  RECORD_CONFLICT: HTTP_STATUS.CONFLICT,
+  RECORD_DUPLICATE: HTTP_STATUS.CONFLICT,
+  RECORD_VERSION_CONFLICT: HTTP_STATUS.CONFLICT,
+
+  EXCEL_UNSUPPORTED_FILE: HTTP_STATUS.BAD_REQUEST,
+  EXCEL_HEADER_MISMATCH: HTTP_STATUS.UNPROCESSABLE_ENTITY,
+  EXCEL_ROW_INVALID: HTTP_STATUS.UNPROCESSABLE_ENTITY,
+  EXCEL_DUPLICATE: HTTP_STATUS.UNPROCESSABLE_ENTITY,
+  EXCEL_TOO_MANY_ROWS: HTTP_STATUS.PAYLOAD_TOO_LARGE,
+  EXCEL_FORMULA_FORBIDDEN: HTTP_STATUS.UNPROCESSABLE_ENTITY,
+  EXCEL_DEADLINE: HTTP_STATUS.SERVICE_UNAVAILABLE,
+
+  COMMON_BAD_REQUEST: HTTP_STATUS.BAD_REQUEST,
+  COMMON_FORBIDDEN: HTTP_STATUS.FORBIDDEN,
+  COMMON_NOT_FOUND: HTTP_STATUS.NOT_FOUND,
+  COMMON_BUSY: HTTP_STATUS.SERVICE_UNAVAILABLE,
+  COMMON_NOT_READY: HTTP_STATUS.SERVICE_UNAVAILABLE,
+  COMMON_INTERNAL: HTTP_STATUS.INTERNAL_SERVER_ERROR,
+};
+
+/** 面向使用者的消息模板（不含敏感信息，登录失败统一文案）。 */
+export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
+  AUTH_REQUIRED: '请先登录',
+  AUTH_INVALID_CREDENTIALS: '账号或密码错误',
+  AUTH_INIT_REQUIRED: '请先完成首次初始化设置',
+  AUTH_INIT_COMPLETED: '初始化已完成，不可重复设置',
+  AUTH_CSRF_FAILED: '请求来源校验失败',
+  AUTH_RATE_LIMITED: '登录失败次数过多，请稍后重试',
+
+  VALID_FAILED: '请求数据校验失败',
+  VALID_BODY_TOO_LARGE: '请求体超过大小限制',
+
+  RECORD_NOT_FOUND: '记录不存在或已删除',
+  RECORD_CONFLICT: '记录状态冲突',
+  RECORD_DUPLICATE: '存在完全相同的进货记录',
+  RECORD_VERSION_CONFLICT: '记录已被其他操作修改，请刷新后重试',
+
+  EXCEL_UNSUPPORTED_FILE: '文件不是有效的 xlsx 文件',
+  EXCEL_HEADER_MISMATCH: '表头与模板不一致',
+  EXCEL_ROW_INVALID: '存在不合法的导入行',
+  EXCEL_DUPLICATE: '导入文件内或库内存在重复记录',
+  EXCEL_TOO_MANY_ROWS: '导入行数超过上限',
+  EXCEL_FORMULA_FORBIDDEN: '导入文件不允许包含公式',
+  EXCEL_DEADLINE: '导入任务超时或系统繁忙，请稍后重试',
+
+  COMMON_BAD_REQUEST: '请求不合法',
+  COMMON_FORBIDDEN: '当前状态不允许该操作',
+  COMMON_NOT_FOUND: '资源不存在',
+  COMMON_BUSY: '系统繁忙，请稍后重试',
+  COMMON_NOT_READY: '服务尚未就绪',
+  COMMON_INTERNAL: '服务内部错误，请记录 requestId',
+};
+
+/** 取错误码所属分段。 */
+export function errorSegmentOf(code: ErrorCode): ErrorSegment {
+  const prefix: string = code.split('_')[0] ?? ERROR_SEGMENT.COMMON;
+  const known: readonly string[] = [
+    ERROR_SEGMENT.AUTH,
+    ERROR_SEGMENT.VALID,
+    ERROR_SEGMENT.RECORD,
+    ERROR_SEGMENT.EXCEL,
+    ERROR_SEGMENT.COMMON,
+  ];
+  return known.includes(prefix) ? (prefix as ErrorSegment) : ERROR_SEGMENT.COMMON;
+}
+
+/** 错误码 → HTTP 状态。 */
+export function httpStatusFor(code: ErrorCode): HttpStatus {
+  return ERROR_HTTP_MAP[code];
+}
+
+/** 错误码 → 消息模板。 */
+export function errorMessageFor(code: ErrorCode): string {
+  return ERROR_MESSAGES[code];
+}
+
+/** makeErrorPayload 的返回结构，与 dto/common.dto.ts 的 ErrorEnvelope 同形。 */
+export interface ErrorPayload {
+  code: ErrorCode;
+  message: string;
+  details?: unknown;
+  requestId: string;
+}
+
+/**
+ * 构造统一错误信封。`details` 为 undefined 时不出现在结果里，避免序列化出 `details: undefined`。
+ */
+export function makeErrorPayload(code: ErrorCode, requestId: string, details?: unknown): ErrorPayload {
+  const payload: ErrorPayload = {
+    code,
+    message: errorMessageFor(code),
+    requestId,
+  };
+  if (details !== undefined) {
+    payload.details = details;
+  }
+  return payload;
+}

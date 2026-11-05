@@ -5,6 +5,10 @@ packages:
 # pnpm 12 起 settings 从 package.json 的 "pnpm" 字段迁入本文件，且构建脚本
 # 放行改用 allowBuilds map（onlyBuiltDependencies 已是 legacy、不再生效）。
 # strictDepBuilds 默认为 true，未登记的依赖构建脚本会让 install 直接失败。
+# 本清单是给 esbuild 及 core-js / es5-ext 等带 postinstall 的依赖兜底：
+# better-sqlite3@13.0.3 为 gypfile:false、无 install/prebuild-install 钩子、
+# 按平台 exports 分发二进制，本身不触发构建脚本，此处的条目仅为与
+# package.json 的 onlyBuiltDependencies 清单保持一致，非其必要条件。
 allowBuilds:
   better-sqlite3: true
   esbuild: true

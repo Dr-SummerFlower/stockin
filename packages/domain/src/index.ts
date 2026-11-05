@@ -1,10 +1,16 @@
 /**
- * `@stockin/domain` 领域纯函数入口。
+ * `@stockin/domain` 统一导出面。
  *
- * 零 IO、零框架、零 `Date.now()`，`today` 由调用方注入。
- * 承载三选二联动、日历月钳制、定点运算、临期判定、八项判重、
- * 指标聚合与 Excel 规则。T01 仅建立可构建、可引用的空模块，
- * 纯函数实现在 T02 补齐。
+ * 全部为框架无关的纯函数：零 IO、零框架、零 `Date.now()` / 任何时钟读取；
+ * 运行时只依赖 `@stockin/shared`。基准日 `today` 一律由调用方注入。
  */
-
-export {};
+export * from './types';
+export * from './date';
+export * from './fixed';
+export * from './shelf-life';
+export * from './normalize';
+export * from './expiry';
+export * from './groups';
+export * from './field-state';
+export * from './aggregate';
+export * from './excel-rules';

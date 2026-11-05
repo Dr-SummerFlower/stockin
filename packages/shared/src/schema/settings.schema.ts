@@ -1,0 +1,24 @@
+/**
+ * 设置 Zod schema（zod v4.6.7）。
+ * 依据：设计文档 v1.1 §4.2「expiry_threshold_days 默认 30，范围 0~3650」。
+ */
+import * as z from 'zod';
+import {
+  DEFAULT_EXPIRY_THRESHOLD_DAYS,
+  EXPIRY_THRESHOLD_MIN,
+  EXPIRY_THRESHOLD_MAX,
+} from '../constants';
+
+export const settingsSchema = z.object({
+  expiryThresholdDays: z
+    .number()
+    .int()
+    .min(EXPIRY_THRESHOLD_MIN)
+    .max(EXPIRY_THRESHOLD_MAX),
+});
+export type SettingsInput = z.infer<typeof settingsSchema>;
+
+/** 阈值缺省值（单一真源来自 constants）。 */
+export const DEFAULT_SETTINGS_INPUT: SettingsInput = {
+  expiryThresholdDays: DEFAULT_EXPIRY_THRESHOLD_DAYS,
+};
