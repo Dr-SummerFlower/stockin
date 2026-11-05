@@ -4,10 +4,10 @@
  * 只信 `GET /api/auth/init-status` 判定初始化态；账密错误 401 由
  * `services/api/auth.ts` 的 `silent: true` 内联渲染，不触发全局跳转。
  */
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Alert, Button, Input, Typography } from 'antd';
 import { useModel, useNavigate } from 'umi';
-import { getInitStatus, login } from '@/services/api/auth';
+import { login } from '@/services/api/auth';
 import { errorMessage } from '@/services/request';
 import { ROUTES, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 
@@ -18,21 +18,6 @@ const LoginPage: React.FC = () => {
   const [password, setPassword] = useState<string>('');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
-
-  // 初始化未完成时直接引导到 /setup（AuthGuard 之外再做一次兜底）。
-  useEffect((): (() => void) => {
-    let active = true;
-    void getInitStatus()
-      .then((status): void => {
-        if (active && status.initState === 0) {
-          navigate(ROUTES.setup, { replace: true });
-        }
-      })
-      .catch((): void => undefined);
-    return (): void => {
-      active = false;
-    };
-  }, [navigate]);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -64,7 +49,7 @@ const LoginPage: React.FC = () => {
           登录 · 进货统计
         </Typography.Title>
         <Typography.Paragraph type="secondary">
-          首次部署请先完成初始化引导；登录态由 HttpOnly Cookie 维持。
+          首次启动请使用部署日志中的初始密码登录；登录后按引导设置正式账号与密码。
         </Typography.Paragraph>
         {errorText !== null ? (
           <Alert type="error" showIcon message={errorText} style={{ marginBottom: 16 }} />

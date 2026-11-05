@@ -49,14 +49,26 @@ setRequestNotifier((level: NoticeLevel, content: string): void => {
   }
 });
 
-/** 路由守卫：初始化未完成 → /setup；未登录 → /login。 */
+/**
+ * 路由守卫：
+ * - 已完成初始化（initState=1）：未登录 → /login；已登录 → 放行。
+ * - 未完成初始化（initState=0 首启）：先检测登录态 ——
+ *   未登录 → /login（输入部署日志中的初始密码）；
+ *   已用初始密码登录 → /setup（设置正式账号与密码）。
+ * 即「首启先登录、用初始密码登录后跳转设置密码」。
+ */
 async function authGuard(pathname: string): Promise<void> {
   if (pathname === '/login' || pathname === '/setup' || pathname === '/404') {
     return;
   }
   const init = await getInitStatus().catch(() => null);
   if (init !== null && init.initState === 0) {
-    history.push('/setup');
+    const me = await getMe().catch(() => null);
+    if (me !== null && me.authenticated) {
+      history.push('/setup');
+    } else {
+      history.push('/login');
+    }
     return;
   }
   const me = await getMe().catch(() => null);
