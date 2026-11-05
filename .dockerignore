@@ -1,0 +1,51 @@
+# 进货统计应用 —— Docker 构建上下文排除表（T05）
+#
+# 原则：只把「依赖清单 + 源码 + 构建配置」送进 context；
+# 产物、依赖、数据卷、临时探测目录、日志、文档、本地环境文件一律排除。
+# 明确保留（未被下列任何规则匹配，故默认进入 context）：
+#   pnpm-lock.yaml / pnpm-workspace.yaml / .npmrc / package.json（根 + 4 包）
+#   tsconfig*.json（根 tsconfig.base.json 与各包 tsconfig/tsconfig.build.json）
+#   apps/**/src、packages/**/src、apps/web/.umirc.ts、apps/web/public 等源码与配置
+#
+# 注意：**/dist/ 会被排除 —— build 阶段用 pnpm -r build 现场重建全部产物，
+# 不依赖宿主机上可能过期的 dist；runtime 阶段只从 build 阶段取 prod 与 web/dist。
+
+# --- VCS / 工具元数据 ---
+.git/
+.gitignore
+.workbuddy/
+**/.git/
+
+# --- 依赖与构建产物（context 内一律不携带，由镜像内 pnpm install / build 生成） ---
+**/node_modules/
+**/dist/
+**/.umi/
+**/.umi-production/
+**/*.tsbuildinfo
+**/node_modules/.cache/
+
+# --- Umi 配置必须保留（上面排的是目录，这里显式兜底取反，防止将来规则调整误伤） ---
+!.umirc.ts
+!**/.umirc.ts
+!**/.umirc.*.ts
+
+# --- 运行时三卷 / 临时探测目录：绝不进入镜像，也绝不进静态托管根 ---
+apps/server/tmp/
+apps/server/data/
+apps/server/backups/
+data/
+backups/
+tmp/
+
+# --- 日志、自检 sentinel、本地环境文件 ---
+*.log
+**/*.log
+.selfcheck_failed
+**/.selfcheck_failed
+.env
+.env.*
+!.env.example
+
+# --- 文档 / 报告 / 交付方案（均为 .md，镜像内不需要） ---
+*.md
+**/*.md

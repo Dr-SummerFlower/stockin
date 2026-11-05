@@ -1,0 +1,62 @@
+# 进货统计应用 —— 单机部署编排（T05）
+#
+# 用法：在与本文件同目录创建 .env（.dockerignore 已排除，不会进镜像），至少设置
+#   PUBLIC_ORIGIN=http://<服务器IP>:8080
+# 然后：docker compose up -d --build
+#
+# 【端口同步 · 重要】
+#  - 容器内固定监听 8080（Dockerfile: ENV PORT=8080 / EXPOSE 8080）。
+#  - env.ts 强制校验 PUBLIC_ORIGIN 的端口必须等于容器 PORT(8080)，否则启动即 fail-fast。
+#  - csrf.ts 又按 PUBLIC_ORIGIN 去掉 http:// 后的字面量精确比对浏览器 Host 头
+#    （刻意忽略 X-Forwarded-*）；浏览器 Host 里的端口就是 URL 里的宿主端口。
+#  - 因此 PUBLIC_ORIGIN 端口、HOST_PORT、容器 PORT 三者必须一致，默认全为 8080。
+#    若单独把 HOST_PORT 改成非 8080，Host 变为 <IP>:<HOST_PORT> 与 PUBLIC_ORIGIN
+#    不匹配，会让所有写操作返回 403 AUTH_CSRF_FAILED。本期容器端口固定，
+#    请勿单独修改 HOST_PORT；需要换端口时须同步调整镜像 PORT 与映射两侧。
+#
+# 【卷】data / backups 用命名卷持久化；首次创建时 Docker 会继承镜像内目录属主
+#  （Dockerfile 已 chown 10001:10001），保证 USER 10001 可写。
+#  tmp 用 tmpfs（32MB，mode=1777 让非 root 可写），与 TMPFS_BYTES 一致，
+#  且不在静态托管根之下（loadEnv / static.ts 双重守卫）。
+
+services:
+  stockin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:26.13.0-bookworm-slim}
+    image: stockin:local
+    container_name: stockin
+    restart: unless-stopped
+    # 优雅停机：index.ts 监听 SIGTERM 停调度器 → server.close → closeDatabase。
+    stop_grace_period: 40s
+    mem_limit: 768m
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    environment:
+      # 必填：CSRF 精确比对的可信源，必须是含端口的 http 字面量。
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?必须设置为 http://<服务器IP>:<宿主端口>}
+      NODE_ENV: production
+      TZ: Asia/Shanghai
+      PORT: "8080"
+      COOKIE_SECURE: "false"
+      DATA_DIR: /app/data
+      BACKUP_DIR: /app/backups
+      TMP_DIR: /app/tmp
+      WEB_DIST_DIR: /app/apps/web/dist
+      NODE_OPTIONS: "--max-old-space-size=512"
+    volumes:
+      - stockin-data:/app/data
+      - stockin-backups:/app/backups
+    tmpfs:
+      - /app/tmp:size=32m,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  stockin-data:
+  stockin-backups:
