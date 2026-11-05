@@ -1,0 +1,409 @@
+/**
+ * 全局样式（纯 CSS，无 Tailwind / 无图表库 / 无 PWA 相关资源）。
+ *
+ * 依据：主理人 T04 口径 —— 响应式三档（<768 手机 / 768–1199 平板 / ≥1200 桌面）；
+ * 触控目标 ≥44×44px；颜色 + 文字双通道可达性（状态不只靠颜色表达）。
+ */
+
+:root {
+  --stockin-touch: 44px;
+  --stockin-gap: 16px;
+  --stockin-radius: 8px;
+  --stockin-color-near: #d46b08;
+  --stockin-color-near-bg: #fff7e6;
+  --stockin-color-expired: #cf1322;
+  --stockin-color-expired-bg: #fff1f0;
+  --stockin-color-auto: #389e0d;
+  --stockin-color-text: rgba(0, 0, 0, 0.88);
+  --stockin-color-muted: rgba(0, 0, 0, 0.45);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  color: var(--stockin-color-text);
+  background: #f5f5f5;
+}
+
+/* 触控目标：所有交互控件最小 44×44px（手机档强制）。 */
+.stockin-touch,
+.stockin-touch button,
+.stockin-touch a,
+button.stockin-touch,
+a.stockin-touch {
+  min-height: var(--stockin-touch);
+  min-width: var(--stockin-touch);
+}
+
+.stockin-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ---------- 布局 ---------- */
+.stockin-layout {
+  min-height: 100vh;
+}
+
+.stockin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--stockin-gap);
+  padding: 0 var(--stockin-gap);
+  background: #001529;
+}
+
+.stockin-header-title {
+  margin: 0;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stockin-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.stockin-content {
+  padding: var(--stockin-gap);
+}
+
+.stockin-page {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.stockin-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: var(--stockin-gap);
+}
+
+.stockin-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.stockin-page-subtitle {
+  color: var(--stockin-color-muted);
+  font-size: 13px;
+}
+
+/* ---------- 大屏指标卡（CSS Grid，零图表） ---------- */
+.stockin-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--stockin-gap);
+  margin-bottom: var(--stockin-gap);
+}
+
+.stockin-metric-card {
+  border-radius: var(--stockin-radius);
+  padding: 16px 20px;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+}
+
+.stockin-metric-label {
+  color: var(--stockin-color-muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.stockin-metric-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.stockin-metric-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--stockin-color-muted);
+}
+
+.stockin-metric-card.is-near {
+  border-left: 4px solid var(--stockin-color-near);
+  background: var(--stockin-color-near-bg);
+}
+
+.stockin-metric-card.is-expired {
+  border-left: 4px solid var(--stockin-color-expired);
+  background: var(--stockin-color-expired-bg);
+}
+
+/* ---------- 状态标记（颜色 + 文字双通道） ---------- */
+.stockin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stockin-status-near {
+  color: var(--stockin-color-near);
+  background: var(--stockin-color-near-bg);
+  border: 1px solid var(--stockin-color-near);
+}
+
+.stockin-status-expired {
+  color: var(--stockin-color-expired);
+  background: var(--stockin-color-expired-bg);
+  border: 1px solid var(--stockin-color-expired);
+}
+
+.stockin-status-none {
+  color: var(--stockin-color-muted);
+  background: #fafafa;
+  border: 1px solid #d9d9d9;
+}
+
+.stockin-status-auto {
+  color: var(--stockin-color-auto);
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+}
+
+/* ---------- 预警清单 ---------- */
+.stockin-alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stockin-alert-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: var(--stockin-radius);
+}
+
+.stockin-alert-item.is-near {
+  border-left: 4px solid var(--stockin-color-near);
+}
+
+.stockin-alert-item.is-expired {
+  border-left: 4px solid var(--stockin-color-expired);
+}
+
+.stockin-alert-name {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.stockin-alert-meta {
+  color: var(--stockin-color-muted);
+  font-size: 13px;
+}
+
+/* ---------- 手机卡片列表 ---------- */
+.stockin-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stockin-record-card {
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: var(--stockin-radius);
+  padding: 12px 16px;
+}
+
+.stockin-record-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.stockin-record-card-title {
+  font-weight: 600;
+  font-size: 15px;
+  word-break: break-all;
+}
+
+.stockin-record-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.stockin-record-cell-label {
+  color: var(--stockin-color-muted);
+  margin-right: 4px;
+}
+
+/* ---------- 底部批量操作条（手机） ---------- */
+.stockin-batch-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #fff;
+  border-top: 1px solid #f0f0f0;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* ---------- 联动表单分组 ---------- */
+.stockin-field-group {
+  border: 1px solid #f0f0f0;
+  border-radius: var(--stockin-radius);
+  padding: 12px 16px 4px;
+  margin-bottom: 16px;
+  background: #fafafa;
+}
+
+.stockin-field-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stockin-field-group-title {
+  font-weight: 600;
+}
+
+.stockin-field-group-hint {
+  font-size: 12px;
+  color: var(--stockin-color-muted);
+}
+
+.stockin-source-tag {
+  margin-left: 6px;
+}
+
+/* ---------- 独立页（登录 / 引导 / 404） ---------- */
+.stockin-standalone {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(160deg, #e6f4ff 0%, #f5f5f5 60%);
+}
+
+.stockin-standalone-card {
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px 24px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* ---------- 错误视图 ---------- */
+.stockin-error-box {
+  padding: 24px;
+  background: #fff;
+  border-radius: var(--stockin-radius);
+  border: 1px solid #f0f0f0;
+}
+
+.stockin-request-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
+  font-size: 13px;
+}
+
+/* ---------- 响应式三档 ---------- */
+@media (max-width: 1199px) {
+  .stockin-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .stockin-content {
+    padding: 12px;
+  }
+  .stockin-metric-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stockin-header {
+    padding: 0 12px;
+  }
+  .stockin-header-title {
+    font-size: 16px;
+  }
+  .stockin-page-title {
+    font-size: 18px;
+  }
+  .stockin-metric-value {
+    font-size: 22px;
+  }
+  .stockin-record-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* 手机档所有可点击元素强制 ≥44×44px */
+  button,
+  a[role='button'],
+  .ant-btn,
+  .ant-select-selector,
+  .ant-input,
+  .ant-input-number,
+  .ant-picker,
+  .ant-checkbox-wrapper {
+    min-height: var(--stockin-touch);
+  }
+  .ant-btn {
+    min-width: var(--stockin-touch);
+  }
+  .ant-checkbox-inner {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* 桌面档：批量条改为普通行内工具条 */
+@media (min-width: 1200px) {
+  .stockin-batch-bar {
+    position: static;
+    box-shadow: none;
+    border: 1px solid #f0f0f0;
+    border-radius: var(--stockin-radius);
+    margin-bottom: 12px;
+  }
+}
