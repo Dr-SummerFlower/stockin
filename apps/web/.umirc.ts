@@ -12,7 +12,11 @@ import { env } from 'node:process';
 import { resolve } from 'node:path';
 import { defineConfig } from 'umi';
 
-const serverPort: string = env.SERVER_PORT ?? '3000';
+// 后端监听端口，须与 packages/shared 的 DEFAULT_PORT=8080、docker-compose 映射一致。
+// 仅在后端跑在非 8080 时才用 SERVER_PORT 覆盖 dev 代理目标。此前误写为 '3000'，
+// 导致 `umi dev`（默认 8000）的 /api 代理打到 127.0.0.1:3000，而 Hono 后端在 8080，
+// 上游无响应 → 浏览器侧表现为 `GET /api/auth/init-status` 504 Gateway Timeout。
+const serverPort: string = env.SERVER_PORT ?? '8080';
 
 export default defineConfig({
   outputPath: 'dist',
