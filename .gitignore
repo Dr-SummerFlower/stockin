@@ -1,13 +1,72 @@
+# ============================================================
+# 仓库只跟踪「可用于生产构建与部署」的文件。
+# 其余一切（文档、设计稿、运行数据、缓存、依赖、产物）留在本地。
+# 说明：Dockerfile 在容器内执行 pnpm -r build，因此源码 + 构建配置
+#       即可，dist/node_modules 均不需要入库。
+# ============================================================
+
+# --- 依赖 ---
 node_modules/
+
+# --- 构建产物与编译缓存 ---
 dist/
+build/
 .umi*
+# Umi 配置文件名与 .umi 生成目录同前缀，需显式放行
 !.umirc.ts
 !.umirc.*.ts
 *.tsbuildinfo
+.eslintcache
+.stylelintcache
+.cache/
+coverage/
+
+# --- 运行时数据（本地持久化，绝不入库） ---
 data/
 backups/
 tmp/
 .tmp/
 *.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 .selfcheck_failed
+
+# --- 环境变量：只保留模板，真实配置留本地 ---
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- 文档与设计材料（仅本地归档，不随代码分发） ---
+design/
+docs/
+*.md
+!README.md
+
+# --- 打包/压缩产物 ---
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+
+# --- 工具链与 AI 助手本地目录 ---
 .workbuddy/
+.claude/
+.cursor/
+.vscode/
+.idea/
+
+# --- 编辑器与系统临时文件 ---
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+.DS_Store
+Thumbs.db
+desktop.ini
