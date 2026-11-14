@@ -27,6 +27,9 @@ const apiTarget: string = env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${serverPort}`;
 export default defineConfig({
   outputPath: 'dist',
   publicPath: '/',
+  // 静态文档标题：基线复核发现 34/34 页面 document.title 为空（index.html 无 <title>）。
+  // 由 Umi 配置注入 HTML 模板，避免手改构建产物 dist/index.html（每次构建会覆盖）。
+  title: '进货统计',
   hash: true,
   history: { type: 'browser' },
   plugins: [
@@ -42,7 +45,11 @@ export default defineConfig({
   alias: {
     '@web': resolve('src'),
   },
-  targets: { chrome: 87, firefox: 78, safari: 14, edge: 88 },
+  // 提高到现代浏览器基线：原生支持 async/generator，减少降级与 polyfill 体积。
+  // 注意：Umi 4 生产包仍自带 regenerator-runtime（其运行时用 Function("r",...) 设置
+  // 全局），因此控制台 CSP eval 报错实际由 CSP 放开 script-src 'unsafe-eval' 解决，
+  // 与本 targets 无关；此处仅作现代化精简。个体商家自用，手机/电脑均为现代浏览器。
+  targets: { chrome: 100, firefox: 100, safari: 15, edge: 100 },
   /**
    * 配置级构建链修复（Umi 4.7.31 + esbuild 0.28.2，Node 26.13.0）。
    *

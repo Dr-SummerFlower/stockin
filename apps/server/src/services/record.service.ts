@@ -342,4 +342,50 @@ export class RecordService {
       ? { ok: true, data: { id } }
       : { ok: false, code: ErrorCode.RECORD_NOT_FOUND };
   }
+
+  /** B4：POST /api/trash/batch-restore（整批同事务、复用单条恢复的幂等语义）。 */
+  batchRestore(
+    ids: readonly number[],
+    requestId: string,
+    actor: string,
+  ): ServiceResult<{ restored: number }> {
+    const ctx: WriteContext = ctxOf(requestId, actor);
+    const restored: number = immediateTransaction(this.deps.db, () => {
+      const count: number = this.deps.records.restoreMany(ids, ctx);
+      this.deps.logs.append({
+        action: Action.RECORD_RESTORE,
+        targetType: TARGET_TYPE.RECORD,
+        targetId: null,
+        detail: { ids, restored: count, batch: true },
+        requestId,
+        actor,
+        occurredAt: ctx.occurredAt,
+      });
+      return count;
+    });
+    return { ok: true, data: { restored } };
+  }
+
+  /** B4：POST /api/trash/batch-purge（整批同事务，只允许回收站条目）。 */
+  batchPurge(
+    ids: readonly number[],
+    requestId: string,
+    actor: string,
+  ): ServiceResult<{ purged: number }> {
+    const ctx: WriteContext = ctxOf(requestId, actor);
+    const purged: number = immediateTransaction(this.deps.db, () => {
+      const count: number = this.deps.records.purgeMany(ids);
+      this.deps.logs.append({
+        action: Action.RECORD_PURGE,
+        targetType: TARGET_TYPE.RECORD,
+        targetId: null,
+        detail: { ids, purged: count, batch: true },
+        requestId,
+        actor,
+        occurredAt: ctx.occurredAt,
+      });
+      return count;
+    });
+    return { ok: true, data: { purged } };
+  }
 }

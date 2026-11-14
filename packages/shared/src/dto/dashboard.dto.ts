@@ -45,8 +45,29 @@ export interface ExpiryAlertItem {
   status: 'near' | 'expired';
 }
 
+/** 预警清单的状态分段（B2）。 */
+export type ExpiryAlertStatus = 'near' | 'expired';
+
+/** 预警清单分页请求（B2）；不传时服务端使用默认 page/pageSize/status=全部。 */
+export interface ExpiryAlertQuery {
+  page?: number;
+  pageSize?: number;
+  status?: ExpiryAlertStatus;
+}
+
+/**
+ * 预警清单分页元信息（B2）。与 `alerts` 数组同级返回，不改变已有字段形态；
+ * `alertsTotal` 是同 status 条件下的 COUNT，不再受 1000 条扫描上限影响。
+ */
+export interface ExpiryAlertPageMeta {
+  alertsTotal: number;
+  alertsPage: number;
+  alertsPageSize: number;
+  alertsStatus: ExpiryAlertStatus | null;
+}
+
 /** GET /api/dashboard 单往返响应。 */
-export interface DashboardResponse {
+export interface DashboardResponse extends ExpiryAlertPageMeta {
   metrics: DashboardMetrics;
   alerts: ExpiryAlertItem[];
   /** 当前生效阈值 X（天），默认 30，范围 0~3650 */
@@ -62,7 +83,7 @@ export interface StatsSummaryResponse {
   thresholdDays: number;
 }
 
-export interface StatsExpiryResponse {
+export interface StatsExpiryResponse extends ExpiryAlertPageMeta {
   alerts: ExpiryAlertItem[];
   thresholdDays: number;
   baseDate: string;

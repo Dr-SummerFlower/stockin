@@ -12,12 +12,6 @@ export const excelExportSchema = z.object({
 });
 export type ExcelExportInput = z.infer<typeof excelExportSchema>;
 
-/** 模板下载：文档规定模板不含示例行，默认 false。 */
-export const excelTemplateQuerySchema = z.object({
-  withSample: z.boolean().optional(),
-});
-export type ExcelTemplateQueryInput = z.infer<typeof excelTemplateQuerySchema>;
-
 /** 上传文件元数据（魔数/解压/公式等校验在服务端上传链，不属 shared）。 */
 export const excelImportMetaSchema = z.object({
   fileName: z.string().min(1).max(255),

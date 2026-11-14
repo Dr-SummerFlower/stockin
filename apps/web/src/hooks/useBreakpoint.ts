@@ -5,7 +5,8 @@
  * - tablet：768–1199（平板）
  * - desktop：≥1200（桌面）
  *
- * 用 `matchMedia` + `change` 事件，避免逐像素 resize 抖动；SSR/首屏给保守默认值。
+ * 只订阅 `matchMedia` 的跨断点 `change` 事件，不再挂逐像素 resize 监听，
+ * 避免窗口拖动时的无意义重渲染；SSR/首屏给保守默认值。
  */
 import { useEffect, useState } from 'react';
 import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
@@ -45,7 +46,7 @@ function currentWidth(): number {
   return window.innerWidth;
 }
 
-/** 订阅窗口断点变化，返回三档状态。 */
+/** 订阅断点变化，返回三档状态（仅在跨断点时更新）。 */
 export function useBreakpoint(): BreakpointState {
   const [width, setWidth] = useState<number>(() => currentWidth());
 
@@ -53,19 +54,15 @@ export function useBreakpoint(): BreakpointState {
     if (typeof window === 'undefined') {
       return;
     }
-    const onChange = (): void => setWidth(window.innerWidth);
-    onChange();
-    window.addEventListener('resize', onChange);
-    window.addEventListener('orientationchange', onChange);
     const mobileQuery: MediaQueryList = window.matchMedia(`(max-width: ${MOBILE_MAX}px)`);
     const tabletQuery: MediaQueryList = window.matchMedia(
       `(min-width: ${MOBILE_MAX + 1}px) and (max-width: ${TABLET_MAX}px)`,
     );
+    const onChange = (): void => setWidth(window.innerWidth);
+    onChange();
     mobileQuery.addEventListener('change', onChange);
     tabletQuery.addEventListener('change', onChange);
     return () => {
-      window.removeEventListener('resize', onChange);
-      window.removeEventListener('orientationchange', onChange);
       mobileQuery.removeEventListener('change', onChange);
       tabletQuery.removeEventListener('change', onChange);
     };

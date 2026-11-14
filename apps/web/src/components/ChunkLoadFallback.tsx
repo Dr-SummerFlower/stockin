@@ -4,9 +4,11 @@
  * 依据：主理人 T04「chunk 加载失败提示刷新兜底」。
  * 拆成三块：① 纯判定（供 app.tsx 的全局监听复用）；② 安装器；③ 可复用 UI（ErrorView）。
  * 不做 PWA / Service Worker / 离线态相关任何处理。
+ * 文案采用中性书面语，不含劝导语。
  */
 import React from 'react';
 import { Button, Result, Typography, message } from 'antd';
+import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 
 const CHUNK_ERROR_PATTERN =
   /ChunkLoadError|Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|Loading CSS chunk/i;
@@ -25,7 +27,7 @@ export function installChunkLoadFallback(): void {
   const notify = (text: string): void => {
     if (isChunkLoadError(text)) {
       message.error({
-        content: '页面资源加载失败，请刷新页面重试',
+        content: '页面资源加载失败，刷新页面后重试',
         key: 'stockin-chunk-load',
         duration: 0,
       });
@@ -59,11 +61,15 @@ const ChunkLoadFallback: React.FC<ChunkLoadFallbackProps> = ({ detail }) => {
       title="页面资源加载失败"
       subTitle={
         <Typography.Text type="secondary">
-          {detail ?? '应用已更新，请刷新页面后重试。'}
+          {detail ?? '应用已更新，刷新页面后重试。'}
         </Typography.Text>
       }
       extra={
-        <Button type="primary" onClick={reload} style={{ minHeight: 44, minWidth: 88 }}>
+        <Button
+          type="primary"
+          onClick={reload}
+          style={{ minHeight: TOUCH_TARGET_MIN_PX, minWidth: 88 }}
+        >
           刷新页面
         </Button>
       }

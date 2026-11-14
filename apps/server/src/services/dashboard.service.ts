@@ -7,10 +7,13 @@
  * **不消费 `computeDateGroup` 的派生展示字段**；清单由服务端排定，前端不二次排序。
  */
 import {
-  IMPORT_MAX_ROWS,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
   type DashboardMetrics,
   type DashboardResponse,
   type ExpiryAlertItem,
+  type ExpiryAlertQuery,
+  type ExpiryAlertStatus,
   type StatsExpiryResponse,
   type StatsSummaryResponse,
 } from '@stockin/shared';
@@ -46,6 +49,23 @@ function toAggregateRecord(row: RecordRow): AggregateRecord {
   };
 }
 
+/** B2：预警清单分页参数规范化；缺省 20/页，上限与记录列表一致为 200。 */
+function normalizeAlertQuery(query: ExpiryAlertQuery): {
+  page: number;
+  pageSize: number;
+  status: ExpiryAlertStatus | undefined;
+} {
+  const page: number =
+    query.page !== undefined && Number.isInteger(query.page) && query.page >= 1 ? query.page : 1;
+  const pageSize: number =
+    query.pageSize !== undefined && Number.isInteger(query.pageSize) && query.pageSize >= 1
+      ? Math.min(query.pageSize, MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE;
+  const status: ExpiryAlertStatus | undefined =
+    query.status === 'near' || query.status === 'expired' ? query.status : undefined;
+  return { page, pageSize, status };
+}
+
 /** 统计大屏服务（单进程单例）。 */
 export class DashboardService {
   constructor(private readonly deps: DashboardServiceDeps) {}
@@ -54,25 +74,42 @@ export class DashboardService {
    * 一个 DEFERRED 读事务快照：今天、阈值、指标、清单全部取自同一瞬间。
    * 6 组指标走 Repository 的单遍条件聚合 SQL（与 domain.aggregateRules 口径一致）。
    */
-  snapshot(): ServiceResult<DashboardResponse> {
+  snapshot(query: ExpiryAlertQuery = {}): ServiceResult<DashboardResponse> {
+    const { page, pageSize, status } = normalizeAlertQuery(query);
     const data: DashboardResponse = deferredTransaction(this.deps.db, () => {
       const baseDate: string = serverToday();
       const thresholdDays: number = this.deps.settings.getThresholdDays();
       const metrics: DashboardMetrics = this.deps.records.aggregateSql(baseDate, thresholdDays);
+      const nearEnd: string = addDays(baseDate, thresholdDays);
 
-      // 一次区间索引扫描覆盖「全部过期 + 全部临期」，上限保护内存。
-      const rows: readonly RecordRow[] = this.deps.records.scanExpiryRange(
-        '0000-01-01',
-        addDays(baseDate, thresholdDays),
-        IMPORT_MAX_ROWS,
-        0,
+      // B2：先按同条件 COUNT，再只取当前页；过期过多时也不会挤掉临期项。
+      const alertsTotal: number = this.deps.records.countExpiryAlerts(
+        baseDate,
+        nearEnd,
+        status,
+      );
+      const rows: readonly RecordRow[] = this.deps.records.scanExpiryAlerts(
+        baseDate,
+        nearEnd,
+        status,
+        pageSize,
+        (page - 1) * pageSize,
       );
       const alerts: ExpiryAlertItem[] = buildExpiryAlerts(
         rows.map(toAggregateRecord),
         baseDate,
         thresholdDays,
       );
-      return { metrics, alerts, thresholdDays, baseDate };
+      return {
+        metrics,
+        alerts,
+        thresholdDays,
+        baseDate,
+        alertsTotal,
+        alertsPage: page,
+        alertsPageSize: pageSize,
+        alertsStatus: status ?? null,
+      };
     });
     return { ok: true, data };
   }
@@ -93,9 +130,9 @@ export class DashboardService {
     };
   }
 
-  /** GET /api/stats/expiry */
-  expiry(): ServiceResult<StatsExpiryResponse> {
-    const result = this.snapshot();
+  /** GET /api/stats/expiry（B2：支持 page / pageSize / status） */
+  expiry(query: ExpiryAlertQuery = {}): ServiceResult<StatsExpiryResponse> {
+    const result = this.snapshot(query);
     if (!result.ok) {
       return result;
     }
@@ -105,6 +142,10 @@ export class DashboardService {
         alerts: result.data.alerts,
         thresholdDays: result.data.thresholdDays,
         baseDate: result.data.baseDate,
+        alertsTotal: result.data.alertsTotal,
+        alertsPage: result.data.alertsPage,
+        alertsPageSize: result.data.alertsPageSize,
+        alertsStatus: result.data.alertsStatus,
       },
     };
   }

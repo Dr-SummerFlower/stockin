@@ -98,7 +98,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.use('*', createFinalizeHeadersMiddleware());
   app.use('*', createRequestIdMiddleware());
   app.use('*', createSecureHeadersMiddleware());
-  app.use('*', createCsrfMiddleware(deps.env.publicOrigin));
+  app.use('*', createCsrfMiddleware(deps.env.publicOrigins));
   app.use('*', createBodyLimitMiddleware());
   app.use('*', createRateLimitMiddleware());
   app.use(

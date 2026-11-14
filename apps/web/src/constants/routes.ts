@@ -23,7 +23,7 @@ export interface NavItem {
   readonly key: string;
   readonly path: string;
   readonly label: string;
-  /** 单字图标名（AntD `@ant-design/icons` 组件名），由 layout 映射。 */
+  /** 导航图标标识，由 MainLayout 映射到内联 SVG（components/Icon）。 */
   readonly icon: 'dashboard' | 'list' | 'setting' | 'delete' | 'file';
 }
 
@@ -67,37 +67,6 @@ export const TARGET_TYPE_LABELS: Readonly<Record<string, string>> = {
   none: '—',
 };
 
-/** 临期/过期/正常 的双通道（颜色 + 文字）展示元信息。 */
-export interface StatusMeta {
-  readonly label: string;
-  readonly color: 'warning' | 'error' | 'default' | 'success';
-  readonly text: string;
-}
-
-/** 与 `/api/dashboard` 返回的 status 对应的展示文案；颜色 + 文字双通道。 */
-export const EXPIRY_STATUS_META: Readonly<Record<'near' | 'expired' | 'none', StatusMeta>> = {
-  near: { label: '临期', color: 'warning', text: '临期' },
-  expired: { label: '已过期', color: 'error', text: '已过期' },
-  none: { label: '正常', color: 'default', text: '正常' },
-};
-
-/** 字段来源三态的展示文案（供表单联动状态提示）。 */
-export const FIELD_SOURCE_META: Readonly<Record<'EMPTY' | 'AUTO' | 'MANUAL', StatusMeta>> = {
-  EMPTY: { label: '空', color: 'default', text: '未填写' },
-  AUTO: { label: '自动', color: 'success', text: '自动推算' },
-  MANUAL: { label: '手填', color: 'default', text: '手动填写' },
-};
-
-/** 6 个联动槽位的中文标签与分组。 */
-export const LINKAGE_SLOT_LABELS: Readonly<Record<string, string>> = {
-  productionDate: '生产日期',
-  shelfLife: '保质期',
-  expiryDate: '到期日期',
-  unitPrice: '单价',
-  quantity: '数量',
-  amount: '金额',
-};
-
 /** 10 个业务字段的中文标签（与 EXCEL_HEADERS 顺序一致）。 */
 export const RECORD_FIELD_LABELS: Readonly<Record<string, string>> = {
   name: '商品名称',
@@ -114,3 +83,12 @@ export const RECORD_FIELD_LABELS: Readonly<Record<string, string>> = {
 
 /** 触控目标最小尺寸（px），响应式三档共用。 */
 export const TOUCH_TARGET_MIN_PX = 44;
+
+/** 日志筛选默认展示的常用操作类型；完整 17 项见 ACTION_LABELS。 */
+export const LOG_COMMON_ACTIONS: readonly string[] = [
+  'RECORD_CREATE',
+  'RECORD_UPDATE',
+  'RECORD_DELETE',
+  'EXCEL_IMPORT',
+  'SETTINGS_UPDATE',
+];

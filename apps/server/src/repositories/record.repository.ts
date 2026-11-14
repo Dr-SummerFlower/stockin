@@ -33,10 +33,20 @@ export interface RecordPage {
   readonly pageSize: number;
 }
 
+/**
+ * B3：排序字段白名单（与 shared 的 RECORD_SORT_FIELDS 一一对应）。
+ * `remainingDays` 与 `expiry_date` 单调等价，空到期日统一沉底；
+ * `expiryStatus` 需要注入 today / nearEnd 常量，在 listActive 里单独构造 CASE 表达式。
+ * 所有列名都来自本表常量，不含外部输入，可安全拼接。
+ */
 const SORT_COLUMNS: Readonly<Record<string, string>> = {
   purchaseDate: 'purchase_date',
   expiryDate: 'expiry_date',
   createdAt: 'created_at',
+  name: 'name_norm',
+  spec: 'spec_norm',
+  quantity: 'quantity',
+  amountCents: 'amount_cents',
 };
 
 function clampPageSize(raw: number | undefined): number {
@@ -99,6 +109,31 @@ function buildFilter(
     params.push(addDays(today, thresholdDays));
   }
 
+  return { where: clauses.join(' AND '), params };
+}
+
+/**
+ * B2：预警清单筛选条件唯一组装点，COUNT 与分页扫描共用。
+ * 全量 = 过期（< today）+ 临期（today ≤ expiry_date ≤ nearEnd），两者天然按到期日升序衔接。
+ */
+function buildRiskWhere(
+  today: string,
+  nearEnd: string,
+  status?: 'near' | 'expired',
+): { where: string; params: unknown[] } {
+  const clauses: string[] = [
+    'deleted_at IS NULL',
+    'expiry_date IS NOT NULL',
+    'expiry_date <= ?',
+  ];
+  const params: unknown[] = [nearEnd];
+  if (status === 'near') {
+    clauses.push('expiry_date >= ?');
+    params.push(today);
+  } else if (status === 'expired') {
+    clauses.push('expiry_date < ?');
+    params.push(today);
+  }
   return { where: clauses.join(' AND '), params };
 }
 
@@ -239,6 +274,27 @@ export class RecordRepository {
       .changes > 0;
   }
 
+  /** B4：批量恢复，返回实际恢复条数（已恢复的 id 幂等跳过）。 */
+  restoreMany(ids: readonly number[], ctx: WriteContext): number {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const placeholders: string = ids.map(() => '?').join(', ');
+    const sql = `UPDATE records SET deleted_at = NULL, updated_at = ?, version = version + 1
+      WHERE deleted_at IS NOT NULL AND id IN (${placeholders})`;
+    return this.db.prepare(sql).run(ctx.occurredAt, ...ids).changes;
+  }
+
+  /** B4：批量彻底删除，只对回收站条目生效。 */
+  purgeMany(ids: readonly number[]): number {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const placeholders: string = ids.map(() => '?').join(', ');
+    const sql = `DELETE FROM records WHERE deleted_at IS NOT NULL AND id IN (${placeholders})`;
+    return this.db.prepare(sql).run(...ids).changes;
+  }
+
   /** 有效记录分页列表（恒带 deleted_at IS NULL）。 */
   listActive(
     filter: RecordFilter,
@@ -248,16 +304,29 @@ export class RecordRepository {
     const { where, params } = buildFilter(filter, today, thresholdDays);
     const page: number = clampPage(filter.page);
     const pageSize: number = clampPageSize(filter.pageSize);
-    const sortColumn: string = SORT_COLUMNS[filter.sortBy ?? 'purchaseDate'] ?? 'purchase_date';
+    const sortBy: string = filter.sortBy ?? 'purchaseDate';
     const direction: 'ASC' | 'DESC' = filter.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    // ORDER BY 的占位符排在 WHERE 之后、LIMIT/OFFSET 之前，参数顺序必须一致。
+    const orderParams: unknown[] = [];
+    let sortExpr: string = SORT_COLUMNS[sortBy] ?? 'purchase_date';
+    if (sortBy === 'remainingDays') {
+      // 剩余天数与到期日单调等价；无到期日的记录恒定沉底（与方向无关）。
+      sortExpr = `CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END ASC, expiry_date`;
+    } else if (sortBy === 'expiryStatus') {
+      // 0=过期 / 1=临期 / 2=正常或无到期日，边界常量由应用层注入。
+      sortExpr =
+        'CASE WHEN expiry_date IS NULL THEN 2 WHEN expiry_date < ? THEN 0 WHEN expiry_date <= ? THEN 1 ELSE 2 END';
+      orderParams.push(today, addDays(today, thresholdDays));
+    }
     const total: number = this.scalar(
       `SELECT COUNT(*) AS c FROM records WHERE ${where}`,
       ...params,
     );
-    // sortColumn / direction 来自白名单，不是外部输入，可安全拼接。
+    // sortExpr / direction 来自白名单，不是外部输入，可安全拼接。
     const rows: RecordRow[] = this.rows(
-      `SELECT * FROM records WHERE ${where} ORDER BY ${sortColumn} ${direction}, id ${direction} LIMIT ? OFFSET ?`,
+      `SELECT * FROM records WHERE ${where} ORDER BY ${sortExpr} ${direction}, id ${direction} LIMIT ? OFFSET ?`,
       ...params,
+      ...orderParams,
       pageSize,
       (page - 1) * pageSize,
     );
@@ -366,6 +435,30 @@ export class RecordRepository {
        ORDER BY expiry_date ASC, id ASC LIMIT ? OFFSET ?`,
       from,
       to,
+      limit,
+      offset,
+    );
+  }
+
+  /** B2：预警清单同筛选条件 COUNT（不再受 1000 条一次性扫描上限影响）。 */
+  countExpiryAlerts(today: string, nearEnd: string, status?: 'near' | 'expired'): number {
+    const { where, params } = buildRiskWhere(today, nearEnd, status);
+    return this.scalar(`SELECT COUNT(*) AS c FROM records WHERE ${where}`, ...params);
+  }
+
+  /** B2：预警清单分页扫描，按到期日升序由服务端排定，前端不二次排序。 */
+  scanExpiryAlerts(
+    today: string,
+    nearEnd: string,
+    status: 'near' | 'expired' | undefined,
+    limit: number,
+    offset: number,
+  ): readonly RecordRow[] {
+    const { where, params } = buildRiskWhere(today, nearEnd, status);
+    return this.rows(
+      `SELECT * FROM records WHERE ${where}
+       ORDER BY expiry_date ASC, id ASC LIMIT ? OFFSET ?`,
+      ...params,
       limit,
       offset,
     );

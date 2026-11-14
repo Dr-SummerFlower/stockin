@@ -147,7 +147,7 @@ async function parseEnvelope(response: Response): Promise<{
     message:
       typeof payload?.message === 'string' && payload.message !== ''
         ? payload.message
-        : `请求失败（HTTP ${response.status}）`,
+        : '请求未完成，稍后重试',
     requestId:
       typeof payload?.requestId === 'string' && payload.requestId !== ''
         ? payload.requestId
@@ -176,7 +176,7 @@ async function toApiError(response: Response, options: RequestOptions, path: str
         navigate('/login');
       }
       if (!options.silent && !isAuthPath(path)) {
-        notify('warning', '登录状态已失效，请重新登录');
+        notify('warning', '登录状态已失效，重新登录');
       }
       break;
     }
@@ -201,14 +201,14 @@ async function toApiError(response: Response, options: RequestOptions, path: str
     }
     case 429: {
       const hint: string =
-        retryAfterSeconds !== null ? `请 ${retryAfterSeconds} 秒后重试` : '请稍后重试';
+        retryAfterSeconds !== null ? `${retryAfterSeconds} 秒后重试` : '稍后重试';
       notify('warning', `${envelope.message}（${hint}）`);
       break;
     }
     default: {
       if (response.status >= 500) {
-        const suffix: string = envelope.requestId !== '' ? `（requestId: ${envelope.requestId}）` : '';
-        notify('error', `${envelope.message}${suffix}`);
+        // 操作编号保留在 ApiError 与 ErrorView 的「技术信息」展开区，不放进全局提示。
+        notify('error', envelope.message);
       } else if (!options.silent) {
         notify('warning', envelope.message);
       }
@@ -240,10 +240,14 @@ async function rawFetch(path: string, options: RequestOptions): Promise<Response
 }
 
 /** 网络异常（fetch 抛错）包装为 ApiError，保留统一错误面。 */
-async function networkError(cause: unknown): Promise<ApiError> {
-  const detail: string = cause instanceof Error ? cause.message : String(cause ?? '');
-  notify('error', `网络连接失败，请检查服务是否可用${detail !== '' ? `（${detail}）` : ''}`);
-  return new ApiError(0, 'COMMON_INTERNAL', '网络连接失败，请检查服务是否可用', '', null, null);
+async function networkError(_cause: unknown): Promise<ApiError> {
+  // 浏览器异常文本是英文（如 Failed to fetch），不上屏；技术细节留在控制台。
+  if (typeof console !== 'undefined') {
+    console.warn('[request] network error', _cause);
+  }
+  const text = '无法连接到服务器';
+  notify('error', text);
+  return new ApiError(0, 'COMMON_INTERNAL', text, '', null, null);
 }
 
 /**
@@ -332,11 +336,12 @@ export function errorRequestId(error: unknown): string {
 }
 
 /** 从任意异常提取用户可读文案。 */
-export function errorMessage(error: unknown, fallback: string = '操作失败，请稍后重试'): string {
+export function errorMessage(error: unknown, fallback: string = '操作失败'): string {
   if (error instanceof ApiError) {
     return error.message;
   }
-  if (error instanceof Error && error.message !== '') {
+  // 非 ApiError 的 Error 多为浏览器英文异常，只有中文文案才直接上屏。
+  if (error instanceof Error && error.message !== '' && /[\u4e00-\u9fa5]/.test(error.message)) {
     return error.message;
   }
   return fallback;

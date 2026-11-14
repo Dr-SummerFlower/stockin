@@ -47,7 +47,7 @@ const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
     <Typography.Paragraph>{description}</Typography.Paragraph>
     {extra}
     {danger ? (
-      <Alert type="warning" showIcon message="此操作不可撤销，请二次确认。" />
+      <Alert type="warning" showIcon message="删除后无法恢复。" />
     ) : null}
   </Modal>
 );

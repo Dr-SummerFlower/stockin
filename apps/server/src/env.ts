@@ -5,6 +5,10 @@
  * COOKIE_SECURE=false、TZ=Asia/Shanghai）、§7.2（data/backups/tmp 三卷）、
  * §5.2（CSRF 按含端口的字面量精确比对）。
  *
+ * 可信来源支持多值：PUBLIC_ORIGINS（逗号分隔）> PUBLIC_ORIGIN（单值，旧写法）；
+ * 均未设置时默认同时含 127.0.0.1 与 localhost 两种回环写法；
+ * 任一回环写法会自动等价展开到同机其它回环写法。
+ *
  * 所有默认值与业务常量一律取自 `@stockin/shared`，本文件不硬编码实现级常量。
  */
 import path from 'node:path';
@@ -23,7 +27,10 @@ import {
 export interface Env {
   readonly nodeEnv: string;
   readonly port: number;
+  /** 主来源 = `publicOrigins` 的首项（保留向后兼容：日志 / Cookie 等沿用单值）。 */
   readonly publicOrigin: string;
+  /** 全部可信来源（CSRF 逐项比对）。默认同时含 `127.0.0.1` 与 `localhost` 两种回环写法。 */
+  readonly publicOrigins: readonly string[];
   readonly tz: string;
   /** 本期固定 false（COOKIE_POLICY.secure 为唯一真源）。 */
   readonly cookieSecure: false;
@@ -46,6 +53,8 @@ export interface EnvOverrides {
   readonly nodeEnv?: string;
   readonly port?: number | string;
   readonly publicOrigin?: string;
+  /** 逗号分隔的多来源字面量，优先级高于 `publicOrigin`。 */
+  readonly publicOrigins?: string;
   readonly tz?: string;
   readonly cookieSecure?: string;
   readonly dataDir?: string;
@@ -56,6 +65,13 @@ export interface EnvOverrides {
 
 /** `http://<IP或主机名>:<PORT>` 字面量；禁止 https、路径、查询串、缺省端口。 */
 const PUBLIC_ORIGIN_PATTERN = /^http:\/\/([^/:?#]+|\[[0-9a-fA-F:]+\]):(\d{1,5})$/;
+
+/**
+ * 回环主机写法。信任其中任一即自动等价展开到同机其它写法，
+ * 避免「配了 127.0.0.1 却用 localhost 登录被 403」这类同机地址不一致问题。
+ * 只对回环主机生效，非回环（如局域网 IP）不会自动扩展。
+ */
+const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', 'localhost', '[::1]'];
 
 /** 最小可用空间推导：文档 §7.5 建议 200MB，取 shared 导入上限的 10 倍，不硬编码。 */
 const MIN_FREE_BYTES = 10 * IMPORT_MAX_UNCOMPRESSED_BYTES;
@@ -89,20 +105,53 @@ export function isUnderDirectory(child: string, parent: string): boolean {
 export function loadEnv(overrides: EnvOverrides = {}): Env {
   const cwd: string = path.resolve(overrides.cwd ?? process.cwd());
   const port: number = parsePort(overrides.port ?? process.env.PORT);
-  const rawOrigin: string =
-    overrides.publicOrigin ?? process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${port}`;
-  const originMatch: RegExpExecArray | null = PUBLIC_ORIGIN_PATTERN.exec(rawOrigin);
-  if (originMatch === null) {
-    throw new RangeError(
-      `[env] PUBLIC_ORIGIN 必须是含端口的字面量 http://<IP>:<PORT>，收到: ${rawOrigin}`,
-    );
+  // 可信来源集合：PUBLIC_ORIGINS（逗号分隔，优先）> PUBLIC_ORIGIN（单值，旧写法）
+  // > 默认同时包含 127.0.0.1 与 localhost 两种回环写法，保证同机用不同地址都能登录。
+  const rawOriginsCsv: string | undefined = overrides.publicOrigins ?? process.env.PUBLIC_ORIGINS;
+  const legacySingle: string | undefined = overrides.publicOrigin ?? process.env.PUBLIC_ORIGIN;
+
+  let rawOrigins: string[] = [];
+  if (rawOriginsCsv !== undefined && rawOriginsCsv.trim() !== '') {
+    rawOrigins = rawOriginsCsv
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s !== '');
+  } else if (legacySingle !== undefined && legacySingle.trim() !== '') {
+    rawOrigins = [legacySingle.trim()];
   }
-  const originPort: number = Number.parseInt(originMatch[2] ?? '', 10);
-  if (originPort !== port) {
-    throw new RangeError(
-      `[env] PUBLIC_ORIGIN 端口(${originPort}) 必须与 PORT(${port}) 一致：${rawOrigin}`,
-    );
+  if (rawOrigins.length === 0) {
+    rawOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
   }
+
+  const publicOrigins: string[] = [];
+  for (const rawOrigin of rawOrigins) {
+    const originMatch: RegExpExecArray | null = PUBLIC_ORIGIN_PATTERN.exec(rawOrigin);
+    if (originMatch === null) {
+      throw new RangeError(
+        `[env] 每个可信来源必须是含端口的字面量 http://<IP>:<PORT>，收到: ${rawOrigin}`,
+      );
+    }
+    const originPort: number = Number.parseInt(originMatch[2] ?? '', 10);
+    if (originPort !== port) {
+      throw new RangeError(
+        `[env] 来源端口(${originPort}) 必须与 PORT(${port}) 一致：${rawOrigin}`,
+      );
+    }
+    if (!publicOrigins.includes(rawOrigin)) {
+      publicOrigins.push(rawOrigin);
+    }
+    // 回环等价展开：信任任一回环写法即等价信任同机其它写法（同端口）。
+    const originHost: string = originMatch[1] ?? '';
+    if (LOOPBACK_HOSTS.includes(originHost)) {
+      for (const loopbackHost of LOOPBACK_HOSTS) {
+        const candidate: string = `http://${loopbackHost}:${port}`;
+        if (!publicOrigins.includes(candidate)) {
+          publicOrigins.push(candidate);
+        }
+      }
+    }
+  }
+  const publicOrigin: string = publicOrigins[0] ?? `http://127.0.0.1:${port}`;
 
   const rawSecure: string = overrides.cookieSecure ?? process.env.COOKIE_SECURE ?? 'false';
   if (rawSecure !== '' && rawSecure !== 'false' && rawSecure !== '0') {
@@ -147,7 +196,8 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
   return {
     nodeEnv: overrides.nodeEnv ?? process.env.NODE_ENV ?? 'production',
     port,
-    publicOrigin: rawOrigin,
+    publicOrigin,
+    publicOrigins,
     tz,
     cookieSecure: COOKIE_POLICY.secure,
     cookieName: SESSION_COOKIE_NAME,

@@ -4,6 +4,7 @@
  */
 import * as z from 'zod';
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../constants';
+import { RECORD_SORT_FIELDS } from '../dto/record.dto';
 
 /** 全站日期格式 YYYY-MM-DD（ stricter 的日历合法性由 domain/date.ts 校验）。 */
 export const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -52,10 +53,9 @@ export const recordFilterSchema = z.object({
   expiryDateTo: dateStringSchema.optional(),
   spec: z.string().max(200).optional(),
   expiryStatus: z.enum(['near', 'expired', 'none']).optional(),
-  includeDeleted: z.boolean().optional(),
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
-  sortBy: z.enum(['purchaseDate', 'expiryDate', 'createdAt']).optional(),
+  sortBy: z.enum(RECORD_SORT_FIELDS).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 export type RecordFilterInput = z.infer<typeof recordFilterSchema>;
@@ -76,6 +76,12 @@ export const batchDeleteSchema = z.object({
   idempotencyKey: z.string().max(128).optional(),
 });
 export type BatchDeleteInput = z.infer<typeof batchDeleteSchema>;
+
+/** 回收站批量恢复 / 批量彻底删除（B4），与 batch-delete 同上限。 */
+export const batchIdsSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(1_000),
+});
+export type BatchIdsInput = z.infer<typeof batchIdsSchema>;
 
 /**
  * Excel 导入行的原始字符串形态：10 列均允许空串（空单元格补算由 domain 负责）。

@@ -59,6 +59,52 @@ export function sanitizeDetail(value: unknown, depth: number = 0): unknown {
   return value;
 }
 
+/**
+ * B1：筛选条件的唯一组装点。`list()` 与 `count()` 共用，
+ * 保证 `total` 与 `items` 的 action / targetType / targetId / from / to 口径完全一致。
+ */
+function buildLogWhere(filter: OperationLogFilter): { where: string; params: unknown[] } {
+  const clauses: string[] = ['1 = 1'];
+  const params: unknown[] = [];
+  if (filter.action !== undefined) {
+    clauses.push('action = ?');
+    params.push(filter.action);
+  }
+  if (filter.targetType !== undefined && filter.targetType !== '') {
+    clauses.push('target_type = ?');
+    params.push(filter.targetType);
+  }
+  if (filter.targetId !== undefined) {
+    clauses.push('target_id = ?');
+    params.push(filter.targetId);
+  }
+  if (filter.from !== undefined && filter.from !== '') {
+    clauses.push('occurred_at >= ?');
+    params.push(filter.from);
+  }
+  if (filter.to !== undefined && filter.to !== '') {
+    clauses.push('occurred_at <= ?');
+    params.push(filter.to);
+  }
+  return { where: clauses.join(' AND '), params };
+}
+
+/** 分页参数规范化：与 list() 实际生效值一致，供路由回显 limit / offset。 */
+export function normalizeLogPaging(filter: OperationLogFilter): {
+  limit: number;
+  offset: number;
+} {
+  const limit: number =
+    filter.limit !== undefined && Number.isInteger(filter.limit) && filter.limit > 0
+      ? Math.min(filter.limit, 1_000)
+      : 100;
+  const offset: number =
+    filter.offset !== undefined && Number.isInteger(filter.offset) && filter.offset >= 0
+      ? filter.offset
+      : 0;
+  return { limit, offset };
+}
+
 export class OperationLogRepository {
   constructor(private readonly db: Db) {}
 
@@ -107,48 +153,22 @@ export class OperationLogRepository {
 
   /** 时间范围 / 类型 / 记录追溯；裸列与常量比较。 */
   list(filter: OperationLogFilter = {}): readonly OperationLogRow[] {
-    const clauses: string[] = ['1 = 1'];
-    const params: unknown[] = [];
-    if (filter.action !== undefined) {
-      clauses.push('action = ?');
-      params.push(filter.action);
-    }
-    if (filter.targetType !== undefined) {
-      clauses.push('target_type = ?');
-      params.push(filter.targetType);
-    }
-    if (filter.targetId !== undefined) {
-      clauses.push('target_id = ?');
-      params.push(filter.targetId);
-    }
-    if (filter.from !== undefined) {
-      clauses.push('occurred_at >= ?');
-      params.push(filter.from);
-    }
-    if (filter.to !== undefined) {
-      clauses.push('occurred_at <= ?');
-      params.push(filter.to);
-    }
-    const limit: number =
-      filter.limit !== undefined && Number.isInteger(filter.limit) && filter.limit > 0
-        ? Math.min(filter.limit, 1_000)
-        : 100;
-    const offset: number =
-      filter.offset !== undefined && Number.isInteger(filter.offset) && filter.offset >= 0
-        ? filter.offset
-        : 0;
+    const { where, params } = buildLogWhere(filter);
+    const { limit, offset } = normalizeLogPaging(filter);
     return this.db
       .prepare(
-        `SELECT * FROM operation_logs WHERE ${clauses.join(' AND ')}
+        `SELECT * FROM operation_logs WHERE ${where}
          ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?`,
       )
       .all(...params, limit, offset) as OperationLogRow[];
   }
 
-  count(): number {
-    const row = this.db.prepare('SELECT COUNT(*) AS c FROM operation_logs').get() as
-      | { c: number }
-      | undefined;
+  /** B1：同筛选条件 COUNT（不再恒为全表总数）。 */
+  count(filter: OperationLogFilter = {}): number {
+    const { where, params } = buildLogWhere(filter);
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS c FROM operation_logs WHERE ${where}`)
+      .get(...params) as { c: number } | undefined;
     return row?.c ?? 0;
   }
 }

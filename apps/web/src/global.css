@@ -1,21 +1,129 @@
 /**
- * 全局样式（纯 CSS，无 Tailwind / 无图表库 / 无 PWA 相关资源）。
+ * 全局样式 · 进货统计 UI 设计系统 v1.0
  *
- * 依据：主理人 T04 口径 —— 响应式三档（<768 手机 / 768–1199 平板 / ≥1200 桌面）；
- * 触控目标 ≥44×44px；颜色 + 文字双通道可达性（状态不只靠颜色表达）。
+ * 来源：design/stockin-ui-design-system.md + design/stockin-ui-prototype.html。
+ * 令牌按原型 :root / [data-appearance="dark"] 落地；业务组件继续复用 --stockin-color-*
+ * 变量名，故换主题只需替换令牌值，不需要逐处改组件。
+ *
+ * 约定：
+ * - 浅色为默认；暗色只由 `:root[data-appearance='dark']` 一处覆盖。该属性由
+ *   utils/theme.ts 的 apply() 在模块加载时（早于 React 首屏）写入，浅/深/跟随系统
+ *   三态都解析为同一个 appearance，避免暗色令牌重复两套、也避免首屏闪烁。
+ * - 纯 CSS 变量驱动，无内联 <script>（CSP `default-src 'self'`）；无外部字体、
+ *   无 CDN、无图表库、无 PWA 资源。
+ * - 响应式三档：<768 手机 / 768–1199 平板 / ≥1200 桌面；触控目标 ≥44×44px。
+ * - 状态一律「颜色 + 文字 + 位置」三通道，不单独依赖颜色。
  */
 
 :root {
+  /* ---------- 间距（4pt 基准）与尺寸 ---------- */
   --stockin-touch: 44px;
   --stockin-gap: 16px;
-  --stockin-radius: 8px;
-  --stockin-color-near: #d46b08;
-  --stockin-color-near-bg: #fff7e6;
-  --stockin-color-expired: #cf1322;
-  --stockin-color-expired-bg: #fff1f0;
-  --stockin-color-auto: #389e0d;
-  --stockin-color-text: rgba(0, 0, 0, 0.88);
-  --stockin-color-muted: rgba(0, 0, 0, 0.45);
+  --stockin-s1: 4px;
+  --stockin-s2: 8px;
+  --stockin-s3: 12px;
+  --stockin-s4: 16px;
+  --stockin-s6: 24px;
+  --stockin-s8: 32px;
+  --stockin-s12: 48px;
+  --stockin-s16: 64px;
+  --stockin-radius: 6px;
+  --stockin-radius-md: 10px;
+  --stockin-radius-lg: 14px;
+  --stockin-sidebar-w: 224px;
+  --stockin-topbar-h: 64px;
+  --stockin-tabbar-h: 62px;
+
+  /* ---------- 表面与墨色 ---------- */
+  --stockin-color-bg: #f7f8f6;
+  /* 四级表面：bg → surface → subtle → surface-3；elevated 为浮层专用底色。 */
+  --stockin-color-surface: #fdfdfc;
+  --stockin-color-surface-solid: #fdfdfc;
+  --stockin-color-subtle: #f1f4f1;
+  --stockin-color-surface-3: #e9eeea;
+  --stockin-color-elevated: #fdfdfc;
+  --stockin-color-border-visible: #e1e6e2;
+  --stockin-color-control-border: #8a958e;
+  --stockin-color-text: #1b2421;
+  --stockin-color-muted: #4f5a55;
+  --stockin-color-faint: #616d67;
+  /* 焦点环：浅色沿用实色主色，暗色覆盖为半透明主色描边。 */
+  --stockin-color-focus-ring: #1f6b52;
+  --stockin-color-focus-glow: #e8f2ed;
+
+  /* ---------- 品牌（墨绿） ---------- */
+  --stockin-color-primary: #1f6b52;
+  --stockin-color-primary-bg: #e8f2ed;
+  --stockin-color-primary-text: #1f6b52;
+  --stockin-color-on-primary: #ffffff;
+
+  /* ---------- 语义色（底保持现值，不提亮） ---------- */
+  --stockin-color-near: #9c4f06;
+  --stockin-color-near-bg: #fbf1e4;
+  --stockin-color-expired: #b3261e;
+  --stockin-color-expired-bg: #fbeae8;
+  --stockin-color-auto: #2f6b3a;
+  --stockin-color-auto-bg: #eaf3eb;
+
+  /* ---------- 骨架微光：两端对比 ≥1.8:1 ---------- */
+  --stockin-skeleton-base: #a8b5ac;
+  --stockin-skeleton-shine: #f7f8f6;
+
+  /* ---------- 阴影与动效 ---------- */
+  --stockin-shadow-sm: 0 1px 2px rgba(27, 36, 33, 0.05);
+  --stockin-shadow-md: 0 6px 24px rgba(27, 36, 33, 0.08);
+  --stockin-shadow-lg: 0 18px 48px rgba(27, 36, 33, 0.14);
+  --stockin-fast: 150ms;
+  --stockin-normal: 260ms;
+  --stockin-ease: cubic-bezier(0.25, 1, 0.5, 1);
+
+  /* ---------- 字体 ---------- */
+  --stockin-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --stockin-font-num: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', ui-monospace, Consolas,
+    monospace;
+  --stockin-fs-hero: clamp(26px, 2.8vw, 36px);
+  /* 页面标题定值 22px：标题只承担导航与分区，不再随视口放大到 28px 抢指标数值的层级。 */
+  --stockin-fs-h1: 22px;
+  --stockin-fs-h2: 16px;
+  --stockin-fs-body: 14px;
+  --stockin-fs-caption: 13px;
+  --stockin-fs-micro: 11px;
+}
+
+/* 暗色令牌：唯一一处覆盖，按 utils/theme.ts 首屏写入的 data-appearance 命中。
+   浅/深/跟随系统三态都解析到同一属性，不再需要 prefers-color-scheme 重复块。 */
+:root[data-appearance='dark'] {
+  /* 四级表面拉开，边界提亮到 3.06:1，控件边框 3.06:1 */
+  --stockin-color-bg: #121a17;
+  --stockin-color-surface: #1c2822;
+  --stockin-color-surface-solid: #1c2822;
+  --stockin-color-subtle: #243129;
+  --stockin-color-surface-3: #2d3d33;
+  --stockin-color-elevated: #202c27;
+  --stockin-color-border-visible: #3a4d43;
+  --stockin-color-control-border: #5a7063;
+  --stockin-color-text: #edf2ef;
+  --stockin-color-muted: #b6c2bb;
+  --stockin-color-faint: #93a29a;
+  --stockin-color-primary: #5dbb92;
+  --stockin-color-primary-bg: #1c3328;
+  --stockin-color-primary-text: #5dbb92;
+  --stockin-color-on-primary: #0e1a14;
+  --stockin-color-focus-ring: rgba(93, 187, 146, 0.65);
+  --stockin-color-focus-glow: rgba(93, 187, 146, 0.18);
+  /* 语义底保持现值，不提亮：风险块靠语义字 + 3px 左色条区分 */
+  --stockin-color-near: #e3a25c;
+  --stockin-color-near-bg: #332513;
+  --stockin-color-expired: #ee8b84;
+  --stockin-color-expired-bg: #37201e;
+  --stockin-color-auto: #7bc48b;
+  --stockin-color-auto-bg: #1b2e20;
+  --stockin-skeleton-base: #121a17;
+  --stockin-skeleton-shine: #3a4d43;
+  --stockin-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --stockin-shadow-md: 0 6px 24px rgba(0, 0, 0, 0.35);
+  --stockin-shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -24,17 +132,73 @@
 
 html,
 body,
-#root {
+#root,
+.ant-app {
   margin: 0;
   padding: 0;
   min-height: 100%;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-family: var(--stockin-font-sans);
+  font-size: var(--stockin-fs-body);
+  line-height: 1.6;
   color: var(--stockin-color-text);
-  background: #f5f5f5;
+  background: var(--stockin-color-bg);
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--stockin-fast) var(--stockin-ease),
+    color var(--stockin-fast) var(--stockin-ease);
+}
+
+:focus-visible {
+  /* 暗色用主色半透明描边，避免在深底上出现刺眼的实色外框。 */
+  outline: 2px solid var(--stockin-color-focus-ring);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+::selection {
+  background: var(--stockin-color-primary-bg);
+  color: var(--stockin-color-text);
+}
+
+/* ---------- 通用排版工具 ---------- */
+.stockin-mono,
+.stockin-num {
+  font-variant-numeric: tabular-nums;
+}
+.stockin-mono {
+  font-family: var(--stockin-font-num);
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+.stockin-num {
+  letter-spacing: -0.02em;
+}
+.stockin-hint {
+  font-size: var(--stockin-fs-micro);
+  color: var(--stockin-color-faint);
+}
+/* 指标卡标签内的 Lucide 图标：跟随标签语义色（风险栏自动取 near / expired 色） */
+.stockin-metric-label .stockin-icon,
+.stockin-risk-block-label .stockin-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.stockin-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.stockin-icon--sm {
+  width: 15px;
+  height: 15px;
 }
 
 /* 触控目标：所有交互控件最小 44×44px（手机档强制）。 */
@@ -54,335 +218,1566 @@ a.stockin-touch {
   align-items: center;
 }
 
-/* ---------- 布局 ---------- */
-.stockin-layout {
+/* ==========================================================================
+   应用骨架：桌面左侧竖栏 / 平板图标栏 / 手机底部 Tab
+   ========================================================================== */
+.stockin-app-shell {
+  display: grid;
+  grid-template-columns: var(--stockin-sidebar-w) minmax(0, 1fr);
   min-height: 100vh;
 }
 
-.stockin-header {
+.stockin-sidebar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--stockin-gap);
-  padding: 0 var(--stockin-gap);
-  background: #001529;
+  flex-direction: column;
+  gap: var(--stockin-s6);
+  padding: var(--stockin-s6) var(--stockin-s3) var(--stockin-s4);
+  background: var(--stockin-color-surface);
+  border-right: 1px solid var(--stockin-color-border-visible);
 }
 
-.stockin-header-title {
-  margin: 0;
-  color: #fff;
-  font-size: 18px;
+.stockin-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--stockin-s3);
+}
+.stockin-brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--stockin-color-primary);
+  color: var(--stockin-color-on-primary);
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  flex: none;
+}
+.stockin-brand-text strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.stockin-brand-text small {
+  display: block;
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  letter-spacing: 0.04em;
+}
+
+.stockin-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stockin-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 44px;
+  padding: 0 var(--stockin-s3);
+  border: 0;
+  background: transparent;
+  color: var(--stockin-color-muted);
+  border-radius: var(--stockin-radius);
+  font-size: var(--stockin-fs-body);
+  text-align: left;
+  text-decoration: none;
+  position: relative;
+  width: 100%;
+  cursor: pointer;
+  transition: background var(--stockin-fast) var(--stockin-ease),
+    color var(--stockin-fast) var(--stockin-ease);
+}
+.stockin-nav-item:hover {
+  background: var(--stockin-color-subtle);
+  color: var(--stockin-color-text);
+  text-decoration: none;
+}
+.stockin-nav-item.is-active {
+  background: var(--stockin-color-primary-bg);
+  color: var(--stockin-color-primary);
   font-weight: 600;
-  white-space: nowrap;
+}
+.stockin-nav-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--stockin-color-primary);
 }
 
-.stockin-header-right {
+.stockin-sidebar-foot {
+  margin-top: auto;
+  padding: var(--stockin-s3);
+  border-top: 1px solid var(--stockin-color-border-visible);
+}
+.stockin-user {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: rgba(255, 255, 255, 0.85);
+  gap: 10px;
+}
+.stockin-user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--stockin-color-surface-3);
+  color: var(--stockin-color-primary);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  flex: none;
+}
+.stockin-user-meta {
+  min-width: 0;
+  flex: 1;
+}
+.stockin-user-meta b {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
 }
 
+.stockin-icon-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--stockin-radius);
+  background: transparent;
+  color: var(--stockin-color-muted);
+  cursor: pointer;
+  transition: background var(--stockin-fast) var(--stockin-ease),
+    color var(--stockin-fast) var(--stockin-ease);
+}
+.stockin-icon-btn:hover {
+  background: var(--stockin-color-subtle);
+  color: var(--stockin-color-text);
+}
+/* 手机档侧栏用户区隐藏，退出入口移到顶栏；桌面/平板不重复出现。 */
+.stockin-mobile-signout {
+  display: none;
+}
+
+.stockin-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.stockin-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--stockin-s4);
+  min-height: var(--stockin-topbar-h);
+  padding: 0 var(--stockin-s8);
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+  background: var(--stockin-color-surface);
+}
+.stockin-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--stockin-s3);
+  flex: none;
+}
+.stockin-today {
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.stockin-today i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--stockin-color-auto);
+  display: block;
+}
 .stockin-content {
-  padding: var(--stockin-gap);
+  padding: var(--stockin-s8);
+  min-width: 0;
+  flex: 1;
 }
-
 .stockin-page {
-  max-width: 1440px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
+/* ---------- 页头 ---------- */
 .stockin-page-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: var(--stockin-gap);
+  gap: var(--stockin-s4);
+  flex-wrap: wrap;
+  margin-bottom: var(--stockin-s6);
 }
-
 .stockin-page-title {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--stockin-fs-h1);
+  font-weight: 600;
+  /* 负字距只留给数字（.stockin-num / .stockin-mono），标题回到常规字距。 */
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.stockin-page-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--stockin-s2);
+  flex-wrap: wrap;
+}
+
+/* 兼容旧布局：保留原顶部 Header 相关选择器，避免因历史组件残留而失效。 */
+
+/* ==========================================================================
+   组件：面板 / 按钮补充 / 票据抬头 / 指标带 / 风险栏 / 预警行 / 标签
+   ========================================================================== */
+.stockin-panel {
+  background: var(--stockin-color-surface);
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+  min-width: 0;
+}
+.stockin-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--stockin-s3);
+  padding: var(--stockin-s4) var(--stockin-s6);
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+}
+.stockin-panel-title {
+  margin: 0;
+  font-size: var(--stockin-fs-h2);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 记录页分页条与其它页面共用同一套间距 / 分隔线（此前 .stockin-table-foot 零定义）。 */
+.stockin-panel-foot,
+.stockin-table-foot {
+  padding: var(--stockin-s3) var(--stockin-s6);
+  border-top: 1px solid var(--stockin-color-border-visible);
+  font-size: var(--stockin-fs-micro);
+  color: var(--stockin-color-faint);
+}
+
+/* 票据抬头：等宽 + 虚线，本套设计的识别点 */
+.stockin-receipt-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px dashed var(--stockin-color-control-border);
+  border-bottom: 1px dashed var(--stockin-color-control-border);
+  padding: 9px 0;
+  margin-bottom: var(--stockin-s6);
+  font-size: 12px;
+  color: var(--stockin-color-muted);
+}
+.stockin-receipt-strip > span {
+  padding: 0 var(--stockin-s4);
+  border-right: 1px solid var(--stockin-color-border-visible);
+  white-space: nowrap;
+}
+.stockin-receipt-strip > span:first-child {
+  padding-left: 0;
+}
+.stockin-receipt-strip > span:last-child {
+  /* 末项（更新于）靠右，与左侧静态信息分开 */
+  border-right: 0;
+  margin-left: auto;
+}
+.stockin-receipt-strip b {
+  color: var(--stockin-color-text);
   font-weight: 600;
 }
 
-.stockin-page-subtitle {
-  color: var(--stockin-color-muted);
-  font-size: 13px;
+/* 指标带：细线分隔，不是 6 个英雄卡 */
+.stockin-metric-band-wrap {
+  container-type: inline-size;
+  container-name: metrics;
 }
-
-/* ---------- 大屏指标卡（CSS Grid，零图表） ---------- */
-.stockin-metric-grid {
+.stockin-metric-band {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--stockin-gap);
-  margin-bottom: var(--stockin-gap);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+  background: var(--stockin-color-surface);
+  margin-bottom: var(--stockin-s6);
+  overflow: hidden;
 }
-
-.stockin-metric-card {
-  border-radius: var(--stockin-radius);
-  padding: 16px 20px;
-  background: #fff;
-  border: 1px solid #f0f0f0;
+.stockin-metric {
+  padding: var(--stockin-s6) var(--stockin-s6) var(--stockin-s4);
+  border-right: 1px solid var(--stockin-color-border-visible);
+  min-width: 0;
 }
-
+.stockin-metric:last-child {
+  border-right: 0;
+}
 .stockin-metric-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--stockin-fs-caption);
   color: var(--stockin-color-muted);
-  font-size: 13px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  /* 固定标签行高：某格标签换行时数值顶线不错位。 */
+  min-height: 21px;
 }
-
 .stockin-metric-value {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.25;
+  font-size: var(--stockin-fs-hero);
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
   font-variant-numeric: tabular-nums;
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
-.stockin-metric-sub {
-  margin-top: 6px;
-  font-size: 13px;
+.stockin-metric-unit {
+  font-size: 0.5em;
+  font-weight: 500;
   color: var(--stockin-color-muted);
+  margin-left: 4px;
+  letter-spacing: 0;
+}
+@container metrics (max-width: 560px) {
+  .stockin-metric-band {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stockin-metric:nth-child(2) {
+    border-right: 0;
+  }
+  .stockin-metric:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--stockin-color-border-visible);
+  }
 }
 
-.stockin-metric-card.is-near {
-  border-left: 4px solid var(--stockin-color-near);
+/* 大屏两栏 + 风险栏 */
+.stockin-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(260px, 1fr);
+  gap: var(--stockin-s6);
+  align-items: start;
+}
+.stockin-risk-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stockin-s3);
+}
+.stockin-risk-block {
+  padding: var(--stockin-s4) var(--stockin-s6);
+  border-radius: var(--stockin-radius-md);
+  border: 1px solid var(--stockin-color-border-visible);
+  border-left: 3px solid var(--stockin-color-border-visible);
+  background: var(--stockin-color-surface);
+}
+.stockin-risk-block.is-near {
+  border-left-color: var(--stockin-color-near);
   background: var(--stockin-color-near-bg);
 }
-
-.stockin-metric-card.is-expired {
-  border-left: 4px solid var(--stockin-color-expired);
+.stockin-risk-block.is-expired {
+  border-left-color: var(--stockin-color-expired);
   background: var(--stockin-color-expired-bg);
 }
-
-/* ---------- 状态标记（颜色 + 文字双通道） ---------- */
-.stockin-status {
-  display: inline-flex;
+.stockin-risk-block-label {
+  display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  gap: 7px;
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+  margin-bottom: 9px;
+}
+.stockin-risk-block.is-near .stockin-risk-block-label {
+  color: var(--stockin-color-near);
+}
+.stockin-risk-block.is-expired .stockin-risk-block-label {
+  color: var(--stockin-color-expired);
+}
+.stockin-risk-block-value {
+  font-size: 30px;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--stockin-color-text);
+}
+.stockin-risk-block-value small {
+  font-size: 14px;
   font-weight: 500;
+  margin-left: 3px;
+}
+.stockin-risk-block-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--stockin-color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.stockin-note-panel {
+  padding: var(--stockin-s4) var(--stockin-s6);
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+  line-height: 1.7;
+}
+.stockin-note-panel b {
+  color: var(--stockin-color-text);
+}
+/* 右栏说明降为纯文字块：首屏已有多个带框容器，不再叠第 5 个边框。 */
+.stockin-risk-column .stockin-note-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: var(--stockin-s2) 0;
+}
+/* 右栏说明面板按内容自然高度排列，不撑满剩余空间 */
+.stockin-risk-column .stockin-note-panel > * + * {
+  margin-top: 6px;
+}
+
+/* 预警行 */
+.stockin-alert-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--stockin-s2) var(--stockin-s4);
+  align-items: center;
+  padding: 13px var(--stockin-s6);
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+  position: relative;
+  transition: background var(--stockin-fast) var(--stockin-ease);
+}
+.stockin-alert-row:last-child {
+  border-bottom: 0;
+}
+.stockin-alert-row:hover {
+  background: var(--stockin-color-subtle);
+}
+.stockin-alert-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: transparent;
+}
+.stockin-alert-row.is-near::before {
+  background: var(--stockin-color-near);
+}
+.stockin-alert-row.is-expired::before {
+  background: var(--stockin-color-expired);
+}
+.stockin-alert-row-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.stockin-alert-row-name {
+  font-weight: 600;
+  font-size: var(--stockin-fs-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stockin-alert-row-spec {
+  font-size: 12px;
+  color: var(--stockin-color-faint);
+}
+.stockin-alert-row-meta {
+  font-size: 12px;
+  color: var(--stockin-color-muted);
+  grid-column: 1;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.stockin-alert-row-right {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  text-align: right;
   white-space: nowrap;
 }
-
-.stockin-status-near {
-  color: var(--stockin-color-near);
-  background: var(--stockin-color-near-bg);
-  border: 1px solid var(--stockin-color-near);
+.stockin-alert-row-money {
+  font-size: var(--stockin-fs-h2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
-
-.stockin-status-expired {
-  color: var(--stockin-color-expired);
-  background: var(--stockin-color-expired-bg);
-  border: 1px solid var(--stockin-color-expired);
-}
-
-.stockin-status-none {
+.stockin-alert-row-days {
+  font-size: 12px;
   color: var(--stockin-color-muted);
-  background: #fafafa;
-  border: 1px solid #d9d9d9;
+  margin-top: 2px;
 }
 
-.stockin-status-auto {
+/* 状态标签：颜色 + 文字双通道 */
+.stockin-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.stockin-tag i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  display: block;
+}
+.stockin-tag--near {
+  background: var(--stockin-color-near-bg);
+  color: var(--stockin-color-near);
+  border-color: var(--stockin-color-near);
+}
+.stockin-tag--expired {
+  background: var(--stockin-color-expired-bg);
+  color: var(--stockin-color-expired);
+  border-color: var(--stockin-color-expired);
+}
+.stockin-tag--none,
+.stockin-tag--manual {
+  background: var(--stockin-color-subtle);
+  color: var(--stockin-color-muted);
+  border-color: var(--stockin-color-border-visible);
+}
+.stockin-tag--auto {
+  background: var(--stockin-color-auto-bg);
   color: var(--stockin-color-auto);
-  background: #f6ffed;
-  border: 1px solid #b7eb8f;
+  border-color: var(--stockin-color-auto);
+}
+.stockin-tag--empty {
+  background: transparent;
+  color: var(--stockin-color-faint);
+  border-color: var(--stockin-color-border-visible);
+  border-style: dashed;
 }
 
-/* ---------- 预警清单 ---------- */
+/* 旧状态类保留，颜色改为语义色文字 */
+
+/* 旧指标卡：保留定义供其它页面复用，视觉对齐新令牌 */
+
+/* 旧预警清单容器 */
 .stockin-alert-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
-
-.stockin-alert-item {
+.stockin-alert-segment {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+}
+
+/* ==========================================================================
+   表格 / 卡片 / 筛选 / 批量条（沿用旧类名，样式对齐新令牌）
+   ========================================================================== */
+.stockin-table-card {
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+  background: var(--stockin-color-surface);
+  /* 横向滚动只交给表格内部容器，分页不受牵连 */
+  overflow: hidden;
+}
+/* 平板档表格 scroll.x = 1080，滚动发生在这里，而不是整张卡片 */
+.stockin-table-scroll {
+  min-width: 0;
+  overflow-x: auto;
+}
+.stockin-row-actions {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+}
+.stockin-sortable-th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.stockin-sortable-th:hover {
+  color: var(--stockin-color-primary-text);
+}
+.stockin-expand-row {
   padding: 12px 16px;
-  background: #fff;
-  border: 1px solid #f0f0f0;
-  border-radius: var(--stockin-radius);
-}
-
-.stockin-alert-item.is-near {
-  border-left: 4px solid var(--stockin-color-near);
-}
-
-.stockin-alert-item.is-expired {
-  border-left: 4px solid var(--stockin-color-expired);
-}
-
-.stockin-alert-name {
-  font-weight: 600;
-  margin-right: 8px;
-}
-
-.stockin-alert-meta {
-  color: var(--stockin-color-muted);
+  background: var(--stockin-color-subtle);
   font-size: 13px;
 }
+.stockin-expand-label {
+  color: var(--stockin-color-muted);
+  margin-right: 6px;
+}
+.stockin-expand-inner {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--stockin-s3);
+  padding: var(--stockin-s4) var(--stockin-s6);
+}
+.stockin-expand-inner div {
+  font-size: 12px;
+  color: var(--stockin-color-muted);
+}
+.stockin-expand-inner b {
+  display: block;
+  color: var(--stockin-color-text);
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
 
-/* ---------- 手机卡片列表 ---------- */
 .stockin-card-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-
-.stockin-record-card {
-  background: #fff;
-  border: 1px solid #f0f0f0;
-  border-radius: var(--stockin-radius);
+.stockin-record-card,
+.stockin-simple-card {
+  background: var(--stockin-color-surface);
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
   padding: 12px 16px;
 }
-
-.stockin-record-card-head {
+.stockin-record-card-head,
+.stockin-simple-card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  font-weight: 600;
+}
+.stockin-record-card-head {
   margin-bottom: 8px;
 }
-
 .stockin-record-card-title {
   font-weight: 600;
   font-size: 15px;
   word-break: break-all;
 }
-
-.stockin-record-grid {
+.stockin-simple-card-value {
+  font-size: 20px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  margin: 6px 0;
+}
+.stockin-simple-card-meta {
+  font-size: 13px;
+  color: var(--stockin-color-muted);
+}
+.stockin-card-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--stockin-color-border-visible);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 12px;
   font-size: 13px;
 }
-
-.stockin-record-cell-label {
-  color: var(--stockin-color-muted);
-  margin-right: 4px;
+/* 加载态归一：列表型区块一律用骨架；行 ~60px、卡 ~92px 两档。
+   微光两端取自骨架专用令牌，对比 ≥1.8:1（浅 2.00:1 / 暗 1.96:1）。
+   页面首屏才用轻量 Spin + 文字提示（见各页面 LoadingView）。 */
+.stockin-skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stockin-s2);
+  padding: var(--stockin-s4);
+}
+.stockin-skeleton-card,
+.stockin-skeleton-row {
+  border-radius: var(--stockin-radius-md);
+  background: linear-gradient(
+    90deg,
+    var(--stockin-skeleton-base) 25%,
+    var(--stockin-skeleton-shine) 50%,
+    var(--stockin-skeleton-base) 75%
+  );
+  background-size: 200% 100%;
+  animation: stockin-skeleton 1.2s ease-in-out infinite;
+}
+.stockin-skeleton-card {
+  height: 92px;
+}
+.stockin-skeleton-row {
+  height: 60px;
+  border-radius: var(--stockin-radius);
+}
+@keyframes stockin-skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
-/* ---------- 底部批量操作条（手机） ---------- */
+.stockin-filter-bar {
+  padding: var(--stockin-s3) var(--stockin-s4);
+  margin-bottom: var(--stockin-s4);
+  background: var(--stockin-color-surface);
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+}
+.stockin-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--stockin-s3);
+}
+.stockin-filter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.stockin-filter-item > .stockin-filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--stockin-color-muted);
+}
+.stockin-filter-item.is-sm {
+  flex: 0 0 150px;
+}
+.stockin-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  /* 在 `.stockin-filter-row` 里靠右，与左侧筛选项分开 */
+  margin-left: auto;
+}
+.stockin-advanced-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--stockin-color-border-visible);
+}
+.stockin-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--stockin-color-muted);
+}
+.stockin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: var(--stockin-color-primary-bg);
+  border: 1px solid var(--stockin-color-primary);
+  color: var(--stockin-color-primary-text);
+  font-size: 12px;
+}
+/* 筛选条工具行：左侧快捷筛选、右侧「更多筛选 / 重置」，两端对齐 */
+.stockin-filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.stockin-quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.stockin-quick-label {
+  margin-right: 2px;
+  font-size: 12px;
+  color: var(--stockin-color-muted);
+}
+/* 快捷筛选项：未选中为中性描边，选中才用主色，避免看成本已生效的 chips */
+.stockin-quick-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: 16px;
+  background: var(--stockin-color-surface);
+  color: var(--stockin-color-muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color var(--stockin-fast) var(--stockin-ease),
+    color var(--stockin-fast) var(--stockin-ease),
+    background var(--stockin-fast) var(--stockin-ease);
+}
+.stockin-quick-btn:hover {
+  border-color: var(--stockin-color-primary);
+  color: var(--stockin-color-primary);
+}
+.stockin-quick-btn.is-active {
+  background: var(--stockin-color-primary);
+  border-color: var(--stockin-color-primary);
+  color: var(--stockin-color-on-primary);
+  font-weight: 600;
+}
+@media (max-width: 767px) {
+  .stockin-quick-btn {
+    min-height: 44px;
+  }
+}
+.stockin-link-btn {
+  border: 0;
+  background: transparent;
+  color: var(--stockin-color-primary);
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+  padding: 8px;
+  min-height: var(--stockin-touch);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.stockin-link-btn:hover {
+  text-decoration: underline;
+}
+
 .stockin-batch-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--stockin-s3);
+  padding: 9px var(--stockin-s4);
+  margin-bottom: var(--stockin-s3);
+  border: 1px solid var(--stockin-color-primary);
+  border-radius: var(--stockin-radius-md);
+  background: var(--stockin-color-primary-bg);
+  font-size: var(--stockin-fs-caption);
+}
+.stockin-batch-bar b {
+  color: var(--stockin-color-primary);
+}
+/* 批量条：固定在列表上方（勾选即可见），手机档贴底部 Tab 之上悬浮。
+   定位统一在媒体查询里用同等特异性声明，避免被 `.is-floating` 反向覆盖。 */
+.stockin-batch-bar.is-floating {
+  box-shadow: var(--stockin-shadow-sm);
+}
+
+/* ==========================================================================
+   表单：三步分组（单列）
+   ========================================================================== */
+.stockin-form-layout {
+  display: grid;
+  /* 侧栏删除后单列到底：残留的 280px 空列会把表单挤窄。 */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--stockin-s6);
+  align-items: start;
+}
+.stockin-form-main {
+  min-width: 0;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  /* 组间 24 > 组内 16：用间距承担被删文案原先的层级职责。 */
+  gap: var(--stockin-s6);
+}
+.stockin-form-section {
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+  background: var(--stockin-color-surface);
+  overflow: hidden;
+}
+.stockin-form-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
-  background: #fff;
-  border-top: 1px solid #f0f0f0;
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+  padding: var(--stockin-s3) var(--stockin-s6);
+  border-bottom: 1px solid var(--stockin-color-border-visible);
 }
-
-/* ---------- 联动表单分组 ---------- */
-.stockin-field-group {
-  border: 1px solid #f0f0f0;
-  border-radius: var(--stockin-radius);
-  padding: 12px 16px 4px;
-  margin-bottom: 16px;
-  background: #fafafa;
+.stockin-form-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-
-.stockin-field-group-head {
+.stockin-form-section-head h3 {
+  margin: 0;
+  font-size: var(--stockin-fs-h2);
+  font-weight: 600;
+  line-height: 1.4;
+}
+/* 「三选二」是可点开的规则说明触发器，不是装饰徽标：
+   虚线底纹传达可点，热区用 ::after 外扩 8px（与 .stockin-info-tip::after 同一套做法），
+   视觉尺寸不变。 */
+.stockin-form-section-badge {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--stockin-color-muted);
+  /* 去掉 pill 底色：灰底标签与字段右侧「未填写」是同一套视觉语言，
+     容易被读成状态而不是帮助入口。改用「术语下划线」表达可解释。 */
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  line-height: 1.6;
+  cursor: help;
+  /* 虚线取 control-border（浅 3.05:1）而非跟随文字色：11px 下跟随文字会淡到看不见，
+     手机又没有 hover 可以补救。深色下 control-border 只有 2.86:1，由下方暗色块抬到 3.38:1。 */
+  --stockin-badge-underline: var(--stockin-color-control-border);
+  text-decoration: underline dashed var(--stockin-badge-underline);
+  text-underline-offset: 3px;
+}
+/* 深色下单独抬高 badge 虚线：control-border #5a7063 叠 surface #1c2822 仅 2.86:1，
+   低于非文本元素 3:1；#647c6e 实测 3.38:1。
+   只改本元素的自定义属性、不动全局令牌（control-border 还被 6 处分割线/输入框边框使用），
+   也不写 text-decoration-color ——否则该规则权重 0,3,0 会压过 :hover 的 0,2,0，
+   导致 hover 时虚线变不回 currentColor。 */
+:root[data-appearance='dark'] .stockin-form-section-badge {
+  --stockin-badge-underline: #647c6e;
+}
+.stockin-form-section-badge:hover,
+.stockin-form-section-badge:focus-visible {
+  color: var(--stockin-color-primary);
+  text-decoration-color: currentColor;
+}
+.stockin-form-section-badge::after {
+  content: '';
+  position: absolute;
+  /* 纵向 -14px：badge 实测 17.6px（11px × 1.6），17.6 + 28 = 45.6px ≥ --stockin-touch 的 44。
+     写 -13px 时只有 43.6px，差 0.4px —— 按 18px 估算会误判成刚好达标，实测才发现。
+     section-head 实测 47.4px（上下 padding 24 + h3 22.4 + 1px 分隔线），单侧余量 14.9px，
+     45.6px 完整落在 head 内，不会被 section 的 overflow:hidden 裁剪。 */
+  inset: -14px -8px;
+}
+.stockin-form-section-body {
+  padding: var(--stockin-s6);
+}
+.stockin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--stockin-s4);
+}
+.stockin-form-grid.is-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.stockin-form-grid .span-2 {
+  grid-column: 1 / -1;
+}
+.stockin-field-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 12px;
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.stockin-field-hint {
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  margin-top: 5px;
+}
+.stockin-input-group {
+  display: flex;
+  gap: 8px;
+}
+.stockin-submit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--stockin-s3);
+  padding: var(--stockin-s4) 0;
+  margin-top: var(--stockin-s2);
+  flex-wrap: wrap;
+}
+.stockin-field-wrap {
+  min-width: 0;
+}
+/* 自动推算值的输入框带浅绿底：颜色 + 中文标签 + 位置三通道之一。
+   双类名把特异性提到「控件外观统一」段的 .ant-input.ant-input /
+   .ant-select-single .ant-select-selector.ant-select-selector 之上，
+   保证 AUTO 槽的底色不会被后出现的中性控件底色吃掉。
+   只作用于 .stockin-field-auto 容器内的控件，绝不给所有输入框加底色。 */
+.stockin-field-auto .ant-input.ant-input,
+.stockin-field-auto .ant-input-affix-wrapper.ant-input-affix-wrapper,
+.stockin-field-auto .ant-input-number.ant-input-number,
+.stockin-field-auto .ant-input-number-input.ant-input-number-input,
+.stockin-field-auto .ant-input-group-addon.ant-input-group-addon,
+.stockin-field-auto .ant-select-single .ant-select-selector.ant-select-selector {
+  background: var(--stockin-color-auto-bg);
 }
 
-.stockin-field-group-title {
+/* 旧联动分组（保留兼容） */
+
+/* ==========================================================================
+   时间线（操作日志）
+   ========================================================================== */
+.stockin-timeline {
+  padding: var(--stockin-s4) var(--stockin-s6);
+}
+.stockin-tl-item {
+  /* 时间列宽可变（手机档 74px），竖线位置由同一变量推导，避免与圆点错位 */
+  --stockin-tl-time-w: 100px;
+  display: grid;
+  grid-template-columns: var(--stockin-tl-time-w) 18px minmax(0, 1fr);
+  gap: var(--stockin-s3);
+  position: relative;
+  padding-bottom: var(--stockin-s4);
+}
+.stockin-tl-item:last-child {
+  padding-bottom: 0;
+}
+.stockin-tl-item::before {
+  content: '';
+  position: absolute;
+  /* 时间列宽 + 列间距 + 圆点列内左偏移(4) + 半径(4.5) = 圆点中心 */
+  left: calc(var(--stockin-tl-time-w) + var(--stockin-s3) + 8.5px);
+  top: 16px;
+  bottom: 0;
+  width: 1px;
+  background: var(--stockin-color-border-visible);
+}
+.stockin-tl-item:last-child::before {
+  display: none;
+}
+.stockin-tl-time {
+  font-family: var(--stockin-font-num);
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  padding-top: 3px;
+}
+.stockin-tl-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--stockin-color-primary);
+  margin: 6px 0 0 4px;
+  z-index: 1;
+  box-shadow: 0 0 0 3px var(--stockin-color-primary-bg);
+}
+.stockin-tl-body b {
+  font-size: var(--stockin-fs-body);
   font-weight: 600;
 }
-
-.stockin-field-group-hint {
+.stockin-tl-body p {
+  margin: 2px 0 0;
   font-size: 12px;
   color: var(--stockin-color-muted);
 }
 
-.stockin-source-tag {
-  margin-left: 6px;
+/* ==========================================================================
+   设置 / 空状态 / 独立页 / 错误视图
+   ========================================================================== */
+.stockin-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stockin-s4);
+  max-width: min(100%, 1080px);
+}
+.stockin-setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--stockin-s3);
+  flex-wrap: wrap;
+  padding: var(--stockin-s6);
+}
+.stockin-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--stockin-s4);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+  font-size: var(--stockin-fs-caption);
+}
+.stockin-kv:last-child {
+  border-bottom: 0;
+}
+.stockin-kv span {
+  color: var(--stockin-color-muted);
+}
+.stockin-kv b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stockin-empty {
+  padding: var(--stockin-s16) var(--stockin-s6);
+  text-align: center;
+  color: var(--stockin-color-muted);
+}
+.stockin-empty b {
+  display: block;
+  color: var(--stockin-color-text);
+  margin-bottom: 4px;
+}
+.stockin-empty-icon {
+  width: 46px;
+  height: 46px;
+  margin: 0 auto var(--stockin-s3);
+  border-radius: 12px;
+  background: var(--stockin-color-subtle);
+  display: grid;
+  place-items: center;
+  color: var(--stockin-color-faint);
 }
 
-/* ---------- 独立页（登录 / 引导 / 404） ---------- */
 .stockin-standalone {
   min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--stockin-color-surface);
+}
+.stockin-standalone.is-centered {
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: linear-gradient(160deg, #e6f4ff 0%, #f5f5f5 60%);
+  background: linear-gradient(160deg, var(--stockin-color-primary-bg) 0%, var(--stockin-color-bg) 60%);
 }
-
+/* 左栏只剩品牌标识：靠垂直居中补足视觉重量，不用文案补。 */
+.stockin-login-left {
+  padding: var(--stockin-s16) var(--stockin-s12);
+  background: var(--stockin-color-primary-bg);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  /* 品牌块水平居中：此前是贴左，720px 左栏里右侧留下 620px 单边空白，
+     重心明显偏左。居中后单边空白变成对称留白，与右下同心圆构成中心锚点。 */
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+}
+.stockin-login-left::after {
+  content: '';
+  position: absolute;
+  right: -90px;
+  bottom: -90px;
+  width: 320px;
+  height: 320px;
+  border: 1px solid var(--stockin-color-primary);
+  border-radius: 50%;
+  opacity: 0.18;
+}
+.stockin-login-left::before {
+  content: '';
+  position: absolute;
+  right: -30px;
+  bottom: -30px;
+  width: 200px;
+  height: 200px;
+  border: 1px solid var(--stockin-color-primary);
+  border-radius: 50%;
+  opacity: 0.18;
+}
+.stockin-login-right {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--stockin-s12);
+  background: var(--stockin-color-surface);
+}
+.stockin-login-form {
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--stockin-s4);
+}
+.stockin-login-form h2 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.stockin-login-form .stockin-login-tech {
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  line-height: 1.7;
+  border-top: 1px dashed var(--stockin-color-control-border);
+  padding-top: var(--stockin-s3);
+  margin-top: var(--stockin-s2);
+}
+.stockin-login-form .stockin-login-tech > summary {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  cursor: pointer;
+}
+.stockin-login-form .stockin-login-tech > div {
+  padding-top: 4px;
+}
 .stockin-standalone-card {
   width: 100%;
   max-width: 420px;
-  background: #fff;
-  border-radius: 12px;
+  background: var(--stockin-color-surface-solid);
+  border-radius: var(--stockin-radius-md);
   padding: 28px 24px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--stockin-shadow-md);
+  border: 1px solid var(--stockin-color-border-visible);
 }
-
-/* ---------- 错误视图 ---------- */
 .stockin-error-box {
   padding: 24px;
-  background: #fff;
-  border-radius: var(--stockin-radius);
-  border: 1px solid #f0f0f0;
+  background: var(--stockin-color-surface);
+  border-radius: var(--stockin-radius-md);
+  border: 1px solid var(--stockin-color-border-visible);
 }
-
 .stockin-request-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--stockin-font-num);
   word-break: break-all;
   font-size: 13px;
 }
 
-/* ---------- 响应式三档 ---------- */
+/* 问号说明按钮与气泡（沿用既有交互，样式对齐新令牌） */
+.stockin-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.stockin-title-row > .stockin-page-title,
+.stockin-title-row > .stockin-panel-title {
+  margin: 0;
+}
+.stockin-info-tip {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* 视觉只有 24px，热区向外补到 44px，不占标题行的高度 */
+.stockin-info-tip::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+.stockin-info-tip-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: 50%;
+  background: var(--stockin-color-surface-solid);
+  color: var(--stockin-color-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition: border-color var(--stockin-fast), color var(--stockin-fast),
+    background var(--stockin-fast);
+}
+.stockin-info-tip:hover .stockin-info-tip-mark,
+.stockin-info-tip:focus-visible .stockin-info-tip-mark {
+  border-color: var(--stockin-color-primary);
+  background: var(--stockin-color-primary-bg);
+  color: var(--stockin-color-primary-text);
+}
+.stockin-info-tip:focus-visible {
+  outline: 2px solid var(--stockin-color-primary);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+.stockin-info-tip-content {
+  max-width: 280px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--stockin-color-text);
+}
+
+/* ==========================================================================
+   响应式三档
+   ========================================================================== */
 @media (max-width: 1199px) {
-  .stockin-metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .stockin-app-shell {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+  .stockin-sidebar {
+    padding: var(--stockin-s4) var(--stockin-s2);
+    align-items: center;
+  }
+  .stockin-brand-text,
+  .stockin-nav-item span,
+  .stockin-user-meta {
+    display: none;
+  }
+  .stockin-nav-item {
+    justify-content: center;
+    padding: 0;
+  }
+  .stockin-sidebar-foot {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    padding: var(--stockin-s3) 0 0;
+  }
+  .stockin-topbar,
+  .stockin-content {
+    padding-left: var(--stockin-s6);
+    padding-right: var(--stockin-s6);
+  }
+  .stockin-dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stockin-risk-column {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .stockin-risk-column .stockin-note-panel {
+    grid-column: 1 / -1;
+  }
+  .stockin-form-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* 指标带列数只由 @container metrics 一处决定，此处不再重复网格 / 边框规则。 */
+  .stockin-standalone {
+    grid-template-columns: 1fr;
+  }
+  .stockin-login-left {
+    display: none;
   }
 }
 
 @media (max-width: 767px) {
+  .stockin-app-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    padding-bottom: 0;
+  }
+  .stockin-main {
+    flex: 1 0 auto;
+    min-width: 0;
+  }
+  .stockin-sidebar {
+    order: 2;
+    position: sticky;
+    bottom: 0;
+    margin-top: auto;
+    flex: none;
+    z-index: 60;
+    flex-direction: row;
+    align-items: center;
+    padding: 0;
+    border-right: 0;
+    border-top: 1px solid var(--stockin-color-border-visible);
+    background: var(--stockin-color-surface);
+    height: var(--stockin-tabbar-h);
+    gap: 0;
+  }
+  .stockin-brand,
+  .stockin-sidebar-foot {
+    display: none;
+  }
+  .stockin-nav-group {
+    flex: 1;
+    min-width: 0;
+  }
+  .stockin-nav {
+    flex-direction: row;
+    justify-content: space-around;
+  }
+  .stockin-nav-item {
+    flex-direction: column;
+    gap: 2px;
+    min-height: 56px;
+    padding: 6px 2px;
+    font-size: 10px;
+    justify-content: center;
+    text-align: center;
+    border-radius: 0;
+  }
+  .stockin-nav-item span {
+    display: block;
+  }
+  .stockin-nav-item .stockin-icon {
+    width: 20px;
+    height: 20px;
+  }
+  .stockin-nav-item.is-active {
+    background: transparent;
+  }
+  .stockin-nav-item.is-active::before {
+    left: 20%;
+    right: 20%;
+    top: 0;
+    bottom: auto;
+    width: auto;
+    height: 2px;
+    border-radius: 0 0 3px 3px;
+  }
+  .stockin-topbar {
+    min-height: 56px;
+    padding: 0 var(--stockin-s4);
+  }
+  .stockin-today {
+    display: none;
+  }
+  .stockin-mobile-signout {
+    display: grid;
+    width: var(--stockin-touch);
+    height: var(--stockin-touch);
+  }
   .stockin-content {
-    padding: 12px;
+    padding: var(--stockin-s4);
   }
-  .stockin-metric-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .stockin-page-head {
+    align-items: flex-start;
   }
-  .stockin-header {
-    padding: 0 12px;
+  .stockin-page-actions {
+    width: 100%;
   }
-  .stockin-header-title {
-    font-size: 16px;
+  .stockin-page-actions .ant-btn {
+    flex: 1 1 auto;
   }
-  .stockin-page-title {
-    font-size: 18px;
+  .stockin-receipt-strip > span {
+    padding: 3px var(--stockin-s3) 3px 0;
+    border-right: 0;
+    flex: 0 0 50%;
   }
+  .stockin-receipt-strip > span:last-child {
+    margin-left: 0;
+    flex: 0 0 50%;
+  }
+  .stockin-metric {
+    padding: var(--stockin-s4);
+  }
+  /* 列数与分隔线由 @container metrics 决定；字号只在 767 档声明一次。 */
   .stockin-metric-value {
     font-size: 22px;
   }
-  .stockin-record-grid {
+  /* 手机档信息层级：指标带之后紧跟 2 张风险卡，再看预警清单，说明与
+     「调整阈值」作为页面出口收在最后。右栏在手机档用 display:contents
+     交出子项，让两张风险卡直接成为大屏栅格的子项、由 order 排序——
+     DOM 结构与 ≥768 的两栏 / 右栏 sticky 规则都不动。 */
+  .stockin-dashboard-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    row-gap: var(--stockin-s4);
+    column-gap: var(--stockin-s2);
+  }
+  .stockin-risk-column {
+    display: contents;
+  }
+  .stockin-risk-column > .stockin-risk-block {
+    order: 1;
+  }
+  .stockin-dashboard-grid > .stockin-panel {
+    order: 2;
+    grid-column: 1 / -1;
+  }
+  .stockin-risk-column .stockin-note-panel {
+    order: 3;
+    grid-column: 1 / -1;
+  }
+  .stockin-risk-block {
+    padding: var(--stockin-s3);
+  }
+  .stockin-risk-block-value {
+    font-size: 23px;
+  }
+  .stockin-alert-row {
+    padding: 12px var(--stockin-s4);
     grid-template-columns: minmax(0, 1fr);
   }
-  /* 手机档所有可点击元素强制 ≥44×44px */
+  .stockin-alert-row-right {
+    grid-column: 1;
+    grid-row: auto;
+    text-align: left;
+    margin-top: 4px;
+  }
+  .stockin-panel-head {
+    padding: var(--stockin-s3) var(--stockin-s4);
+  }
+  .stockin-form-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stockin-form-grid,
+  .stockin-form-grid.is-three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stockin-form-section-body {
+    padding: var(--stockin-s4);
+  }
+  .stockin-form-section-head {
+    padding: var(--stockin-s3) var(--stockin-s4);
+  }
+  .stockin-submit-bar {
+    position: sticky;
+    bottom: var(--stockin-tabbar-h);
+    background: var(--stockin-color-bg);
+    padding: var(--stockin-s3) 0;
+    border-top: 1px solid var(--stockin-color-border-visible);
+    z-index: 20;
+  }
+  .stockin-submit-bar .ant-btn {
+    flex: 1;
+  }
+  .stockin-filter-bar {
+    padding: var(--stockin-s3);
+  }
+  .stockin-filter-item {
+    flex: 1 1 100%;
+  }
+  .stockin-filter-item.is-sm {
+    flex: 1 1 calc(50% - 4px);
+  }
+  .stockin-standalone {
+    grid-template-columns: 1fr;
+    min-height: 100vh;
+  }
+  .stockin-login-left {
+    display: none;
+  }
+  .stockin-login-right {
+    padding: var(--stockin-s8) var(--stockin-s6);
+  }
+  .stockin-setting-row {
+    padding: var(--stockin-s4);
+  }
+  .stockin-tl-item {
+    --stockin-tl-time-w: 74px;
+  }
+  .stockin-timeline {
+    padding: var(--stockin-s4);
+  }
+  /* 手机标题 18px：与指标数值（22px）拉开层级，避免标题取得 hero 感。 */
+  .stockin-page-title {
+    font-size: 18px;
+  }
+  /* 指标值字号已在同档前一媒体查询声明，此处不重复。 */
+  .stockin-card-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* 手机档所有可点击元素强制 ≥44×44px。
+     文本输入框不在此列：antd 已按 controlHeight=44 渲染整框，
+     再给内层 input 加 min-height 会把带清除按钮的输入框撑到 44+内边距。 */
   button,
   a[role='button'],
   .ant-btn,
   .ant-select-selector,
-  .ant-input,
   .ant-input-number,
   .ant-picker,
   .ant-checkbox-wrapper {
@@ -391,19 +1786,733 @@ a.stockin-touch {
   .ant-btn {
     min-width: var(--stockin-touch);
   }
+  /* 带清除按钮的输入框：外层定高，内层撑满，避免 44 + 内边距叠成 66 */
+  .ant-input-affix-wrapper.ant-input-affix-wrapper {
+    height: var(--stockin-touch);
+    padding-top: 0;
+    padding-bottom: 0;
+    align-items: center;
+  }
+  .ant-input-affix-wrapper.ant-input-affix-wrapper .ant-input {
+    height: 100%;
+  }
   .ant-checkbox-inner {
     width: 22px;
     height: 22px;
   }
 }
 
-/* 桌面档：批量条改为普通行内工具条 */
+/* 手机档：批量条浮在底部 Tab 之上（Tab 高 62px、z-index 60），不被遮挡。
+   用与基础规则相同的 `.stockin-batch-bar.is-floating` 特异性声明，防止被反向覆盖。 */
+@media (max-width: 767px) {
+  .stockin-batch-bar.is-floating {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(var(--stockin-tabbar-h) + 12px);
+    z-index: 65;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    margin: 0;
+    box-shadow: var(--stockin-shadow-lg);
+  }
+  /* 悬浮条遮住页面底部时补出等量留白（文案一行 + 按钮 1~2 行），保证最后一张卡片仍可操作 */
+  .stockin-page:has(.stockin-batch-bar.is-floating) {
+    padding-bottom: 140px;
+  }
+}
+
+/* ==========================================================================
+   Ant Design 5 组件对齐设计令牌
+   antd 的 CSS-in-JS 用 :where() 降权，这里的普通类选择器足以覆盖。
+   ========================================================================== */
+.ant-table-wrapper .ant-table {
+  background: var(--stockin-color-surface);
+  color: var(--stockin-color-text);
+}
+.ant-table-wrapper .ant-table-thead > tr > th {
+  background: var(--stockin-color-subtle);
+  border-bottom: 1px solid var(--stockin-color-control-border);
+  color: var(--stockin-color-muted);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+}
+.ant-table-wrapper .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: var(--stockin-color-subtle);
+}
+/* 控件外观统一：输入框 / 日期 / 下拉共用同一套边框、圆角与底色。
+   重复类名是为了压过 antd 运行时注入的 :where() 低特异性规则，
+   否则会出现「输入框边框深、下拉边框浅」这类不一致。 */
+.ant-input.ant-input,
+.ant-input-affix-wrapper.ant-input-affix-wrapper,
+.ant-input-number.ant-input-number,
+.ant-picker.ant-picker,
+.ant-select-single .ant-select-selector.ant-select-selector {
+  border-radius: var(--stockin-radius);
+  border-color: var(--stockin-color-control-border);
+  background: var(--stockin-color-surface-solid);
+  color: var(--stockin-color-text);
+}
+.ant-input.ant-input:hover,
+.ant-input-affix-wrapper.ant-input-affix-wrapper:hover,
+.ant-input-number.ant-input-number:hover,
+.ant-picker.ant-picker:hover,
+.ant-select-single .ant-select-selector.ant-select-selector:hover {
+  border-color: var(--stockin-color-primary);
+}
+.ant-input.ant-input:focus,
+.ant-input-focused.ant-input-focused,
+.ant-input-affix-wrapper-focused.ant-input-affix-wrapper-focused,
+.ant-input-number-focused.ant-input-number-focused,
+.ant-picker-focused.ant-picker-focused,
+.ant-select-focused .ant-select-selector.ant-select-selector {
+  border-color: var(--stockin-color-primary);
+  /* 暗色为半透明主色光环，浅色沿用既有浅绿底，不用实色描边。 */
+  box-shadow: 0 0 0 3px var(--stockin-color-focus-glow);
+}
+.ant-input::placeholder,
+.ant-input-number-input::placeholder {
+  color: var(--stockin-color-faint);
+}
+/* 次要按钮与输入框共用同一可见边框，避免一行里出现深浅两种边框 */
+.ant-btn-default.ant-btn-default {
+  border-color: var(--stockin-color-control-border);
+}
+/* 浮层底色唯一来源：--stockin-color-elevated，与 ConfigProvider 的
+   colorBgElevated（浅 #fdfdfc / 暗 #202c27）取同一值。
+   诊断结论：此前本规则把 .ant-select-dropdown 刷成 surface-solid(#18221e)，
+   而 .ant-modal-content 因 antd CSS-in-JS 注入顺序未命中，仍是 colorBgElevated
+   (#202c27)，同屏出现深浅两种浮层。改令牌值即可对齐，无需新增覆盖规则。
+   Tooltip 是 antd 的 spotlight 实底（自带反色前景），刻意不并入，避免字色失配。 */
+.ant-modal-content,
+.ant-drawer-content,
+.ant-popover-inner,
+.ant-popover-arrow::before,
+.ant-dropdown-menu,
+.ant-select-dropdown,
+.ant-picker-panel-container,
+.ant-message-notice-content,
+.ant-notification-notice {
+  background: var(--stockin-color-elevated);
+  color: var(--stockin-color-text);
+}
+.ant-modal-content {
+  border-radius: var(--stockin-radius-lg);
+}
+.ant-modal-header,
+.ant-drawer-header {
+  background: transparent;
+  border-bottom-color: var(--stockin-color-border-visible);
+}
+.ant-modal-title,
+.ant-drawer-title {
+  color: var(--stockin-color-text);
+  font-weight: 600;
+}
+.ant-card {
+  background: var(--stockin-color-surface);
+  border-color: var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+}
+.ant-segmented {
+  background: var(--stockin-color-subtle);
+}
+.ant-tag {
+  border-radius: 20px;
+}
+/* ---------- 语义色对齐：antd 反馈组件接入全站语义令牌 ----------
+   使用「双类名」把特异性提到 antd CSS-in-JS 的 :where() 之上，
+   不新增通配规则、不使用 !important。404 的 Result 插画为图片资源，不在映射内。 */
+.ant-alert.ant-alert-error {
+  background: var(--stockin-color-expired-bg);
+  border-color: var(--stockin-color-expired);
+}
+.ant-alert.ant-alert-error .ant-alert-icon,
+.ant-alert.ant-alert-error .ant-alert-message {
+  color: var(--stockin-color-expired);
+}
+.ant-alert.ant-alert-warning {
+  background: var(--stockin-color-near-bg);
+  border-color: var(--stockin-color-near);
+}
+.ant-alert.ant-alert-warning .ant-alert-icon,
+.ant-alert.ant-alert-warning .ant-alert-message {
+  color: var(--stockin-color-near);
+}
+.ant-alert.ant-alert-success {
+  background: var(--stockin-color-auto-bg);
+  border-color: var(--stockin-color-auto);
+}
+.ant-alert.ant-alert-success .ant-alert-icon,
+.ant-alert.ant-alert-success .ant-alert-message {
+  color: var(--stockin-color-auto);
+}
+.ant-alert.ant-alert-info {
+  background: var(--stockin-color-primary-bg);
+  border-color: var(--stockin-color-primary);
+}
+.ant-alert.ant-alert-info .ant-alert-icon,
+.ant-alert.ant-alert-info .ant-alert-message {
+  color: var(--stockin-color-primary);
+}
+.ant-result-error .ant-result-icon > .anticon { color: var(--stockin-color-expired); }
+.ant-result-warning .ant-result-icon > .anticon { color: var(--stockin-color-near); }
+.ant-result-success .ant-result-icon > .anticon { color: var(--stockin-color-auto); }
+.ant-tag.ant-tag-error {
+  background: var(--stockin-color-expired-bg);
+  border-color: var(--stockin-color-expired);
+  color: var(--stockin-color-expired);
+}
+.ant-tag.ant-tag-warning {
+  background: var(--stockin-color-near-bg);
+  border-color: var(--stockin-color-near);
+  color: var(--stockin-color-near);
+}
+.ant-tag.ant-tag-success {
+  background: var(--stockin-color-auto-bg);
+  border-color: var(--stockin-color-auto);
+  color: var(--stockin-color-auto);
+}
+.ant-tag.ant-tag-processing {
+  background: var(--stockin-color-primary-bg);
+  border-color: var(--stockin-color-primary);
+  color: var(--stockin-color-primary);
+}
+.ant-message-notice-content,
+.ant-notification-notice {
+  color: var(--stockin-color-text);
+  border: 1px solid var(--stockin-color-border-visible);
+}
+.ant-message-error .anticon { color: var(--stockin-color-expired); }
+.ant-message-warning .anticon { color: var(--stockin-color-near); }
+.ant-message-success .anticon { color: var(--stockin-color-auto); }
+.ant-empty-description,
+.ant-typography-secondary {
+  color: var(--stockin-color-muted);
+}
+.ant-divider {
+  border-color: var(--stockin-color-border-visible);
+}
+.ant-table-wrapper .ant-table-expanded-row > td,
+.ant-table-wrapper .ant-table-expanded-row:hover > td {
+  background: var(--stockin-color-subtle);
+}
+
+/* 展开/收起时的图标方向 */
+.stockin-icon-rotated {
+  transform: rotate(90deg);
+}
+
+/* ==========================================================================
+   筛选条 / 设置页 / 日志时间线的补充布局
+   这些是组件引入后新增的规则（日期区间宽度、设置项成组、时间线头部），
+   不再反向覆盖上面的基础段落。
+   ========================================================================== */
+.stockin-filter-item.is-range {
+  flex: 0 0 288px;
+}
+.stockin-filter-item.is-range .ant-picker {
+  width: 100%;
+}
+.stockin-setting-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.stockin-setting-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.stockin-alert-view {
+  margin-left: auto;
+}
+.stockin-tl-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (max-width: 1199px) {
+  .stockin-filter-item.is-range {
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 767px) {
+  .stockin-filter-item.is-range {
+    flex: 1 1 100%;
+  }
+  .stockin-tl-item {
+    padding-bottom: 14px;
+  }
+  .stockin-timeline {
+    padding: 12px 16px;
+  }
+}
+
+/* ==========================================================================
+   技术信息区（备份 / 日志展开）与 IME 安全输入框
+   ========================================================================== */
+.stockin-tech-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 32px;
+  padding: 4px 0;
+}
+.stockin-tech-item {
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--stockin-color-border-visible);
+}
+.stockin-tech-label {
+  font-size: 11px;
+  color: var(--stockin-color-muted);
+  letter-spacing: 0.02em;
+}
+.stockin-tech-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+}
+.stockin-tech-head .ant-btn {
+  flex: none;
+  margin-left: 0;
+}
+.stockin-tech-value {
+  min-width: 0;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--stockin-color-text);
+  overflow-wrap: anywhere;
+}
+.stockin-tech-hint {
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  margin-top: 2px;
+}
+
+/* 预警状态分段：普通按钮，点击立即高亮，不依赖请求回显 */
+.stockin-segment-btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius);
+  background: var(--stockin-color-surface);
+  color: var(--stockin-color-muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background var(--stockin-fast) var(--stockin-ease),
+    border-color var(--stockin-fast) var(--stockin-ease),
+    color var(--stockin-fast) var(--stockin-ease);
+}
+.stockin-segment-btn:hover {
+  border-color: var(--stockin-color-primary);
+  color: var(--stockin-color-primary);
+}
+.stockin-segment-btn.is-active {
+  background: var(--stockin-color-primary-bg);
+  border-color: var(--stockin-color-primary);
+  color: var(--stockin-color-primary-text);
+  font-weight: 600;
+}
+@media (max-width: 767px) {
+  .stockin-segment-btn {
+    min-height: 44px;
+  }
+}
+
+/* 日期/数值与下拉并排时，输入区自适应剩余宽度 */
+.stockin-input-group > .ant-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 保质期：数值占剩余宽度，单位下拉固定宽度且不被压缩（窄屏曾被压到 56px） */
+.stockin-shelf-value {
+  min-width: 0;
+}
+.stockin-shelf-unit {
+  flex: 0 0 auto;
+  width: 78px;
+}
+
+/* 日期选择器：宽度占满字段；边框、圆角、高度一律由统一控件规则与 antd 令牌决定 */
+.stockin-date-picker.ant-picker,
+.stockin-date-range.ant-picker {
+  width: 100%;
+  min-height: var(--stockin-touch);
+}
+.stockin-date-picker .ant-picker-input > input,
+.stockin-date-range .ant-picker-input > input {
+  font-size: var(--stockin-fs-body);
+  color: var(--stockin-color-text);
+}
+.stockin-date-picker .ant-picker-input > input::placeholder,
+.stockin-date-range .ant-picker-input > input::placeholder {
+  color: var(--stockin-color-faint);
+}
+.stockin-date-picker .ant-picker-suffix {
+  color: var(--stockin-color-muted);
+}
+.stockin-date-range-sep {
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--stockin-color-muted);
+}
+/* 自动推算值同样带底色，与其它控件保持一致 */
+.stockin-field-auto .stockin-date-picker.ant-picker,
+.stockin-field-auto .stockin-date-range.ant-picker {
+  background: var(--stockin-color-auto-bg);
+}
+
+/* 手机档日期弹层：把宽高压进视口，避免 rc-align 因两侧空间都不足而翻出视口。
+   诊断（390x844 + reducedMotion:reduce）：面板 441px > 输入框下方 411px /
+   上方 411px，rc-align 翻到上方得 top=-45；383px 宽度经 bottomRight 对齐得 left=-26。
+   这里只约束单日期弹层（popupClassName 由 components/DateInput.tsx 注入），
+   不使用通配 / !important 压 antd 动效，也不改 token.motion=false。 */
+@media (max-width: 767px) {
+  .ant-picker-dropdown.stockin-date-picker-popup {
+    max-width: min(320px, calc(100vw - 48px));
+  }
+  .ant-picker-dropdown.stockin-date-picker-popup .ant-picker-panel-container {
+    width: 100%;
+    max-width: 100%;
+    max-height: min(360px, calc(100vh - 160px));
+    overflow-y: auto;
+  }
+  /* antd 运行时注入的 CSS-in-JS 会晚于本文件；用重复类名把特异性抬到其之上，
+     把面板 / 内容表格 / 单元格压进 324px，保证 7 列星期与表头左右箭头完整可见。
+     不加 !important、不用通配规则。 */
+  .ant-picker-dropdown.stockin-date-picker-popup .ant-picker-panel-container .ant-picker-panel.ant-picker-panel,
+  .ant-picker-dropdown.stockin-date-picker-popup .ant-picker-panel-container .ant-picker-date-panel.ant-picker-date-panel,
+  .ant-picker-dropdown.stockin-date-picker-popup .ant-picker-panel-container .ant-picker-body.ant-picker-body {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .ant-picker-dropdown.stockin-date-picker-popup .ant-picker-panel-container .ant-picker-content.ant-picker-content {
+    width: 100%;
+    table-layout: fixed;
+  }
+  .ant-picker-dropdown.stockin-date-picker-popup .ant-picker-panel-container .ant-picker-cell.ant-picker-cell {
+    padding: 2px 0;
+  }
+  .ant-picker-dropdown.stockin-date-picker-popup .ant-picker-panel-container .ant-picker-cell-inner.ant-picker-cell-inner {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    line-height: 34px;
+  }
+  /* 日期区间双面板只限宽不限高，避免两栏被压到不可读。 */
+  .ant-picker-dropdown.stockin-date-range-popup {
+    max-width: calc(100vw - 24px);
+  }
+}
+
+/* 大屏右栏：预警清单往往比右栏长得多，风险栏随滚动保持可见，
+   不在列表下方留下一大片空白后仍看不到风险数字。 */
 @media (min-width: 1200px) {
-  .stockin-batch-bar {
-    position: static;
-    box-shadow: none;
-    border: 1px solid #f0f0f0;
-    border-radius: var(--stockin-radius);
-    margin-bottom: 12px;
+  .stockin-risk-column {
+    position: sticky;
+    top: var(--stockin-s4);
+    /* 内容过高时自行滚动，不与页面滚动条抢高度、不把风险数字顶出视口。 */
+    max-height: calc(100vh - var(--stockin-topbar-h) - var(--stockin-s8));
+    overflow: auto;
+  }
+}
+
+/* ==========================================================================
+   分页 / 问号说明 / 视口骨架 / 工作台分段
+   以下几组是独立组件自己的样式，与上面的设计令牌、响应式段落无覆盖关系。
+   ========================================================================== */
+
+/* ---------- 分页：原型 .pager，纯按钮，无每页条数下拉、无输入框 ---------- */
+.stockin-pager-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--stockin-color-border-visible);
+}
+.stockin-panel-foot .stockin-pager-wrap,
+.stockin-table-foot .stockin-pager-wrap {
+  padding: 0;
+  border-top: 0;
+}
+.stockin-card-pager {
+  margin-top: 12px;
+}
+.stockin-pager-summary {
+  font-size: 13px;
+  color: var(--stockin-color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.stockin-pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.stockin-pager-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius);
+  background: var(--stockin-color-surface);
+  color: var(--stockin-color-muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--stockin-fast) var(--stockin-ease),
+    color var(--stockin-fast) var(--stockin-ease);
+}
+.stockin-pager-btn:hover:not(.is-on):not(:disabled) {
+  border-color: var(--stockin-color-primary);
+  color: var(--stockin-color-primary);
+}
+.stockin-pager-btn.is-on {
+  background: var(--stockin-color-primary);
+  border-color: var(--stockin-color-primary);
+  color: var(--stockin-color-on-primary);
+  font-weight: 600;
+}
+.stockin-pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.stockin-pager-btn:focus-visible {
+  outline: 2px solid var(--stockin-color-primary);
+  outline-offset: 2px;
+}
+.stockin-pager-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 32px;
+  color: var(--stockin-color-faint);
+  font-size: 12px;
+}
+
+/* ---------- 问号说明：本地展开，不依赖浮层 portal 与 document 监听 ---------- */
+.stockin-info-tip-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.stockin-info-tip-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+  background: var(--stockin-color-surface-solid);
+  box-shadow: var(--stockin-shadow-md);
+  color: var(--stockin-color-text);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.7;
+  text-align: left;
+  white-space: normal;
+}
+.stockin-info-tip-panel.is-top {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+.stockin-info-tip-panel b {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--stockin-color-text);
+  font-weight: 600;
+}
+.stockin-info-tip-panel .stockin-info-tip-content {
+  max-width: none;
+}
+
+/* ---------- 主题化浮层：Tooltip 与 Popover ----------
+   Tooltip 的「底 / 字」配色由 app.tsx 的 components.Tooltip 指定（暗色另给一对，
+   避免深底深字）；这里只收口尺寸与描边，用 0,2,0 特异性压 antd 的 :where()，
+   不使用 !important。 */
+.ant-tooltip .ant-tooltip-inner {
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 6px 10px;
+  max-width: 240px;
+  border: 1px solid var(--stockin-color-border-visible);
+  box-shadow: none;
+}
+
+/* Popover 面板对齐 InfoTip 面板的排版（12/14 内边距、13px/1.7 正文）；
+   底色与文字色留给 antd 主题令牌（暗色 elevated = #202C27、文字 #EDF2EF），
+   这里不写死颜色，避免与主题令牌分叉。 */
+.stockin-popover.ant-popover .ant-popover-inner {
+  padding: 0;
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+  box-shadow: none;
+}
+.stockin-popover .stockin-popover-panel {
+  padding: 12px 14px;
+  max-width: 240px;
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: left;
+  white-space: normal;
+}
+.stockin-popover .stockin-popover-panel b {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+/* 多条说明时留出段距（导入规则有两条：导入方式 + 判重口径）。 */
+.stockin-popover .stockin-popover-panel > div + div {
+  margin-top: 6px;
+}
+
+/* ---------- 骨架：桌面 / 平板侧栏恰占视口高度，内容区独立滚动 ----------
+   仅 >=768px 生效。手机档侧栏会变成底部 62px 的 Tab（见响应式段落），
+   若在此处无条件设 height:100vh 会把整个主内容挤出视口。 */
+@media (min-width: 768px) {
+  html,
+  body,
+  #root,
+  .ant-app {
+    height: 100%;
+  }
+  .stockin-app-shell {
+    height: 100vh;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  .stockin-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .stockin-main {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .stockin-topbar {
+    flex: none;
+  }
+  .stockin-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+/* ---------- 导入 / 导出统一弹窗内的分段 ---------- */
+.stockin-workbench-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.stockin-workbench-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+@media (max-width: 767px) {
+  .stockin-app-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .stockin-main {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .stockin-content {
+    overflow: visible;
+  }
+  .stockin-pager-btn {
+    min-width: 44px;
+    height: 44px;
+  }
+  .stockin-pager-ellipsis {
+    height: 44px;
+  }
+  /* 面板横向位置不在此处改：`right: 0` 只对靠近右边界的触发器成立，
+     仪表盘头部那种偏左的问号会被推成负 x、整个折到视口外。
+     改为统一左对齐，由 InfoTip 组件在打开后量矩形、用 translateX 夹回视口内。 */
+  /* 面板头在窄屏改为「标题一行 / 操作一行」，避免标题竖排与按钮换行 */
+  .stockin-panel-head {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .stockin-panel-head > .stockin-panel-title {
+    flex: 1 1 100%;
+  }
+  .stockin-panel-head > div:last-child {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .stockin-alert-segment {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex: 1 1 auto;
+    gap: 6px;
+  }
+  .stockin-alert-segment .stockin-segment-btn {
+    padding: 0 4px;
+  }
+}
+
+/* ---------- 减少动态效果 ----------
+   本站自有动效只有骨架加载的微光，这里单独关掉即可（颜色过渡保留，不产生位移）。
+   antd 组件的动效由 ConfigProvider 的 `token.motion=false` 关闭（utils/theme.ts
+   读取 `prefers-reduced-motion`，app.tsx 落到令牌上）。
+
+   **禁止**再用 `* { animation-duration: 0.01ms !important }` 这类通配强杀：
+   日期/下拉弹层先渲染在 `-1000vh/-1000vw` 起步位、再靠出现动画的时序完成对齐，
+   动画被压没后 rc-align 的第二次测量会错（实测 inset 由 281px/-51px 变成
+   13941px/7629px），弹层落到视口外且瞬间撑出横向滚动条——症状就是「点日期、
+   点保质期单位没反应，只闪一下滚动条」。 */
+@media (prefers-reduced-motion: reduce) {
+  /* 免动效用静态边框 + 文字兜底，不用通配 / !important 压 antd 的动效时长；
+     antd 侧仍由 ConfigProvider 的 token.motion=false 关闭。 */
+  .stockin-skeleton-card,
+  .stockin-skeleton-row {
+    animation: none;
+    background: var(--stockin-color-surface);
+    border: 1px dashed var(--stockin-color-border-visible);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--stockin-color-muted);
+    font-size: var(--stockin-fs-caption);
+  }
+  .stockin-skeleton-list .stockin-skeleton-row:first-child::after,
+  .stockin-card-list .stockin-skeleton-card:first-child::after {
+    content: '加载中…';
   }
 }

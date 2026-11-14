@@ -1,13 +1,13 @@
 /**
  * 通用错误视图。
  *
- * 展示统一拦截层抛出的 ApiError 文案与 requestId（5xx 链路号，可复制），
- * 并可附一个重试动作。不做任何自动重试：重试只能由用户显式点击触发。
+ * 主视图只显示错误说明与显式重试；操作编号属于排查用的技术信息，
+ * 默认收进「技术信息」展开区，中文标签 + 一句用途说明，完整编号直接展示，
+ * 供拖拽或长按选取。任何重试只由用户点击触发。
  */
 import React from 'react';
 import { Alert, Button, Space, Typography } from 'antd';
 import { errorMessage, errorRequestId } from '@/services/request';
-import ClipboardButton from '@/components/ClipboardButton';
 import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 
 export interface ErrorViewProps {
@@ -27,18 +27,26 @@ const ErrorView: React.FC<ErrorViewProps> = ({
     <div className="stockin-error-box" role="alert">
       <Alert type="error" showIcon message={title} description={text} />
       {requestId !== '' ? (
-        <div style={{ marginTop: 12 }}>
-          <Typography.Text type="secondary">requestId：</Typography.Text>
-          <Typography.Text className="stockin-request-id">{requestId}</Typography.Text>
-          <ClipboardButton value={requestId} label="复制 requestId" />
-        </div>
+        <details style={{ marginTop: 12 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 13, minHeight: TOUCH_TARGET_MIN_PX }}>
+            技术信息
+          </summary>
+          <div style={{ marginTop: 8 }}>
+            <Typography.Text type="secondary">操作编号：</Typography.Text>
+            <Typography.Text className="stockin-request-id">{requestId}</Typography.Text>
+          </div>
+          <div className="stockin-hint">排查时提供该编号，可定位单次操作。</div>
+        </details>
       ) : null}
       {onRetry !== undefined ? (
         <Space style={{ marginTop: 12 }}>
           <Button
-            type="primary"
             onClick={onRetry}
-            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+            style={{
+              minHeight: TOUCH_TARGET_MIN_PX,
+              borderColor: 'var(--stockin-color-primary)',
+              color: 'var(--stockin-color-primary)',
+            }}
           >
             重试
           </Button>

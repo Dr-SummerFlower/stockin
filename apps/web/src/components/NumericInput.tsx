@@ -3,10 +3,12 @@
  *
  * 依据：设计文档 §5.1「数值输入用 raw/parsed 双态，避免 "0." 等中间态被误判为 0」。
  * `parsed` 一律复用 `@stockin/domain` 的 `parseFixed(raw, scale)`，前端不重写定点解析。
+ * 触控目标最小尺寸统一取 `TOUCH_TARGET_MIN_PX`，不再硬编码 44。
  */
 import React from 'react';
 import { Input } from 'antd';
 import { parseFixed } from '@stockin/domain';
+import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 
 export interface NumericInputProps {
   /** 输入框原始文本（受控）。 */
@@ -46,7 +48,7 @@ const NumericInput: React.FC<NumericInputProps> = ({
         const nextRaw: string = event.target.value;
         onRawChange(nextRaw, parseFixed(nextRaw, scale));
       }}
-      style={{ minHeight: 44 }}
+      style={{ minHeight: TOUCH_TARGET_MIN_PX }}
     />
   );
 };

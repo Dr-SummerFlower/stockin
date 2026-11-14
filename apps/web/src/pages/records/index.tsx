@@ -1,17 +1,20 @@
 /**
- * 进货记录列表页。
+ * 进货记录列表页（#1–#6、#11）。
  *
- * - 筛选与导出共用 `recordFilters` model 的同一份 `RecordFilter`；
- * - `<768` 由 `useBreakpoint()` 切换为卡片列表 + 底部 `BatchActionBar`；
- * - 单条删除 / 批量删除均经 `ConfirmDeleteModal` 二次确认；
- * - Excel 导入 / 导出 / 模板下载分别交给对应组件，写操作成功统一 `bumpRefresh()`。
+ * - 页头为「模板 / 导入 / 导出 / 新增记录」；导入与导出共用一个弹窗容器；
+ * - 筛选与导出共用 `recordFilters` model 的同一份 `RecordFilter`，列头排序也写回该 model；
+ * - `<768` 由 `useBreakpoint()` 切换为 4 字段卡片（自带骨架屏与总数分页）；
+ * - 单条 / 批量删除复用一个 `ConfirmDeleteModal` 实例，按动作切文案并传 `danger={false}`
+ *   （软删可恢复，不再与「不可撤销」自相矛盾）；
+ * - 导入 / 导出通过全局 `heavyBusy` 互斥，避免服务端信号量冲突产生 503。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Pagination, Space, message } from 'antd';
+import { App as AntdApp, Button } from 'antd';
 import { useModel, useNavigate } from 'umi';
 import {
   DEFAULT_PAGE_SIZE,
   type RecordFilter,
+  type RecordSortField,
   type RecordView,
 } from '@stockin/shared';
 import {
@@ -28,34 +31,27 @@ import RecordCardList from '@/components/RecordCardList';
 import BatchActionBar from '@/components/BatchActionBar';
 import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
 import ErrorView from '@/components/ErrorView';
-import ImportDrawer from '@/components/ImportDrawer';
-import ExportModal from '@/components/ExportModal';
-import TemplateDownload from '@/components/TemplateDownload';
+import Icon from '@/components/Icon';
+import WorkbenchModal from '@/components/WorkbenchModal';
+import { downloadTemplateFile } from '@/services/api/excel';
 import { ROUTES, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
+
+type DeleteState = { kind: 'one'; record: RecordView } | { kind: 'batch' } | null;
 
 const RecordsPage: React.FC = () => {
   const navigate = useNavigate();
+  const { message: holderMessage } = AntdApp.useApp();
   const { useCardList } = useBreakpoint();
   const { filter, patchFilter, resetFilter, setPage, exportFilter } =
     useModel('recordFilters');
-  const {
-    refreshKey,
-    bumpRefresh,
-    importDrawerOpen,
-    exportModalOpen,
-    openImportDrawer,
-    closeImportDrawer,
-    openExportModal,
-    closeExportModal,
-  } = useModel('ui');
+  const { refreshKey, bumpRefresh, openWorkbench, heavyBusy } = useModel('ui');
 
   const [items, setItems] = useState<readonly RecordView[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<unknown>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [deleteTarget, setDeleteTarget] = useState<RecordView | null>(null);
-  const [batchOpen, setBatchOpen] = useState<boolean>(false);
+  const [deleteState, setDeleteState] = useState<DeleteState>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [reloadToken, setReloadToken] = useState<number>(0);
 
@@ -90,12 +86,9 @@ const RecordsPage: React.FC = () => {
     [navigate],
   );
   const onDelete = useCallback((record: RecordView): void => {
-    setDeleteTarget(record);
+    setDeleteState({ kind: 'one', record });
   }, []);
-  const onPageChange = useCallback(
-    (page: number, pageSize: number): void => setPage(page, pageSize),
-    [setPage],
-  );
+  const onPageChange = useCallback((page: number): void => setPage(page), [setPage]);
   const onSelectedIdsChange = useCallback((ids: number[]): void => {
     setSelectedIds(ids);
   }, []);
@@ -115,22 +108,29 @@ const RecordsPage: React.FC = () => {
   const retry = useCallback((): void => setReloadToken((v: number): number => v + 1), []);
   const clearSelection = useCallback((): void => setSelectedIds([]), []);
 
-  const doDeleteOne = async (): Promise<void> => {
-    if (deleteTarget === null) {
-      return;
-    }
-    const id: number = deleteTarget.id;
+  /** 列头排序：同字段切方向，新字段默认降序；写回 model 会自动把 page 复位为 1。 */
+  const onSortChange = useCallback(
+    (field: RecordSortField): void => {
+      const nextOrder: 'asc' | 'desc' =
+        filter.sortBy === field && filter.sortOrder === 'desc' ? 'asc' : 'desc';
+      patchFilter({ sortBy: field, sortOrder: nextOrder });
+    },
+    [filter.sortBy, filter.sortOrder, patchFilter],
+  );
+
+  const doDeleteOne = async (record: RecordView): Promise<void> => {
+    const id: number = record.id;
     setBusy(true);
     try {
       await deleteRecord(id);
-      setDeleteTarget(null);
+      setDeleteState(null);
       setSelectedIds((prev: number[]): number[] =>
         prev.filter((value: number): boolean => value !== id),
       );
       bumpRefresh();
-      message.success('已移入回收站，可在回收站恢复');
+      holderMessage.success('已移入回收站');
     } catch (cause) {
-      message.error(errorMessage(cause, '删除失败'));
+      holderMessage.error(errorMessage(cause, '删除失败'));
     } finally {
       setBusy(false);
     }
@@ -147,84 +147,113 @@ const RecordsPage: React.FC = () => {
     setBusy(true);
     try {
       await batchDeleteRecords(payload);
-      setBatchOpen(false);
+      setDeleteState(null);
       setSelectedIds([]);
       bumpRefresh();
-      message.success(`已删除 ${ids.length} 条记录`);
+      holderMessage.success(`已移入回收站 ${ids.length} 条`);
     } catch (cause) {
-      message.error(errorMessage(cause, '批量删除失败'));
+      holderMessage.error(errorMessage(cause, '批量删除失败'));
     } finally {
       setBusy(false);
     }
   };
 
+  const onConfirmDelete = useCallback((): void => {
+    if (deleteState === null) {
+      return;
+    }
+    if (deleteState.kind === 'one') {
+      void doDeleteOne(deleteState.record);
+    } else {
+      void doBatchDelete();
+    }
+    // doDeleteOne / doBatchDelete 定义在组件内，依赖随渲染变化，此处刻意只用当前闭包。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deleteState]);
+
+  const onDownloadTemplate = useCallback(async (): Promise<void> => {
+    try {
+      const filename: string = await downloadTemplateFile();
+      holderMessage.success(`模板已下载：${filename}`);
+    } catch (cause) {
+      holderMessage.error(errorMessage(cause, '模板下载失败'));
+    }
+  }, []);
+
   const currentPage: number = filter.page ?? 1;
   const currentPageSize: number = filter.pageSize ?? DEFAULT_PAGE_SIZE;
+  const baseExportFilter: RecordFilter = exportFilter();
 
   return (
     <div className="stockin-page">
       <div className="stockin-page-head">
-        <div>
+        <div className="stockin-title-row">
+          {/* 临期口径已在设置页与筛选条说明中交代，此处不再第三次重复。 */}
           <h1 className="stockin-page-title">进货记录</h1>
-          <div className="stockin-page-subtitle">
-            筛选与导出共用同一份条件 · 导出范围 = 当前筛选 ∩ 日期范围
-          </div>
         </div>
-        <Space wrap>
+        <div className="stockin-page-actions">
+          <Button
+            icon={<Icon name="template" size="sm" />}
+            onClick={(): void => void onDownloadTemplate()}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+          >
+            下载模板
+          </Button>
+          <Button
+            icon={<Icon name="upload" size="sm" />}
+            disabled={heavyBusy}
+            onClick={(): void => openWorkbench('import')}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+          >
+            导入
+          </Button>
+          <Button
+            icon={<Icon name="download" size="sm" />}
+            disabled={heavyBusy}
+            onClick={(): void => openWorkbench('export')}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+          >
+            导出
+          </Button>
           <Button
             type="primary"
+            icon={<Icon name="plus" size="sm" />}
             onClick={(): void => navigate(ROUTES.recordNew)}
             style={{ minHeight: TOUCH_TARGET_MIN_PX }}
           >
             新增记录
           </Button>
-          <Button
-            onClick={openImportDrawer}
-            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-          >
-            导入 Excel
-          </Button>
-          <Button
-            onClick={openExportModal}
-            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-          >
-            导出 Excel
-          </Button>
-          <TemplateDownload />
-        </Space>
+        </div>
       </div>
 
       <FilterBar filter={filter} onChange={onFilterChange} onReset={onFilterReset} />
 
-      <BatchActionBar
-        selectedCount={selectedIds.length}
-        busy={busy}
-        onBatchDelete={(): void => setBatchOpen(true)}
-        onClear={clearSelection}
-      />
-
       {error !== null ? (
         <ErrorView error={error} onRetry={retry} />
       ) : (
-        <div style={{ background: '#fff', borderRadius: 8 }}>
+        <>
+          {/* 批量条固定在列表上方：勾选后立即可见，不随列表高度落到分页之下。 */}
+          <BatchActionBar
+            selectedCount={selectedIds.length}
+            busy={busy}
+            onBatchDelete={(): void => setDeleteState({ kind: 'batch' })}
+            onClear={clearSelection}
+          />
+
           {useCardList ? (
-            <div style={{ padding: 12 }}>
+            <div>
               <RecordCardList
                 items={items}
+                loading={loading}
                 selectedIds={selectedIds}
                 onToggle={onToggle}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                total={total}
+                page={currentPage}
+                pageSize={currentPageSize}
+                onPageChange={onPageChange}
               />
-              <div style={{ marginTop: 12, overflowX: 'auto' }}>
-                <Pagination
-                  current={currentPage}
-                  pageSize={currentPageSize}
-                  total={total}
-                  showSizeChanger
-                  onChange={onPageChange}
-                />
-              </div>
             </div>
           ) : (
             <RecordTable
@@ -238,49 +267,32 @@ const RecordsPage: React.FC = () => {
               page={currentPage}
               pageSize={currentPageSize}
               onPageChange={onPageChange}
+              sortBy={filter.sortBy}
+              sortOrder={filter.sortOrder}
+              onSortChange={onSortChange}
             />
           )}
-        </div>
+        </>
       )}
 
       <ConfirmDeleteModal
-        open={deleteTarget !== null}
-        title="删除该记录？"
+        open={deleteState !== null}
+        title={deleteState?.kind === 'batch' ? '批量移入回收站' : '移入回收站'}
         description={
-          deleteTarget === null
-            ? ''
-            : `「${deleteTarget.name}」将被移入回收站，可在回收站恢复。`
+          deleteState?.kind === 'batch'
+            ? `选中的 ${selectedIds.length} 条记录移入回收站，可在回收站恢复。`
+            : deleteState?.kind === 'one'
+              ? `「${deleteState.record.name}」移入回收站，可在回收站恢复。`
+              : ''
         }
         confirmText="移入回收站"
+        danger={false}
         busy={busy}
-        onConfirm={(): void => {
-          void doDeleteOne();
-        }}
-        onCancel={(): void => setDeleteTarget(null)}
+        onConfirm={onConfirmDelete}
+        onCancel={(): void => setDeleteState(null)}
       />
 
-      <ConfirmDeleteModal
-        open={batchOpen}
-        title="批量删除记录？"
-        description={`将把选中的 ${selectedIds.length} 条记录移入回收站，可在回收站逐条恢复。`}
-        confirmText="批量删除"
-        busy={busy}
-        onConfirm={(): void => {
-          void doBatchDelete();
-        }}
-        onCancel={(): void => setBatchOpen(false)}
-      />
-
-      <ImportDrawer
-        open={importDrawerOpen}
-        onClose={closeImportDrawer}
-        onImported={onImported}
-      />
-      <ExportModal
-        open={exportModalOpen}
-        baseFilter={exportFilter()}
-        onClose={closeExportModal}
-      />
+      <WorkbenchModal onImported={onImported} baseFilter={baseExportFilter} />
     </div>
   );
 };

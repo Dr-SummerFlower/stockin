@@ -24,14 +24,13 @@ export interface ImportReport {
   issues: ImportIssue[];
 }
 
-/** 模板下载请求：文档 §10.1 裁决 18「模板不含示例行」，默认 false。 */
-export interface TemplateRequest {
-  withSample?: boolean;
-}
-
-/** 导出请求：当前筛选 ∩ 日期范围，统一 POST + JSON RecordFilter。 */
+/**
+ * 导出请求：沿用当前筛选（可选），统一 POST + JSON RecordFilter。
+ * 与 `excelExportSchema.filter.optional()` 对齐；省略 filter 表示导出全部有效记录。
+ * 日期区间由调用方合并进 filter（覆盖语义，非交集）。
+ */
 export interface ExportRequest {
-  filter: RecordFilter;
+  filter?: RecordFilter;
 }
 
 /** 导入文件的请求级元数据（用于校验链与汇总日志）。 */

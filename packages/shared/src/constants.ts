@@ -70,10 +70,20 @@ export const STOP_TIMEOUT_SECONDS = 40;
 /** 全站日期展示格式与 Excel 日期列格式。文档 §2.4 BR-11。 */
 export const DATE_FORMAT = 'YYYY-MM-DD';
 
-/** 纯 HTTP 下的 CSP 字面量（由 Hono 唯一发起点下发）。文档 §10.2 裁决 29。 */
+/**
+ * 纯 HTTP 下的 CSP 字面量（由 Hono 唯一发起点下发）。文档 §10.2 裁决 29。
+ *
+ * 注意：Umi 4 生产包依赖 `new Function()` —— `regenerator-runtime` 用
+ * `Function("r","regeneratorRuntime = r")` 注入全局，且框架含
+ * `new Function("")` 特性检测。若不放开 `unsafe-eval`，浏览器会拦截并在
+ * 控制台报 "blocked a JavaScript eval (script-src) ... Missing 'unsafe-eval'"。
+ * 故显式声明 `script-src 'self' 'unsafe-eval'`（覆盖 default-src 对脚本的限制）。
+ * 本应用无内联脚本（Umi 全部走 hashed 外链），仅放开 eval 不会引入内联注入面。
+ */
 export const CSP_DEFAULT_SRC = "'self'";
 export const CSP_STYLE_SRC = "'self' 'unsafe-inline'";
-export const CSP_HEADER_VALUE = `default-src ${CSP_DEFAULT_SRC}; style-src ${CSP_STYLE_SRC}`;
+export const CSP_SCRIPT_SRC = "'self' 'unsafe-eval'";
+export const CSP_HEADER_VALUE = `default-src ${CSP_DEFAULT_SRC}; script-src ${CSP_SCRIPT_SRC}; style-src ${CSP_STYLE_SRC}`;
 
 /** 其他安全响应头字面量。文档 §3.6。 */
 export const SECURITY_HEADERS = {

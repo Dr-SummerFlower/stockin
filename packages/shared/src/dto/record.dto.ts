@@ -95,7 +95,25 @@ export interface RecordView extends RecordFields {
   expiryStatus: 'near' | 'expired' | 'none';
 }
 
-/** 条件筛选（列表、导出、预警共用）。 */
+/**
+ * 列表排序字段白名单（单一真源）：Repository 与 Zod schema 共用。
+ * B3 扩展：主表 7 列均可点列头；`remainingDays` 与 `expiryDate` 单调等价，
+ * `expiryStatus` 由服务端 CASE 表达式排序，均不引入新的业务规则。
+ */
+export const RECORD_SORT_FIELDS = [
+  'purchaseDate',
+  'expiryDate',
+  'createdAt',
+  'name',
+  'spec',
+  'quantity',
+  'amountCents',
+  'remainingDays',
+  'expiryStatus',
+] as const;
+export type RecordSortField = (typeof RECORD_SORT_FIELDS)[number];
+
+/** 条件筛选（列表、导出共用）。回收站走独立端点，不再保留无效的 includeDeleted。 */
 export interface RecordFilter {
   name?: string;
   purchaseDateFrom?: string;
@@ -104,11 +122,9 @@ export interface RecordFilter {
   expiryDateTo?: string;
   spec?: string;
   expiryStatus?: 'near' | 'expired' | 'none';
-  /** 仅回收站列表使用；常规查询恒为 false，软删由 Repository 保证排除。 */
-  includeDeleted?: boolean;
   page?: number;
   pageSize?: number;
-  sortBy?: 'purchaseDate' | 'expiryDate' | 'createdAt';
+  sortBy?: RecordSortField;
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -122,7 +138,7 @@ export interface IdempotentWrite {
   idempotencyKey?: string;
 }
 
-/** 回收站条目。 */
-export interface TrashItem extends RecordView {
-  deletedAtValue: string;
+/** 回收站批量恢复 / 批量彻底删除请求（B4）。 */
+export interface BatchIdsRequest {
+  ids: number[];
 }

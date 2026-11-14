@@ -1,6 +1,6 @@
 /**
  * 导入报告 model：保存最近一次 Excel 导入的 `ImportReport`，
- * 供 `ImportDrawer` 展示错误行（**Excel 物理行号**）与成功汇总。
+ * 供导入面板展示错误行（**Excel 物理行号**）与成功汇总。
  */
 import { useCallback, useState } from 'react';
 import type { ImportReport } from '@stockin/shared';

@@ -1,5 +1,6 @@
 /**
- * API 路由聚合器：按设计文档 §3.5 端点表注册全部业务端点，路径不增不减。
+ * API 路由聚合器：按设计文档 §3.5 端点表注册业务端点。
+ * 界面优化轮新增 B4 的两个回收站批量端点（batch-restore / batch-purge）。
  *
  * 所有子路由只做「HTTP → ServiceResult → 统一信封」的适配，
  * 业务逻辑与 SQL 一律留在 services / repositories。

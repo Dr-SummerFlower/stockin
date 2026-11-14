@@ -1,12 +1,13 @@
 /**
- * 底部批量操作条。
+ * 批量操作条：选中行后出现（主色浅底 + 1px 主色边界）。
  *
- * 依据：主理人 T04 口径 ⑦ —— <768 时固定在底部（CSS `.stockin-batch-bar`），
- * 桌面档降级为普通行内工具条；触控目标 ≥44×44px。
- * 批量删除的二次确认由页面持有 `ConfirmDeleteModal`，本组件只发事件。
+ * 依据：design/stockin-ui-design-system.md §5.2 与原型 batch-bar。
+ * 批量删除的二次确认由页面持有 `ConfirmDeleteModal`，本组件只发事件；
+ * 每屏最多 1 个主按钮，故此处不使用 primary 主按钮。
  */
 import React from 'react';
-import { Button, Typography } from 'antd';
+import { Button } from 'antd';
+import Icon from '@/components/Icon';
 import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 
 export interface BatchActionBarProps {
@@ -21,31 +22,35 @@ const BatchActionBar: React.FC<BatchActionBarProps> = ({
   busy,
   onBatchDelete,
   onClear,
-}) => (
-  <div className="stockin-batch-bar stockin-touch">
-    <Typography.Text>
-      已选 <Typography.Text strong>{selectedCount}</Typography.Text> 项
-    </Typography.Text>
-    <div className="stockin-btn-row">
-      <Button
-        onClick={onClear}
-        disabled={busy || selectedCount === 0}
-        style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-      >
-        清空选择
-      </Button>
-      <Button
-        danger
-        type="primary"
-        loading={busy}
-        disabled={selectedCount === 0}
-        onClick={onBatchDelete}
-        style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-      >
-        批量删除
-      </Button>
+}) => {
+  if (selectedCount === 0) {
+    return null;
+  }
+  return (
+    <div className="stockin-batch-bar is-floating stockin-touch">
+      <span>
+        已选中 <b>{selectedCount}</b> 条记录
+      </span>
+      <div className="stockin-btn-row">
+        <Button
+          onClick={onClear}
+          disabled={busy}
+          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+        >
+          取消选择
+        </Button>
+        <Button
+          danger
+          icon={<Icon name="trash" size="sm" />}
+          loading={busy}
+          onClick={onBatchDelete}
+          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+        >
+          批量删除
+        </Button>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default BatchActionBar;

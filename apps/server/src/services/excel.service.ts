@@ -152,7 +152,8 @@ export class ExcelService {
 
   /** GET /api/excel/template：流式写表头，不含示例行。 */
   createTemplateResponse(c: Context, ctx: ExcelContext): Response {
-    this.appendLog(Action.EXCEL_TEMPLATE, ctx, { withSample: false });
+    // 契约清理：模板恒不含示例行，不再下发无效的 withSample 字段。
+    this.appendLog(Action.EXCEL_TEMPLATE, ctx, {});
     c.header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     c.header('content-disposition', 'attachment; filename="stockin-template.xlsx"');
     c.header('cache-control', SECURITY_HEADERS.CACHE_CONTROL_API);

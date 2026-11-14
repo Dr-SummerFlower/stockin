@@ -1,14 +1,21 @@
 /**
- * 记录列表筛选条。
+ * 记录列表筛选条：默认 3 项高频条件，其余收进「更多筛选」。
  *
- * 只产出 `Partial<RecordFilter>` 补丁，由 model 的 `patchFilter` 负责把 page 复位为 1。
- * 日期统一用 `YYYY-MM-DD` 文本输入（不引入 dayjs / DatePicker），
- * 合法性在提交查询前做格式校验，日历合法性由服务端 schema 兜底。
+ * 依据：design/stockin-ui-design-system.md §5.2 与原型 view-records。
+ * 排序走主表列头，不在筛选条重复；「已应用」chips 与导出弹窗共用
+ * `describeRecordFilter()` 的同一份描述，筛选与导出共用同一份 RecordFilter。
+ *
+ * 控件统一：全部用 antd 控件（Input / Select / RangePicker），值仍是
+ * YYYY-MM-DD 字符串，与后端契约一致；日期区间用一个区间选择器承载起止两端，
+ * 不再拼两个原生日期框。
  */
-import React from 'react';
-import { Button, Col, Input, Row, Select } from 'antd';
+import React, { useState } from 'react';
+import { Button, Input, Select } from 'antd';
 import type { RecordFilter } from '@stockin/shared';
-import { isDateString } from '@/utils/format';
+import Icon from '@/components/Icon';
+import InfoTip from '@/components/InfoTip';
+import { DateRangeInput } from '@/components/DateInput';
+import { describeRecordFilter } from '@/utils/format';
 import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 
 export interface FilterBarProps {
@@ -23,150 +30,187 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'none', label: '正常' },
 ];
 
-const SORT_BY_OPTIONS: { value: string; label: string }[] = [
-  { value: 'purchaseDate', label: '进货日期' },
-  { value: 'expiryDate', label: '到期日期' },
-  { value: 'createdAt', label: '创建时间' },
-];
+const FilterBar: React.FC<FilterBarProps> = ({
+  filter,
+  onChange,
+  onReset,
+}) => {
+  const [moreOpen, setMoreOpen] = useState<boolean>(false);
+  const chips = describeRecordFilter(filter);
+  const moreCount = [
+    filter.spec,
+    filter.expiryDateFrom,
+    filter.expiryDateTo,
+  ].filter((value: string | undefined): boolean => value !== undefined && value !== '').length;
 
-const SORT_ORDER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'desc', label: '降序' },
-  { value: 'asc', label: '升序' },
-];
+  const item = (
+    label: string,
+    node: React.ReactNode,
+    kind?: 'sm' | 'range',
+  ): React.ReactNode => (
+    <div className={`stockin-filter-item${kind !== undefined ? ` is-${kind}` : ''}`}>
+      <span className="stockin-filter-label">{label}</span>
+      {node}
+    </div>
+  );
 
-function dateStatus(value: string | undefined): 'error' | undefined {
-  return value !== undefined && value !== '' && !isDateString(value) ? 'error' : undefined;
-}
+  const dateRange = (
+    label: string,
+    startValue: string | undefined,
+    startKey: 'purchaseDateFrom' | 'expiryDateFrom',
+    endValue: string | undefined,
+    endKey: 'purchaseDateTo' | 'expiryDateTo',
+  ): React.ReactNode => (
+    <DateRangeInput
+      from={startValue ?? ''}
+      to={endValue ?? ''}
+      ariaLabel={`按${label}区间筛选`}
+      onChange={(from: string, to: string): void =>
+        onChange({
+          [startKey]: from === '' ? undefined : from,
+          [endKey]: to === '' ? undefined : to,
+        })
+      }
+    />
+  );
 
-const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, onReset }) => (
-  <div
-    style={{
-      background: '#fff',
-      border: '1px solid #f0f0f0',
-      borderRadius: 8,
-      padding: 12,
-      marginBottom: 12,
-    }}
-  >
-    <Row gutter={[12, 12]} align="middle">
-      <Col xs={24} sm={12} lg={6}>
-        <Input
-          value={filter.name ?? ''}
-          placeholder="商品名称（模糊）"
-          aria-label="按商品名称筛选"
-          allowClear
-          onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-            onChange({ name: event.target.value || undefined })
-          }
-          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-        />
-      </Col>
-      <Col xs={24} sm={12} lg={6}>
-        <Input
-          value={filter.spec ?? ''}
-          placeholder="规格（模糊）"
-          aria-label="按规格筛选"
-          allowClear
-          onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-            onChange({ spec: event.target.value || undefined })
-          }
-          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={3}>
-        <Input
-          value={filter.purchaseDateFrom ?? ''}
-          placeholder="进货起 YYYY-MM-DD"
-          aria-label="进货起始日期"
-          status={dateStatus(filter.purchaseDateFrom)}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-            onChange({ purchaseDateFrom: event.target.value || undefined })
-          }
-          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={3}>
-        <Input
-          value={filter.purchaseDateTo ?? ''}
-          placeholder="进货止 YYYY-MM-DD"
-          aria-label="进货截止日期"
-          status={dateStatus(filter.purchaseDateTo)}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-            onChange({ purchaseDateTo: event.target.value || undefined })
-          }
-          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={3}>
-        <Input
-          value={filter.expiryDateFrom ?? ''}
-          placeholder="到期起 YYYY-MM-DD"
-          aria-label="到期起始日期"
-          status={dateStatus(filter.expiryDateFrom)}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-            onChange({ expiryDateFrom: event.target.value || undefined })
-          }
-          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={3}>
-        <Input
-          value={filter.expiryDateTo ?? ''}
-          placeholder="到期止 YYYY-MM-DD"
-          aria-label="到期截止日期"
-          status={dateStatus(filter.expiryDateTo)}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-            onChange({ expiryDateTo: event.target.value || undefined })
-          }
-          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={4}>
-        <Select
-          value={filter.expiryStatus}
-          placeholder="到期状态"
-          aria-label="按到期状态筛选"
-          options={STATUS_OPTIONS}
-          allowClear
-          style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX }}
-          onChange={(value: string | undefined): void =>
-            onChange({ expiryStatus: value as RecordFilter['expiryStatus'] })
-          }
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={4}>
-        <Select
-          value={filter.sortBy ?? 'purchaseDate'}
-          aria-label="排序字段"
-          options={SORT_BY_OPTIONS}
-          style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX }}
-          onChange={(value: string): void =>
-            onChange({ sortBy: value as RecordFilter['sortBy'] })
-          }
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={4}>
-        <Select
-          value={filter.sortOrder ?? 'desc'}
-          aria-label="排序方向"
-          options={SORT_ORDER_OPTIONS}
-          style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX }}
-          onChange={(value: string): void =>
-            onChange({ sortOrder: value as RecordFilter['sortOrder'] })
-          }
-        />
-      </Col>
-      <Col xs={12} sm={6} lg={4}>
-        <Button
-          block
-          onClick={onReset}
-          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-        >
-          重置筛选
-        </Button>
-      </Col>
-    </Row>
-  </div>
-);
+  return (
+    <>
+      <div className="stockin-filter-bar">
+        <div className="stockin-filter-row">
+          {item(
+            '商品名称',
+            <Input
+              value={filter.name ?? ''}
+              aria-label="按商品名称前缀筛选"
+              placeholder="请输入商品名称"
+              allowClear
+              onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                onChange({
+                  name: event.target.value === '' ? undefined : event.target.value,
+                })
+              }
+            />,
+          )}
+          {item(
+            '到期状态',
+            <Select
+              value={filter.expiryStatus}
+              placeholder="全部状态"
+              aria-label="按到期状态筛选"
+              options={STATUS_OPTIONS}
+              allowClear
+              getPopupContainer={(): HTMLElement => document.body}
+              style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX }}
+              onChange={(value: string | undefined): void =>
+                onChange({ expiryStatus: value as RecordFilter['expiryStatus'] })
+              }
+            />,
+            'sm',
+          )}
+          {item(
+            '进货日期',
+            dateRange(
+              '进货日期', filter.purchaseDateFrom, 'purchaseDateFrom',
+              filter.purchaseDateTo, 'purchaseDateTo',
+            ),
+            'range',
+          )}
+          <div className="stockin-filter-actions">
+            <button
+              type="button"
+              className="stockin-link-btn"
+              onClick={(): void => setMoreOpen((open: boolean): boolean => !open)}
+              aria-expanded={moreOpen}
+            >
+              {moreOpen ? '收起筛选' : '更多筛选'}
+              {moreCount > 0 ? ` ${moreCount}` : ''}
+              <Icon
+                name="chevron"
+                size="sm"
+                className={moreOpen ? 'stockin-icon-rotated' : undefined}
+              />
+            </button>
+            <Button onClick={onReset} style={{ minHeight: TOUCH_TARGET_MIN_PX }}>
+              重置
+            </Button>
+            <InfoTip
+              label="查看筛选规则说明"
+              title="筛选规则"
+              content="商品名称与规格按开头文字匹配；到期状态按设置页的当前阈值判定，「正常」含未填到期日的记录。"
+            />
+          </div>
+        </div>
+
+        {moreOpen ? (
+          <div className="stockin-advanced-panel">
+            <div className="stockin-filter-row">
+              {item(
+                '规格',
+                <Input
+                  value={filter.spec ?? ''}
+                  aria-label="按规格前缀筛选"
+                  allowClear
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                    onChange({
+                      spec: event.target.value === '' ? undefined : event.target.value,
+                    })
+                  }
+                />,
+                'sm',
+              )}
+              {item(
+                '到期日期',
+                dateRange(
+                  '到期日期', filter.expiryDateFrom, 'expiryDateFrom',
+                  filter.expiryDateTo, 'expiryDateTo',
+                ),
+                'range',
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {chips.length > 0 ? (
+        <div className="stockin-chips">
+          <span>已应用</span>
+          {chips.map((chip) => (
+            <span key={chip.key} className="stockin-chip">
+              {chip.label}
+              <button
+                type="button"
+                aria-label={`移除筛选 ${chip.label}`}
+                onClick={(): void =>
+                  onChange({ [chip.key]: undefined } as Partial<RecordFilter>)
+                }
+                style={{
+                  border: 0,
+                  background: 'transparent',
+                  color: 'inherit',
+                  cursor: 'pointer',
+                  minWidth: 20,
+                  minHeight: 20,
+                  padding: 0,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            className="stockin-link-btn"
+            onClick={onReset}
+            style={{ minHeight: 32 }}
+          >
+            全部清除
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+};
 
 export default FilterBar;

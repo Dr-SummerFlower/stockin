@@ -1,35 +1,52 @@
 /**
  * 统计大屏（`/`，主布局内首屏）。
  *
- * 依据：设计文档 §5.2、主理人 T04 口径 ⑥ —— **开屏一次 `GET /api/dashboard`**，
- * 6 组指标卡 + 临期 / 过期预警清单；清单由服务端排定，**前端不二次排序**；
- * 纯 CSS Grid / DOM，零图表库。写操作后由 ui model 的 `refreshKey` 触发重拉。
+ * 依据：design/stockin-ui-design-system.md §5.1 与原型 view-dashboard。
+ * 结构：页头 → 票据抬头信息带 → 4 项指标带（①–④）→ 左预警清单 / 右风险栏（⑤⑥）。
+ * 预警清单的分段 / 分页均走 `getDashboard({ page, pageSize, status })` 这一份数据源，
+ * 6 组指标始终是全表聚合；清单由服务端排定，**前端不二次排序**；
+ * 写操作后由 ui model 的 refreshKey 触发重拉。零图表库、零趋势图 / 排行 / 下钻。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Empty, Spin, Typography } from 'antd';
-import { useModel } from 'umi';
-import type { DashboardResponse } from '@stockin/shared';
+import { Button, Spin } from 'antd';
+import { useModel, useNavigate } from 'umi';
+import { DEFAULT_PAGE_SIZE, type DashboardResponse, type ExpiryAlertQuery } from '@stockin/shared';
 import { getDashboard } from '@/services/api/dashboard';
-import MetricCards from '@/components/MetricCards';
+import { MetricBand, RiskColumn } from '@/components/MetricCards';
+import EmptyState from '@/components/EmptyState';
 import ExpiryList from '@/components/ExpiryList';
 import ErrorView from '@/components/ErrorView';
-import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
+import Icon from '@/components/Icon';
+import InfoTip from '@/components/InfoTip';
+import { ROUTES } from '@/constants/routes';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { formatClock, formatDate } from '@/utils/format';
 
 const DashboardPage: React.FC = () => {
   const { refreshKey } = useModel('ui');
+  const navigate = useNavigate();
+  const { useCardList } = useBreakpoint();
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [reloadToken, setReloadToken] = useState<number>(0);
+  // 当次成功拉取的时间点，票据条据此显示真实的「更新于」，而不是写死的状态词。
+  const [updatedAt, setUpdatedAt] = useState<string>('');
+  // 预警清单的分段 / 分页条件：唯一数据源，变化即重调 getDashboard。
+  const [query, setQuery] = useState<ExpiryAlertQuery>({
+    page: 1,
+    pageSize: DEFAULT_PAGE_SIZE,
+  });
 
   useEffect((): (() => void) => {
     let active = true;
     setLoading(true);
     setError(null);
-    void getDashboard()
+    void getDashboard(query)
       .then((response: DashboardResponse): void => {
         if (active) {
           setData(response);
+          setUpdatedAt(new Date().toISOString());
         }
       })
       .catch((cause: unknown): void => {
@@ -45,51 +62,100 @@ const DashboardPage: React.FC = () => {
     return (): void => {
       active = false;
     };
-  }, [refreshKey, reloadToken]);
+  }, [query, refreshKey, reloadToken]);
 
   const retry = useCallback((): void => {
     setReloadToken((value: number): number => value + 1);
   }, []);
 
+  const onQueryChange = useCallback((next: ExpiryAlertQuery): void => {
+    setQuery(next);
+  }, []);
+
+  const onView = useCallback(
+    (id: number): void => navigate(ROUTES.recordEdit(id)),
+    [navigate],
+  );
+
+  const baseDateText: string = data === null ? '—' : formatDate(data.baseDate);
+  const thresholdText: string = data === null ? '—' : String(data.thresholdDays);
+
   return (
     <div className="stockin-page">
       <div className="stockin-page-head">
-        <div>
+        <div className="stockin-title-row">
           <h1 className="stockin-page-title">统计大屏</h1>
-          <div className="stockin-page-subtitle">
-            单次请求返回 6 组指标与预警清单 · 基准日与阈值以服务端为准
-          </div>
+          <InfoTip
+            label="查看统计口径说明"
+            title="统计口径"
+            content="累计进货金额与笔数含全部有效记录；商品种类按商品名称去重；累计进货数量为各条数量之和。预警清单按到期日由近到远排列，未填到期日的记录不计入预警。"
+          />
         </div>
-        <Button onClick={retry} style={{ minHeight: TOUCH_TARGET_MIN_PX }}>
-          刷新
-        </Button>
+        <div className="stockin-page-actions">
+          <Button
+            icon={<Icon name="list" size="sm" />}
+            onClick={(): void => navigate(ROUTES.records)}
+          >
+            查看全部记录
+          </Button>
+          <Button
+            type="primary"
+            icon={<Icon name="plus" size="sm" />}
+            onClick={(): void => navigate(ROUTES.recordNew)}
+          >
+            新增记录
+          </Button>
+        </div>
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 48 }}>
-          <Spin size="large" tip="加载中…" />
-        </div>
-      ) : error !== null ? (
+      {error !== null ? (
         <ErrorView error={error} onRetry={retry} />
       ) : data === null ? (
-        <Empty description="暂无统计数据" />
+        loading ? (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <Spin size="large" />
+            <div className="stockin-hint" style={{ marginTop: 12 }}>
+              加载中…
+            </div>
+          </div>
+        ) : (
+          <EmptyState title="暂无统计数据" />
+        )
       ) : (
         <>
-          <MetricCards metrics={data.metrics} />
-          <Card
-            title="临期 / 过期预警清单"
-            extra={
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                共 {data.alerts.length} 条
-              </Typography.Text>
-            }
-          >
+          <div className="stockin-receipt-strip">
+            <span>
+              统计日期 <b className="stockin-mono">{baseDateText}</b>
+            </span>
+            <span>
+              临期阈值 <b className="stockin-mono">{thresholdText}</b> 天
+            </span>
+            <span>
+              更新于 <b className="stockin-mono">{formatClock(updatedAt)}</b>
+            </span>
+          </div>
+
+          <MetricBand metrics={data.metrics} />
+
+          <div className="stockin-dashboard-grid">
             <ExpiryList
               alerts={data.alerts}
-              thresholdDays={data.thresholdDays}
-              baseDate={data.baseDate}
+              metrics={data.metrics}
+              alertsTotal={data.alertsTotal}
+              alertsPage={data.alertsPage}
+              alertsPageSize={data.alertsPageSize}
+              alertsStatus={data.alertsStatus}
+              loading={loading}
+              useCardList={useCardList}
+              onQueryChange={onQueryChange}
+              onView={onView}
+              onRefresh={retry}
             />
-          </Card>
+            <RiskColumn
+              metrics={data.metrics}
+              onAdjust={(): void => navigate(ROUTES.settings)}
+            />
+          </div>
         </>
       )}
     </div>

@@ -84,7 +84,7 @@ async function main(): Promise<void> {
   const server = serve({ fetch: app.fetch, port: env.port });
   scheduler.start();
   logger.info(
-    { port: env.port, publicOrigin: env.publicOrigin, userVersion: boot.migration.toVersion },
+    { port: env.port, publicOrigins: env.publicOrigins, userVersion: boot.migration.toVersion },
     '[stockin] server listening',
   );
 

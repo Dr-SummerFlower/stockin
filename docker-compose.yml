@@ -2,16 +2,19 @@
 #
 # 用法：在与本文件同目录创建 .env（.dockerignore 已排除，不会进镜像），至少设置
 #   PUBLIC_ORIGIN=http://<服务器IP>:8080
+# 如需允许多个访问地址（如同时用服务器IP、127.0.0.1、localhost 登录），再加：
+#   PUBLIC_ORIGINS=http://<服务器IP>:8080,http://127.0.0.1:8080,http://localhost:8080
 # 然后：docker compose up -d --build
 #
 # 【端口同步 · 重要】
 #  - 容器内固定监听 8080（Dockerfile: ENV PORT=8080 / EXPOSE 8080）。
-#  - env.ts 强制校验 PUBLIC_ORIGIN 的端口必须等于容器 PORT(8080)，否则启动即 fail-fast。
-#  - csrf.ts 又按 PUBLIC_ORIGIN 去掉 http:// 后的字面量精确比对浏览器 Host 头
-#    （刻意忽略 X-Forwarded-*）；浏览器 Host 里的端口就是 URL 里的宿主端口。
-#  - 因此 PUBLIC_ORIGIN 端口、HOST_PORT、容器 PORT 三者必须一致，默认全为 8080。
-#    若单独把 HOST_PORT 改成非 8080，Host 变为 <IP>:<HOST_PORT> 与 PUBLIC_ORIGIN
-#    不匹配，会让所有写操作返回 403 AUTH_CSRF_FAILED。本期容器端口固定，
+#  - env.ts 强制校验每个来源的端口必须等于容器 PORT(8080)，否则启动即 fail-fast。
+#  - env.ts/csrf.ts 按可信来源集合（PUBLIC_ORIGINS，缺省回落到 PUBLIC_ORIGIN）去掉
+#    http:// 后的字面量比对浏览器 Host 头（刻意忽略 X-Forwarded-*）；浏览器 Host 里的
+#    端口就是 URL 里的宿主端口。
+#  - 因此来源端口、HOST_PORT、容器 PORT 三者必须一致，默认全为 8080。
+#    若单独把 HOST_PORT 改成非 8080，Host 变为 <IP>:<HOST_PORT> 与来源不匹配，
+#    会让所有写操作返回 403 AUTH_CSRF_FAILED。本期容器端口固定，
 #    请勿单独修改 HOST_PORT；需要换端口时须同步调整镜像 PORT 与映射两侧。
 #
 # 【卷】data / backups 用命名卷持久化；首次创建时 Docker 会继承镜像内目录属主
@@ -35,8 +38,11 @@ services:
     ports:
       - "${HOST_PORT:-8080}:8080"
     environment:
-      # 必填：CSRF 精确比对的可信源，必须是含端口的 http 字面量。
+      # 必填：主可信来源，必须是含端口的 http 字面量（用作日志主来源与默认集合首项）。
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?必须设置为 http://<服务器IP>:<宿主端口>}
+      # 可选：逗号分隔的多来源；一旦设置即覆盖 PUBLIC_ORIGIN（用于同机 localhost/127.0.0.1
+      # 或追加局域网 IP 等）。留空则仅用 PUBLIC_ORIGIN 单值。
+      PUBLIC_ORIGINS: ${PUBLIC_ORIGINS:-}
       NODE_ENV: production
       TZ: Asia/Shanghai
       PORT: "8080"

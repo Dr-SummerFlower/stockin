@@ -83,7 +83,7 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   AUTH_RATE_LIMITED: '登录失败次数过多，请稍后重试',
 
   VALID_FAILED: '请求数据校验失败',
-  VALID_BODY_TOO_LARGE: '请求体超过大小限制',
+  VALID_BODY_TOO_LARGE: '提交内容超过大小限制',
 
   RECORD_NOT_FOUND: '记录不存在或已删除',
   RECORD_CONFLICT: '记录状态冲突',
@@ -102,8 +102,8 @@ export const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   COMMON_FORBIDDEN: '当前状态不允许该操作',
   COMMON_NOT_FOUND: '资源不存在',
   COMMON_BUSY: '系统繁忙，请稍后重试',
-  COMMON_NOT_READY: '服务尚未就绪',
-  COMMON_INTERNAL: '服务内部错误，请记录 requestId',
+  COMMON_NOT_READY: '系统正在启动，稍后重试',
+  COMMON_INTERNAL: '服务内部错误，请记录操作编号',
 };
 
 /** 取错误码所属分段。 */

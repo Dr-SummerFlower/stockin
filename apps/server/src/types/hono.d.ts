@@ -10,7 +10,7 @@ import type { SessionIdentity } from '../repositories/session.repository';
 
 /** 具备静态托管根与数据库句柄能力的 Bindings 扩展。 */
 export interface AppBindings extends HttpBindings {
-  readonly publicOrigin: string;
+  readonly publicOrigins: readonly string[];
   readonly staticRoot: string;
 }
 
