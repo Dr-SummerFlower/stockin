@@ -118,9 +118,7 @@ export function listBackups(backupDir: string): BackupMeta[] {
       continue;
     }
     try {
-      const parsed: unknown = JSON.parse(
-        fs.readFileSync(path.join(backupDir, name), 'utf8'),
-      );
+      const parsed: unknown = JSON.parse(fs.readFileSync(path.join(backupDir, name), 'utf8'));
       if (typeof parsed === 'object' && parsed !== null) {
         items.push(parsed as BackupMeta);
       }
@@ -142,10 +140,7 @@ export interface GcResult {
  * 保留最近 `keepCount` 份；GC 前与 GC 后都断言至少保留 1 份 integrity=ok。
  * 违反断言时不删除任何文件（fail-safe）。
  */
-export function gcBackups(
-  backupDir: string,
-  keepCount: number = BACKUP_KEEP_COUNT,
-): GcResult {
+export function gcBackups(backupDir: string, keepCount: number = BACKUP_KEEP_COUNT): GcResult {
   const all: BackupMeta[] = listBackups(backupDir);
   const removed: string[] = [];
   const integrityOkCount: number = all.filter((m) => m.integrity === 'ok').length;
@@ -153,14 +148,17 @@ export function gcBackups(
     return { removed, kept: all.length, integrityOkCount };
   }
   const victims: BackupMeta[] = all.slice(keepCount);
-  const remainingOk: number =
-    all.slice(0, keepCount).filter((m) => m.integrity === 'ok').length;
+  const remainingOk: number = all.slice(0, keepCount).filter((m) => m.integrity === 'ok').length;
   if (remainingOk < 1) {
     return { removed, kept: all.length, integrityOkCount };
   }
   for (const meta of victims) {
     const metaPath: string = path.join(backupDir, `${meta.file}${BACKUP_META_SUFFIX}`);
-    for (const file of [metaPath, path.join(backupDir, meta.file), path.join(backupDir, meta.gzipFile)]) {
+    for (const file of [
+      metaPath,
+      path.join(backupDir, meta.file),
+      path.join(backupDir, meta.gzipFile),
+    ]) {
       fs.rmSync(file, { force: true });
     }
     removed.push(meta.file);
@@ -185,10 +183,7 @@ export function hasEnoughSpace(backupDir: string, minFreeBytes: number | undefin
  * 生成一次备份。空间不足时返回 `{ status: 'skipped' }` 并写 WARN，
  * 调用方（bootstrap / 迁移 / CLI）据此提示但不阻断。
  */
-export async function createBackup(
-  db: Db,
-  options: CreateBackupOptions,
-): Promise<BackupResult> {
+export async function createBackup(db: Db, options: CreateBackupOptions): Promise<BackupResult> {
   const { backupDir, reason, initState } = options;
   fs.mkdirSync(backupDir, { recursive: true });
   if (!hasEnoughSpace(backupDir, options.minFreeBytes)) {

@@ -15,8 +15,23 @@ import { SECURITY_HEADERS } from '@stockin/shared';
 import type { AppEnv } from '../types/hono';
 import type { IndexDocument } from '../static';
 
-/** Umi 产物形如 `umi.bfc5c5f2.js` / `p__index.18002071.async.js`。 */
-const HASHED_ASSET_PATTERN = /\.[0-9a-f]{8,}\./i;
+/**
+ * 带 hash 的静态资源命名，两套构建引擎并存（任务卡 01 切换 Vite 引擎后新增）。
+ *
+ *  ① Umi webpack：`umi.bfc5c5f2.js`、`p__index.18002071.async.js` —— 点号分隔 + 纯 hex；
+ *  ② Umi Vite ：`assets/umi-BxyOB4sm.js` —— 连字符分隔 + base64url（含 `-` `_`、大小写）。
+ *
+ * 两套写法不重叠，分别匹配，避免把普通路由路径误判为不可变资源。
+ */
+const HASHED_ASSET_PATTERNS: readonly RegExp[] = [
+  /\.[0-9a-f]{8,}\./i,
+  /-[0-9A-Za-z_-]{8,}\.[a-z0-9]+$/i,
+];
+
+/** 是否为带 hash 的静态资源。 */
+export function isHashedAsset(path: string): boolean {
+  return HASHED_ASSET_PATTERNS.some((pattern: RegExp) => pattern.test(path));
+}
 
 /** 是否 SPA 文档请求（含 SPA fallback 的目标）。 */
 export function isIndexHtmlPath(path: string): boolean {
@@ -28,9 +43,7 @@ export function isIndexHtmlPath(path: string): boolean {
  *
  * @param document 已读取的 index.html 文档（含内容 ETag）
  */
-export function createCacheControlMiddleware(
-  document: IndexDocument,
-): MiddlewareHandler<AppEnv> {
+export function createCacheControlMiddleware(document: IndexDocument): MiddlewareHandler<AppEnv> {
   return async (c, next): Promise<void> => {
     await next();
     const headers: Headers = c.res.headers;
@@ -47,7 +60,7 @@ export function createCacheControlMiddleware(
       headers.set('etag', document.etag);
       return;
     }
-    if (HASHED_ASSET_PATTERN.test(path)) {
+    if (isHashedAsset(path)) {
       headers.set('cache-control', SECURITY_HEADERS.CACHE_CONTROL_HASHED_ASSET);
     }
   };

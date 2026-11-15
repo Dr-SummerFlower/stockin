@@ -26,11 +26,7 @@ export function resolveErrorStatus(code: ErrorCode): number {
 }
 
 /** 构造错误信封对象（供日志与测试直接消费）。 */
-export function errorEnvelope(
-  code: ErrorCode,
-  requestId: string,
-  details?: unknown,
-): ErrorPayload {
+export function errorEnvelope(code: ErrorCode, requestId: string, details?: unknown): ErrorPayload {
   return makeErrorPayload(code, requestId, details);
 }
 
@@ -38,11 +34,7 @@ export function errorEnvelope(
  * 构造错误响应。使用原生 Response，避免与 T03b 的 Hono 泛型 Context 绑死；
  * 同时下发 no-store 与 requestId，便于前端 5xx 展示。
  */
-export function errorResponse(
-  code: ErrorCode,
-  requestId: string,
-  details?: unknown,
-): Response {
+export function errorResponse(code: ErrorCode, requestId: string, details?: unknown): Response {
   const payload: ErrorPayload = errorEnvelope(code, requestId, details);
   return new Response(JSON.stringify(payload), {
     status: resolveErrorStatus(code),

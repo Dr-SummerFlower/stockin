@@ -19,7 +19,12 @@ import {
 import { logger } from '../../lib/logger';
 import { createBackup, type BackupResult } from '../backup';
 import { immediateTransaction, readUserVersion, type Db } from '../db';
-import { checkUserVersion, MIGRATION_FILE_PATTERN, SCHEMA_EXPECTED, type UserVersionVerdict } from '../schema';
+import {
+  checkUserVersion,
+  MIGRATION_FILE_PATTERN,
+  SCHEMA_EXPECTED,
+  type UserVersionVerdict,
+} from '../schema';
 
 export interface MigrationFile {
   readonly version: number;
@@ -86,9 +91,7 @@ export function renderMigrationSql(raw: string, version: number): string {
   // 注释行原样保留，避免文档里举例的占位符文本被误当作变量。
   return raw
     .split('\n')
-    .map((line: string): string =>
-      line.trimStart().startsWith('--') ? line : substitute(line),
-    )
+    .map((line: string): string => (line.trimStart().startsWith('--') ? line : substitute(line)))
     .join('\n');
 }
 

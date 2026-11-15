@@ -5,6 +5,7 @@
   "scripts": {
     "build": "umi build",
     "dev": "umi dev",
+    "lint": "eslint src --ext .ts,.tsx --max-warnings=0",
     "typecheck": "umi setup && tsc -p tsconfig.json --noEmit",
     "clean": "node -e \"const fs=require('node:fs'); for (const p of ['dist','src/.umi','src/.umi-production','.umi','node_modules/.cache']) fs.rmSync(p,{recursive:true,force:true});\""
   },
@@ -22,7 +23,10 @@
   "devDependencies": {
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@umijs/bundler-vite": "4.7.31",
+    "@umijs/lint": "4.7.33",
     "@umijs/plugins": "^4",
+    "eslint": "^8.57.1",
     "typescript": "^5"
   }
 }

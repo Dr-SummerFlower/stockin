@@ -140,7 +140,11 @@ export interface ErrorPayload {
 /**
  * 构造统一错误信封。`details` 为 undefined 时不出现在结果里，避免序列化出 `details: undefined`。
  */
-export function makeErrorPayload(code: ErrorCode, requestId: string, details?: unknown): ErrorPayload {
+export function makeErrorPayload(
+  code: ErrorCode,
+  requestId: string,
+  details?: unknown,
+): ErrorPayload {
   const payload: ErrorPayload = {
     code,
     message: errorMessageFor(code),

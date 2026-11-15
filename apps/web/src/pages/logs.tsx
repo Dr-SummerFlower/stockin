@@ -7,7 +7,7 @@
  * 工程黑话、问句或劝导语。后端契约不变。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Input, Select, Space } from 'antd';
+import { Button, Input, Select } from 'antd';
 import { useModel } from 'umi';
 import {
   getLogTechnicalFields,
@@ -119,7 +119,7 @@ const LogsPage: React.FC = () => {
   const [resultOffset, setResultOffset] = useState<number>(0);
   const [resultLimit, setResultLimit] = useState<number>(20);
   const [offset, setOffset] = useState<number>(0);
-  const [limit, setLimit] = useState<number>(20);
+  const [limit] = useState<number>(20);
   const [actionFilter, setActionFilter] = useState<string | undefined>(undefined);
   const [targetTypeFilter, setTargetTypeFilter] = useState<string | undefined>(
     undefined,

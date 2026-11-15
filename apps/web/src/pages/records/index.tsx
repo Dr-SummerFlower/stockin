@@ -178,7 +178,8 @@ const RecordsPage: React.FC = () => {
     } catch (cause) {
       holderMessage.error(errorMessage(cause, '模板下载失败'));
     }
-  }, []);
+    // holderMessage 由 AntdApp.useApp() 提供，实例在同一 App 上下文内稳定。
+  }, [holderMessage]);
 
   const currentPage: number = filter.page ?? 1;
   const currentPageSize: number = filter.pageSize ?? DEFAULT_PAGE_SIZE;

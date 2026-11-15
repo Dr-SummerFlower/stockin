@@ -109,9 +109,12 @@ export const DateRangeInput: React.FC<DateRangeInputProps> = ({
     placement="bottomLeft"
     popupClassName="stockin-date-range-popup"
     onChange={(next: [Dayjs | null, Dayjs | null] | null): void => {
+      // Dayjs 实例恒为真值，空值（null / undefined）走空串分支，语义与 `== null` 一致。
+      const start: Dayjs | null | undefined = next?.[0];
+      const end: Dayjs | null | undefined = next?.[1];
       onChange(
-        next?.[0] == null ? '' : next[0].format(DATE_FORMAT),
-        next?.[1] == null ? '' : next[1].format(DATE_FORMAT),
+        start ? start.format(DATE_FORMAT) : '',
+        end ? end.format(DATE_FORMAT) : '',
       );
     }}
     style={{ width: '100%' }}

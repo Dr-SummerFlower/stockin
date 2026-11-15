@@ -53,7 +53,7 @@ import { immediateTransaction } from '../repositories/db';
 import type { RecordRepository } from '../repositories/record.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { SettingsRepository } from '../repositories/settings.repository';
-import { toRecordFields, type RecordRow, type WriteContext } from '../repositories/types';
+import { toRecordFields, type WriteContext } from '../repositories/types';
 import type { Env } from '../env';
 import { serverToday, utcNowIso } from '../lib/today';
 import { logger } from '../lib/logger';
@@ -82,9 +82,11 @@ const ZIP_EOCD_MAGIC = 0x06054b50;
 const MAX_CELLS = (IMPORT_MAX_ROWS + 1) * EXCEL_COLUMN_COUNT * 2;
 
 /** 从 EOCD + central directory 估算解压后总字节数（不解压、不读系统时钟）。 */
-export function estimateZipUncompressedSize(
-  buffer: Buffer,
-): { ok: boolean; totalBytes: number; entries: number } {
+export function estimateZipUncompressedSize(buffer: Buffer): {
+  ok: boolean;
+  totalBytes: number;
+  entries: number;
+} {
   const start: number = Math.max(0, buffer.length - 65_557);
   let eocd = -1;
   for (let i = buffer.length - 22; i >= start; i -= 1) {
@@ -246,9 +248,10 @@ export class ExcelService {
       if (!meta.success) {
         return {
           ok: false,
-          code: payload.sizeBytes > IMPORT_MAX_FILE_BYTES
-            ? ErrorCode.VALID_BODY_TOO_LARGE
-            : ErrorCode.EXCEL_UNSUPPORTED_FILE,
+          code:
+            payload.sizeBytes > IMPORT_MAX_FILE_BYTES
+              ? ErrorCode.VALID_BODY_TOO_LARGE
+              : ErrorCode.EXCEL_UNSUPPORTED_FILE,
         };
       }
       if (payload.buffer.length < 4 || payload.buffer.readUInt32LE(0) !== ZIP_LOCAL_MAGIC) {
@@ -336,7 +339,11 @@ export class ExcelService {
       }
       if (formulaFound) {
         issues.push(
-          makeImportIssue(EXCEL_FIRST_DATA_ROW, 'EXCEL_FORMULA_FORBIDDEN', '导入文件不允许包含公式'),
+          makeImportIssue(
+            EXCEL_FIRST_DATA_ROW,
+            'EXCEL_FORMULA_FORBIDDEN',
+            '导入文件不允许包含公式',
+          ),
         );
       }
 

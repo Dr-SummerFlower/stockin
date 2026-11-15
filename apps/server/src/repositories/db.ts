@@ -9,11 +9,7 @@
  * Repository 只依赖此处导出的 `Db` 类型，不各自建连接。
  */
 import Database from 'better-sqlite3';
-import {
-  checkUserVersion,
-  SCHEMA_EXPECTED,
-  type UserVersionVerdict,
-} from './schema';
+import { checkUserVersion, SCHEMA_EXPECTED, type UserVersionVerdict } from './schema';
 
 /** 连接句柄类型（从构造签名推导，避免依赖 @types 命名空间细节）。 */
 export type Db = InstanceType<typeof Database>;

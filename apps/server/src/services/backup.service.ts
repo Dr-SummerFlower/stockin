@@ -7,11 +7,7 @@
 import { Action, ErrorCode, TARGET_TYPE } from '@stockin/shared';
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
-import {
-  createBackup,
-  listBackups,
-  type BackupMeta,
-} from '../repositories/backup';
+import { createBackup, listBackups, type BackupMeta } from '../repositories/backup';
 import type { MetaRepository } from '../repositories/meta.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { Env } from '../env';
@@ -43,7 +39,10 @@ export class BackupService {
   constructor(private readonly deps: BackupServiceDeps) {}
 
   /** 触发一次备份；导入占用信号量时返回 503 `COMMON_BUSY`，不排队。 */
-  async trigger(reason: string, requestId: string = ''): Promise<ServiceResult<BackupTriggerResult>> {
+  async trigger(
+    reason: string,
+    requestId: string = '',
+  ): Promise<ServiceResult<BackupTriggerResult>> {
     if (!this.deps.gate.acquire()) {
       return { ok: false, code: ErrorCode.COMMON_BUSY };
     }
@@ -55,8 +54,7 @@ export class BackupService {
         minFreeBytes: this.deps.env.minFreeBytes,
         keepCount: this.deps.env.backupKeepCount,
       });
-      const status: 'ok' | 'skipped' | 'failed' =
-        result.status === 'ok' ? 'ok' : 'skipped';
+      const status: 'ok' | 'skipped' | 'failed' = result.status === 'ok' ? 'ok' : 'skipped';
       const meta: BackupMeta | null = result.status === 'ok' ? result.meta : null;
       const nowUtc: string = utcNowIso();
 

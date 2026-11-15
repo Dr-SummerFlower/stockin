@@ -40,9 +40,7 @@ const PROTECTED_PREFIXES: readonly string[] = [
 ];
 
 export function isKnownApiPath(path: string): boolean {
-  return PROTECTED_PREFIXES.some(
-    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
-  );
+  return PROTECTED_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
 /** 构造认证守卫；非 `/api/*`（静态资源）与未知 API 路径直接放行。 */

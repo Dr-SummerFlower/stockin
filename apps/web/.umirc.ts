@@ -24,6 +24,16 @@ const serverPort: string = env.SERVER_PORT ?? '8080';
 // PUBLIC_ORIGIN（缺省 http://127.0.0.1:8080，与后端默认一致）。
 const apiTarget: string = env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${serverPort}`;
 
+/**
+ * 构建引擎开关（任务卡 01 的「一键回退」入口）。
+ *
+ * 默认走 Umi 4 内置 Vite 引擎（`@umijs/bundler-vite`）；
+ * 设 `UMI_BUNDLER=webpack` 即整体退回 webpack 引擎，业务代码零改动：
+ *   UMI_BUNDLER=webpack pnpm --filter @stockin/web build
+ * 两种引擎的差异只集中在本文件：`vite` 开关与 `jsMinifier` 取值。
+ */
+const useVite: boolean = (env.UMI_BUNDLER ?? 'vite') !== 'webpack';
+
 export default defineConfig({
   outputPath: 'dist',
   publicPath: '/',
@@ -44,6 +54,20 @@ export default defineConfig({
   // 仅追加一个自定义别名；`@` / `@@` 等内置别名由 Umi 合并提供，不覆盖。
   alias: {
     '@web': resolve('src'),
+    /**
+     * Vite 模式下 `@stockin/shared` / `@stockin/domain` 必须指向 **TS 源码**。
+     *
+     * 原因：这两个包由 tsc 以 CommonJS 输出（`__exportStar(require(...))`），后端
+     * `require` 消费。Vite/Rollup 把符号链接的 workspace 包按**源码**处理，不会施加
+     * CommonJS 转换，直接构建会失败（日志仅剩 `✗ Build failed`，无具体原因）。
+     * 指向源码后由 Vite 自行编译 TS，等价于 ESM 消费；webpack 模式仍走 dist，不受影响。
+     */
+    ...(useVite
+      ? {
+          '@stockin/shared': resolve('../../packages/shared/src/index.ts'),
+          '@stockin/domain': resolve('../../packages/domain/src/index.ts'),
+        }
+      : {}),
   },
   // 提高到现代浏览器基线：原生支持 async/generator，减少降级与 polyfill 体积。
   // 注意：Umi 4 生产包仍自带 regenerator-runtime（其运行时用 Function("r",...) 设置
@@ -51,19 +75,24 @@ export default defineConfig({
   // 与本 targets 无关；此处仅作现代化精简。个体商家自用，手机/电脑均为现代浏览器。
   targets: { chrome: 100, firefox: 100, safari: 15, edge: 100 },
   /**
-   * 配置级构建链修复（Umi 4.7.31 + esbuild 0.28.2，Node 26.13.0）。
-   *
-   * `@umijs/bundler-webpack` 的 `compressPlugin.js` 会**无条件**把 `"es2015"`
-   * 追加进 esbuild minifier 的 target（第 53–55 行）；esbuild 0.28.2 无法把
-   * antd 5 产物中的解构降级到该目标，报
-   * `Transforming destructuring to the configured target environment (...es2015...) is not supported yet`。
-   * 骨架阶段产物不含未转译解构故 T01 未触发，T04 引入 antd 后暴露。
-   *
-   * 改用 Umi 内置的 `terser` minifier 绕开该 esbuild 限制：不换构建器、
-   * 不换框架、不换 Umi 版本、不改 Node 版本、不改依赖与 lock，`mfsu` 保持现状。
+   * 构建引擎：默认启用 Umi 4 内置 Vite 引擎；`UMI_BUNDLER=webpack` 时该键不出现，
+   * 即回到 webpack 引擎。`mfsu` 是 webpack 专属能力，Vite 模式下不生效，故不配置
+   * （保持默认，两种引擎都不受影响）。
    */
-  jsMinifier: 'terser',
-  // mfsu 保持现状（Node 26.13.0 / Umi 4.7.31 已实测构建通过），不做改动。
+  ...(useVite ? { vite: {} } : {}),
+  /**
+   * 压缩器（两种引擎取值不同，原因见下）。
+   *
+   * webpack 引擎必须用 `terser`：`@umijs/bundler-webpack` 的 `compressPlugin.js`
+   * 会**无条件**把 `"es2015"` 追加进 esbuild minifier 的 target，而 esbuild 0.28.2
+   * 无法把 antd 5 产物中的解构降级到该目标，报
+   * `Transforming destructuring to the configured target environment (...es2015...) is not supported yet`。
+   * 这是骨架阶段不触发、T04 引入 antd 后暴露的构建链缺陷，与业务代码无关。
+   *
+   * Vite 引擎走自己的压缩链（无上述 compressPlugin），用默认 `esbuild` 即可，
+   * 省掉 terser 的额外依赖与耗时。
+   */
+  jsMinifier: useVite ? 'esbuild' : 'terser',
   proxy: {
     '/api': {
       target: apiTarget,

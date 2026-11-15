@@ -20,7 +20,12 @@ import {
 } from '../lib/crypto';
 import { configureServerTimeZone, utcNowIso } from '../lib/today';
 import { createBackup, type BackupResult } from '../repositories/backup';
-import { assertIntegrity, closeDatabase, immediateTransaction, openDatabase } from '../repositories/db';
+import {
+  assertIntegrity,
+  closeDatabase,
+  immediateTransaction,
+  openDatabase,
+} from '../repositories/db';
 import { CredentialRepository } from '../repositories/credential.repository';
 import { MetaRepository } from '../repositories/meta.repository';
 import { OperationLogRepository } from '../repositories/operation-log.repository';

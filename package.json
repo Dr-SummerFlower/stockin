@@ -11,12 +11,23 @@
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
     "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm run lint:web && pnpm run lint:server",
+    "lint:web": "pnpm --filter @stockin/web lint",
+    "lint:server": "oxlint apps/server/src packages/domain/src packages/shared/src && oxfmt --check apps/server/src packages/domain/src packages/shared/src packages/domain/tests packages/shared/tests apps/server/tests",
+    "format": "oxfmt apps/server/src packages/domain/src packages/shared/src packages/domain/tests packages/shared/tests apps/server/tests",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "verify": "node scripts/verify.mjs",
     "clean": "pnpm -r clean"
   },
   "devDependencies": {
     "@types/node": "^26",
+    "@vitest/coverage-v8": "^5.1.0",
+    "oxfmt": "0.78.0",
+    "oxlint": "1.93.0",
     "tsx": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.1.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

@@ -108,8 +108,7 @@ export function computeDateGroup(
   }
 
   // 2) 保质期「数值 + 单位」必须成对，否则视为空。
-  const shelfOk: boolean =
-    values.shelfLifeValue !== null && values.shelfLifeUnit !== null;
+  const shelfOk: boolean = values.shelfLifeValue !== null && values.shelfLifeUnit !== null;
   if (!shelfOk) {
     values.shelfLifeValue = null;
     values.shelfLifeUnit = null;

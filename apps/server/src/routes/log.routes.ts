@@ -29,9 +29,7 @@ function logBoundary(raw: string | undefined, isTo: boolean): string | undefined
   if (!DATE_ONLY.test(raw)) {
     return raw;
   }
-  const local: string = isTo
-    ? `${raw}T23:59:59.999+08:00`
-    : `${raw}T00:00:00.000+08:00`;
+  const local: string = isTo ? `${raw}T23:59:59.999+08:00` : `${raw}T00:00:00.000+08:00`;
   return new Date(local).toISOString();
 }
 

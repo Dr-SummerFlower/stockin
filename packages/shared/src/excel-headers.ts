@@ -160,10 +160,7 @@ export function excelPhysicalRow(dataIndex0: number): number {
  * 保质期「数值 + 单位」合并规则：导出为 `"12个月"`。
  * 值为空或单位为空时返回空串（由导入侧按空单元格补算规则处理）。
  */
-export function formatShelfLifeCell(
-  value: number | null,
-  unit: ShelfLifeUnitType | null,
-): string {
+export function formatShelfLifeCell(value: number | null, unit: ShelfLifeUnitType | null): string {
   if (value === null || unit === null) {
     return '';
   }

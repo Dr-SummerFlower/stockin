@@ -10,11 +10,7 @@ import {
 } from '../constants';
 
 export const settingsSchema = z.object({
-  expiryThresholdDays: z
-    .number()
-    .int()
-    .min(EXPIRY_THRESHOLD_MIN)
-    .max(EXPIRY_THRESHOLD_MAX),
+  expiryThresholdDays: z.number().int().min(EXPIRY_THRESHOLD_MIN).max(EXPIRY_THRESHOLD_MAX),
 });
 export type SettingsInput = z.infer<typeof settingsSchema>;
 

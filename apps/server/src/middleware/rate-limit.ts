@@ -27,8 +27,8 @@ const byIpUser = new Map<string, Bucket>();
 
 /** 供其它中间件复用的客户端 IP 提取（只认真实 socket）。 */
 export function clientIpOf(c: Context): string {
-  const raw: unknown = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
-    ?.incoming?.socket?.remoteAddress;
+  const raw: unknown = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })?.incoming
+    ?.socket?.remoteAddress;
   return typeof raw === 'string' && raw !== '' ? raw : 'unknown';
 }
 

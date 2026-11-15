@@ -151,10 +151,7 @@ export function toRecordFields(row: RecordRow): RecordFields {
 /** DB 6 个 INTEGER 来源位 → API 三态（decodeFieldSource 为唯一真源）。 */
 export function toRecordSources(row: RecordRow): RecordSources {
   return {
-    productionDateSrc: decodeFieldSource(
-      isEmptyText(row.production_date),
-      row.production_date_src,
-    ),
+    productionDateSrc: decodeFieldSource(isEmptyText(row.production_date), row.production_date_src),
     shelfLifeSrc: decodeFieldSource(
       row.shelf_life_value === null || row.shelf_life_unit === null,
       row.shelf_life_src,
@@ -168,10 +165,7 @@ export function toRecordSources(row: RecordRow): RecordSources {
       isEmptyNumeric(row.quantity, row.quantity_src),
       row.quantity_src,
     ),
-    amountSrc: decodeFieldSource(
-      isEmptyNumeric(row.amount_cents, row.amount_src),
-      row.amount_src,
-    ),
+    amountSrc: decodeFieldSource(isEmptyNumeric(row.amount_cents, row.amount_src), row.amount_src),
   };
 }
 
@@ -195,11 +189,7 @@ export function toDbSourceFlags(sources: RecordSources): DbSourceFlags {
  * @param today 服务器本地自然日，由应用层注入
  * @param thresholdDays 当前生效阈值 X
  */
-export function toRecordView(
-  row: RecordRow,
-  today: string,
-  thresholdDays: number,
-): RecordView {
+export function toRecordView(row: RecordRow, today: string, thresholdDays: number): RecordView {
   const d: number | null = expiryWindow(today, nullable(row.expiry_date), thresholdDays);
   return {
     ...toRecordFields(row),

@@ -27,11 +27,7 @@ export interface NewSessionRow {
 }
 
 /** 会话有效性纯函数（应用层判定，不读时钟、不查库）。 */
-export function isSessionValid(
-  row: SessionRow,
-  nowUtc: string,
-  currentAuthEpoch: number,
-): boolean {
+export function isSessionValid(row: SessionRow, nowUtc: string, currentAuthEpoch: number): boolean {
   return (
     row.revoked === 0 &&
     row.idle_expires_at > nowUtc &&
@@ -71,9 +67,9 @@ export class SessionRepository {
 
   findByTokenHash(tokenHash: string): SessionRow | null {
     return (
-      (this.db
-        .prepare('SELECT * FROM sessions WHERE token_hash = ?')
-        .get(tokenHash) as SessionRow | undefined) ?? null
+      (this.db.prepare('SELECT * FROM sessions WHERE token_hash = ?').get(tokenHash) as
+        | SessionRow
+        | undefined) ?? null
     );
   }
 

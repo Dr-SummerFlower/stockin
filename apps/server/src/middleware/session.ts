@@ -14,8 +14,8 @@ import {
   isSessionValid,
   toSessionIdentity,
   type SessionIdentity,
+  type SessionRepository,
 } from '../repositories/session.repository';
-import type { SessionRepository } from '../repositories/session.repository';
 import type { MetaRepository } from '../repositories/meta.repository';
 import type { CredentialRepository } from '../repositories/credential.repository';
 import { clientIpOf } from './rate-limit';
@@ -28,9 +28,7 @@ export interface SessionMiddlewareDeps {
 }
 
 /** 构造会话中间件；每次有效访问滑动续期空闲过期，绝对过期不变。 */
-export function createSessionMiddleware(
-  deps: SessionMiddlewareDeps,
-): MiddlewareHandler<AppEnv> {
+export function createSessionMiddleware(deps: SessionMiddlewareDeps): MiddlewareHandler<AppEnv> {
   return async (c, next): Promise<void> => {
     const token: string | null = getSessionCookie(c);
     let identity: SessionIdentity | null = null;

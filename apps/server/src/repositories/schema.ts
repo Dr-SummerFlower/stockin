@@ -120,11 +120,7 @@ export function checkUserVersion(
   }
 
   const allowance: RollbackAllowance | null = consumeRollbackAllowance(dataDir);
-  if (
-    allowance !== null &&
-    allowance.fromVersion >= actual &&
-    allowance.toVersion <= expected
-  ) {
+  if (allowance !== null && allowance.fromVersion >= actual && allowance.toVersion <= expected) {
     return 'rollback-allowed';
   }
   throw new RangeError(

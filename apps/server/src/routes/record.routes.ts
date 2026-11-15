@@ -92,11 +92,7 @@ export function registerRecordRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
     }),
     (c) => {
       const input = c.req.valid('json');
-      const result = deps.records.create(
-        input,
-        c.get('requestId') ?? '',
-        c.get('actor') ?? 'user',
-      );
+      const result = deps.records.create(input, c.get('requestId') ?? '', c.get('actor') ?? 'user');
       return result.ok
         ? c.json(result.data, 201)
         : errorResponse(result.code, c.get('requestId') ?? '', result.details);

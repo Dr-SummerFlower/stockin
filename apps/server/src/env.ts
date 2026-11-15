@@ -133,9 +133,7 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     }
     const originPort: number = Number.parseInt(originMatch[2] ?? '', 10);
     if (originPort !== port) {
-      throw new RangeError(
-        `[env] 来源端口(${originPort}) 必须与 PORT(${port}) 一致：${rawOrigin}`,
-      );
+      throw new RangeError(`[env] 来源端口(${originPort}) 必须与 PORT(${port}) 一致：${rawOrigin}`);
     }
     if (!publicOrigins.includes(rawOrigin)) {
       publicOrigins.push(rawOrigin);

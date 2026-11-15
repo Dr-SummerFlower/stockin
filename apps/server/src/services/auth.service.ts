@@ -21,9 +21,8 @@ import {
   type LogoutResponse,
   type SetupInput,
 } from '@stockin/shared';
-import type { SessionIdentity } from '../repositories/session.repository';
+import type { SessionIdentity, SessionRepository } from '../repositories/session.repository';
 import type { CredentialRepository } from '../repositories/credential.repository';
-import type { SessionRepository } from '../repositories/session.repository';
 import type { MetaRepository } from '../repositories/meta.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { Db } from '../repositories/db';
@@ -84,10 +83,7 @@ export class AuthService {
       ok: true,
       data: {
         authenticated: session !== null,
-        user:
-          session === null
-            ? null
-            : { id: session.accountId, username: username ?? 'admin' },
+        user: session === null ? null : { id: session.accountId, username: username ?? 'admin' },
         initState: this.deps.meta.initState(),
       },
     };
@@ -96,7 +92,11 @@ export class AuthService {
   /**
    * POST /api/auth/login：统一失败文案；成功后轮换 sid（吊销旧会话）并签新会话。
    */
-  login(input: LoginInput, previousToken: string | null, ctx: AuthContext): ServiceResult<LoginResult> {
+  login(
+    input: LoginInput,
+    previousToken: string | null,
+    ctx: AuthContext,
+  ): ServiceResult<LoginResult> {
     const row = this.deps.credentials.find();
     const valid: boolean =
       row !== null && verifyPasswordHash(input.password, row.password_hash, row.salt);
@@ -121,7 +121,7 @@ export class AuthService {
     const oldSessionId: string | null =
       previousToken === null
         ? null
-        : this.deps.sessions.findByTokenHash(hashSessionToken(previousToken))?.id ?? null;
+        : (this.deps.sessions.findByTokenHash(hashSessionToken(previousToken))?.id ?? null);
 
     immediateTransaction(this.deps.db, () => {
       if (oldSessionId !== null) {

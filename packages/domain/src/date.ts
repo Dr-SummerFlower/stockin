@@ -161,7 +161,7 @@ export function addCalendarMonthsClamped(date: string, months: number): string {
   }
   const total: number = civil.year * 12 + (civil.month - 1) + months;
   const year: number = Math.floor(total / 12);
-  const month: number = ((total % 12) + 12) % 12 + 1;
+  const month: number = (((total % 12) + 12) % 12) + 1;
   const day: number = Math.min(civil.day, daysInMonth(year, month));
   return formatISODate({ year, month, day });
 }

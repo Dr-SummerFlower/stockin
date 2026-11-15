@@ -49,7 +49,8 @@ export function readIndexDocument(staticRoot: string): IndexDocument {
   try {
     html = fs.readFileSync(file, 'utf8');
   } catch {
-    html = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>进货统计</title></head><body><div id="root"></div></body></html>';
+    html =
+      '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>进货统计</title></head><body><div id="root"></div></body></html>';
   }
   return { html, etag: `"${sha256Hex(html).slice(0, 24)}"` };
 }

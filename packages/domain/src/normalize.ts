@@ -26,10 +26,10 @@ export function normalizeSpec(spec: string | null | undefined): string {
 }
 
 /** 一次产出两个归一化列。 */
-export function recordNorms(record: {
-  name: string;
-  spec: string | null | undefined;
-}): { nameNorm: string; specNorm: string } {
+export function recordNorms(record: { name: string; spec: string | null | undefined }): {
+  nameNorm: string;
+  specNorm: string;
+} {
   return {
     nameNorm: normalizeName(record.name),
     specNorm: normalizeSpec(record.spec),

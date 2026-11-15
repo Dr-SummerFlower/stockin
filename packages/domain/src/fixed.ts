@@ -35,7 +35,7 @@ function halfUpDivide(numerator: bigint, denominator: bigint): bigint {
   if (denominator === 0n) {
     throw new RangeError('[fixed] 除零不执行');
   }
-  const negative: boolean = (numerator < 0n) !== (denominator < 0n);
+  const negative: boolean = numerator < 0n !== denominator < 0n;
   const absN: bigint = numerator < 0n ? -numerator : numerator;
   const absD: bigint = denominator < 0n ? -denominator : denominator;
   const quotient: bigint = (absN * 2n + absD) / (2n * absD);
@@ -115,12 +115,16 @@ export function fixedDiv(
  * @param value 单元格或输入框文本
  * @param scale 目标倍率（10 的整数次幂）
  */
-export function parseFixed(value: string | number | null | undefined, scale: number): number | null {
+export function parseFixed(
+  value: string | number | null | undefined,
+  scale: number,
+): number | null {
   assertPositiveScale(scale, 'scale');
   if (value === null || value === undefined) {
     return null;
   }
-  const text: string = typeof value === 'number' ? (Number.isFinite(value) ? String(value) : '') : value;
+  const text: string =
+    typeof value === 'number' ? (Number.isFinite(value) ? String(value) : '') : value;
   const trimmed: string = text.trim();
   if (trimmed === '' || trimmed.endsWith('.') || trimmed.endsWith('+') || trimmed.endsWith('-')) {
     return null;

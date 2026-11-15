@@ -155,7 +155,13 @@ export function parseExcelRow(
   const name: string = trimmed('name');
   if (name === '') {
     issues.push(
-      makeImportIssue(physicalRow, 'VALID_FAILED', '商品名称不能为空', excelColumnNumber('name'), 'name'),
+      makeImportIssue(
+        physicalRow,
+        'VALID_FAILED',
+        '商品名称不能为空',
+        excelColumnNumber('name'),
+        'name',
+      ),
     );
   }
 
@@ -218,19 +224,37 @@ export function parseExcelRow(
   const unitPriceParsed: number | null = parseFixed(trimmed('unitPrice'), SCALE.UNIT_PRICE);
   if (trimmed('unitPrice') !== '' && unitPriceParsed === null) {
     issues.push(
-      makeImportIssue(physicalRow, 'VALID_FAILED', '单价不是合法数字', excelColumnNumber('unitPrice'), 'unitPrice'),
+      makeImportIssue(
+        physicalRow,
+        'VALID_FAILED',
+        '单价不是合法数字',
+        excelColumnNumber('unitPrice'),
+        'unitPrice',
+      ),
     );
   }
   const quantityParsed: number | null = parseFixed(trimmed('quantity'), SCALE.QUANTITY);
   if (trimmed('quantity') !== '' && quantityParsed === null) {
     issues.push(
-      makeImportIssue(physicalRow, 'VALID_FAILED', '数量不是合法数字', excelColumnNumber('quantity'), 'quantity'),
+      makeImportIssue(
+        physicalRow,
+        'VALID_FAILED',
+        '数量不是合法数字',
+        excelColumnNumber('quantity'),
+        'quantity',
+      ),
     );
   }
   const amountParsed: number | null = parseFixed(trimmed('amount'), SCALE.AMOUNT_CENTS);
   if (trimmed('amount') !== '' && amountParsed === null) {
     issues.push(
-      makeImportIssue(physicalRow, 'VALID_FAILED', '金额不是合法数字', excelColumnNumber('amount'), 'amount'),
+      makeImportIssue(
+        physicalRow,
+        'VALID_FAILED',
+        '金额不是合法数字',
+        excelColumnNumber('amount'),
+        'amount',
+      ),
     );
   }
 

@@ -54,7 +54,8 @@ export class BootstrapError extends Error {
 export function assertNodeVersion(expected: string = NODE_VERSION_EXPECTED): void {
   const actual: string = process.versions.node;
   if (actual !== expected) {
-    const message = `[BOOTSTRAP] Node 版本不匹配：期望 ${expected}，实际 ${actual}。` +
+    const message =
+      `[BOOTSTRAP] Node 版本不匹配：期望 ${expected}，实际 ${actual}。` +
       '本项目锁定 Node 26.13.0，禁止改运行时大版本；请切换到 .node-version 指定版本后重启。';
     process.stderr.write(`${message}\n`);
     throw new BootstrapError(message);
@@ -235,9 +236,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
       initializedNow = true;
       initialPassword = password;
       if (options.suppressCredentialPrint !== true) {
-        process.stdout.write(
-          `[BOOTSTRAP] username=${BOOTSTRAP_USERNAME} password=${password}\n`,
-        );
+        process.stdout.write(`[BOOTSTRAP] username=${BOOTSTRAP_USERNAME} password=${password}\n`);
       }
     }
 
@@ -283,6 +282,17 @@ export async function main(): Promise<void> {
   }
 }
 
-if (require.main === module) {
+/**
+ * 仅在「本文件被直接当作脚本执行」时跑 CLI 自检。
+ *
+ * 不能只用 `require.main === module`：后端现由 Vite 打成单文件 `dist/index.js`，
+ * bootstrap.ts 被内联进同一个 bundle 后 `module` 就是 bundle 本身，该判断恒为真，
+ * 会在正常启动之外再跑一遍 bootstrap —— 迁移与快照并发，表现为启动失败
+ * 「快照 user_version=1 与发起备份时的 0 不符，已丢弃」。
+ * 因此叠加「入口脚本文件名必须是 bootstrap.js」这一条件：
+ * `node dist/bootstrap.js` 仍走自检；被打包时不会误触发。
+ */
+const entryScript: string = (process.argv[1] ?? '').replace(/\\/g, '/');
+if (require.main === module && entryScript.endsWith('/bootstrap.js')) {
   void main();
 }

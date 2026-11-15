@@ -32,16 +32,14 @@ export class SettingsRepository {
 
   /** 写入前在应用层校验范围（表级 CHECK 再兜一层）。 */
   setThresholdDays(days: number): boolean {
-    if (
-      !Number.isInteger(days) ||
-      days < EXPIRY_THRESHOLD_MIN ||
-      days > EXPIRY_THRESHOLD_MAX
-    ) {
+    if (!Number.isInteger(days) || days < EXPIRY_THRESHOLD_MIN || days > EXPIRY_THRESHOLD_MAX) {
       throw new RangeError(
         `[settings] 阈值必须是 ${EXPIRY_THRESHOLD_MIN}~${EXPIRY_THRESHOLD_MAX} 的整数: ${String(days)}`,
       );
     }
-    return this.db.prepare('UPDATE settings SET expiry_threshold_days = ? WHERE id = 1').run(days)
-      .changes > 0;
+    return (
+      this.db.prepare('UPDATE settings SET expiry_threshold_days = ? WHERE id = 1').run(days)
+        .changes > 0
+    );
   }
 }

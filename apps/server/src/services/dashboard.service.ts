@@ -83,11 +83,7 @@ export class DashboardService {
       const nearEnd: string = addDays(baseDate, thresholdDays);
 
       // B2：先按同条件 COUNT，再只取当前页；过期过多时也不会挤掉临期项。
-      const alertsTotal: number = this.deps.records.countExpiryAlerts(
-        baseDate,
-        nearEnd,
-        status,
-      );
+      const alertsTotal: number = this.deps.records.countExpiryAlerts(baseDate, nearEnd, status);
       const rows: readonly RecordRow[] = this.deps.records.scanExpiryAlerts(
         baseDate,
         nearEnd,

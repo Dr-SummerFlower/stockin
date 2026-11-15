@@ -34,7 +34,8 @@ export interface OperationLogFilter {
   readonly offset?: number;
 }
 
-const SENSITIVE_KEY_PATTERN = /^(password|currentPassword|newPassword|passwordHash|salt|token|tokenHash|cookie|remark)$/i;
+const SENSITIVE_KEY_PATTERN =
+  /^(password|currentPassword|newPassword|passwordHash|salt|token|tokenHash|cookie|remark)$/i;
 
 /**
  * detail 脱敏：与 pino redact 口径一致，避免密码 / Cookie / 备注全文入库。
@@ -111,9 +112,7 @@ export class OperationLogRepository {
   /** append-only 写入。调用方负责把本调用与业务写放进同一事务。 */
   append(entry: NewOperationLog): number {
     const detail: string =
-      entry.detail === undefined
-        ? '{}'
-        : JSON.stringify(sanitizeDetail(entry.detail));
+      entry.detail === undefined ? '{}' : JSON.stringify(sanitizeDetail(entry.detail));
     const result = this.db
       .prepare(
         `INSERT INTO operation_logs

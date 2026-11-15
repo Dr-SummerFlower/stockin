@@ -83,8 +83,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // defaultStaticRoot()（从 __filename 反推 apps/web/dist，与 cwd 无关）。
   // env.staticRoot 仅在显式设置 WEB_DIST_DIR 时非 undefined，故裸跑时回落到
   // defaultStaticRoot()；T05 容器在 WORKDIR=/app 下显式 WEB_DIST_DIR=/app/apps/web/dist。
-  const staticRoot: string =
-    deps.staticRoot ?? deps.env.staticRoot ?? defaultStaticRoot();
+  const staticRoot: string = deps.staticRoot ?? deps.env.staticRoot ?? defaultStaticRoot();
   assertStaticRootSafe(deps.env, staticRoot);
   const document: IndexDocument = deps.indexDocument ?? readIndexDocument(staticRoot);
   const spaFallback = createSpaFallback(document);

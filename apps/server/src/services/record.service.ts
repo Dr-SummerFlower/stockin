@@ -139,8 +139,12 @@ export class RecordService {
     return result;
   }
 
-  /** GET /api/records：分页筛选，恒排除软删。 */
-  list(filter: RecordFilter, requestId: string): ServiceResult<PageResult<RecordView>> {
+  /**
+   * GET /api/records：分页筛选，恒排除软删。
+   *
+   * `_requestId` 同 `get()`：保持服务方法参数位置一致，本方法自身不落日志。
+   */
+  list(filter: RecordFilter, _requestId: string): ServiceResult<PageResult<RecordView>> {
     const page = this.deps.records.listActive(
       filter,
       serverToday(),
@@ -157,8 +161,13 @@ export class RecordService {
     };
   }
 
-  /** GET /api/records/:id */
-  get(id: number, requestId: string): ServiceResult<RecordView> {
+  /**
+   * GET /api/records/:id
+   *
+   * `_requestId` 与其它服务方法保持一致的位置参数（供日志与审计串联），
+   * 本方法自身不落日志，故以下划线前缀声明「有意不用」。
+   */
+  get(id: number, _requestId: string): ServiceResult<RecordView> {
     const row: RecordRow | null = this.deps.records.findById(id);
     return row === null
       ? { ok: false, code: ErrorCode.RECORD_NOT_FOUND }
@@ -286,7 +295,10 @@ export class RecordService {
   }
 
   /** GET /api/trash */
-  trash(page: number = 1, pageSize: number = DEFAULT_PAGE_SIZE): ServiceResult<PageResult<RecordView>> {
+  trash(
+    page: number = 1,
+    pageSize: number = DEFAULT_PAGE_SIZE,
+  ): ServiceResult<PageResult<RecordView>> {
     const result = this.deps.records.listTrash(page, pageSize);
     return {
       ok: true,
@@ -316,9 +328,7 @@ export class RecordService {
       }
       return changed;
     });
-    return restored
-      ? { ok: true, data: { id } }
-      : { ok: false, code: ErrorCode.RECORD_NOT_FOUND };
+    return restored ? { ok: true, data: { id } } : { ok: false, code: ErrorCode.RECORD_NOT_FOUND };
   }
 
   /** DELETE /api/trash/:id（物理删，仅回收站条目）。 */
@@ -338,9 +348,7 @@ export class RecordService {
       }
       return changed;
     });
-    return purged
-      ? { ok: true, data: { id } }
-      : { ok: false, code: ErrorCode.RECORD_NOT_FOUND };
+    return purged ? { ok: true, data: { id } } : { ok: false, code: ErrorCode.RECORD_NOT_FOUND };
   }
 
   /** B4：POST /api/trash/batch-restore（整批同事务、复用单条恢复的幂等语义）。 */

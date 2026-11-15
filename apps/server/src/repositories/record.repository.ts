@@ -18,12 +18,7 @@ import {
 } from '@stockin/shared';
 import { addDays, normalizeName, normalizeSpec } from '@stockin/domain';
 import type { Db } from './db';
-import {
-  toDbSourceFlags,
-  type DbSourceFlags,
-  type RecordRow,
-  type WriteContext,
-} from './types';
+import { toDbSourceFlags, type DbSourceFlags, type RecordRow, type WriteContext } from './types';
 
 /** 有界分页结果。 */
 export interface RecordPage {
@@ -121,11 +116,7 @@ function buildRiskWhere(
   nearEnd: string,
   status?: 'near' | 'expired',
 ): { where: string; params: unknown[] } {
-  const clauses: string[] = [
-    'deleted_at IS NULL',
-    'expiry_date IS NOT NULL',
-    'expiry_date <= ?',
-  ];
+  const clauses: string[] = ['deleted_at IS NULL', 'expiry_date IS NOT NULL', 'expiry_date <= ?'];
   const params: unknown[] = [nearEnd];
   if (status === 'near') {
     clauses.push('expiry_date >= ?');
@@ -270,8 +261,10 @@ export class RecordRepository {
 
   /** 彻底删除（二次确认在前端）；只允许删回收站条目。 */
   purge(id: number): boolean {
-    return this.db.prepare('DELETE FROM records WHERE id = ? AND deleted_at IS NOT NULL').run(id)
-      .changes > 0;
+    return (
+      this.db.prepare('DELETE FROM records WHERE id = ? AND deleted_at IS NOT NULL').run(id)
+        .changes > 0
+    );
   }
 
   /** B4：批量恢复，返回实际恢复条数（已恢复的 id 幂等跳过）。 */
@@ -296,11 +289,7 @@ export class RecordRepository {
   }
 
   /** 有效记录分页列表（恒带 deleted_at IS NULL）。 */
-  listActive(
-    filter: RecordFilter,
-    today: string,
-    thresholdDays: number,
-  ): RecordPage {
+  listActive(filter: RecordFilter, today: string, thresholdDays: number): RecordPage {
     const { where, params } = buildFilter(filter, today, thresholdDays);
     const page: number = clampPage(filter.page);
     const pageSize: number = clampPageSize(filter.pageSize);
@@ -412,9 +401,9 @@ export class RecordRepository {
       COALESCE(SUM(CASE WHEN expiry_date IS NOT NULL AND expiry_date < ? THEN 1 ELSE 0 END), 0) AS expiredCount,
       COALESCE(SUM(CASE WHEN expiry_date IS NOT NULL AND expiry_date < ? THEN amount_cents ELSE 0 END), 0) AS expiredAmountCents
       FROM records WHERE deleted_at IS NULL`;
-    const row = this.db
-      .prepare(sql)
-      .get(today, nearEnd, today, nearEnd, today, today) as DashboardMetrics | undefined;
+    const row = this.db.prepare(sql).get(today, nearEnd, today, nearEnd, today, today) as
+      | DashboardMetrics
+      | undefined;
     if (row === undefined) {
       throw new Error('[record.repository] 条件聚合未返回行');
     }

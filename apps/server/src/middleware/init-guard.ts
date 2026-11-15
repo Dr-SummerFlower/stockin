@@ -26,11 +26,7 @@ export function createInitGuard(meta: MetaRepository): MiddlewareHandler<AppEnv>
     const path: string = c.req.path;
     const lastSegment: string = path.slice(path.lastIndexOf('/') + 1);
     // A2：纯内存路径判断先行，DB 查询推迟到最后一刻。
-    if (
-      !path.startsWith('/api/') ||
-      !isKnownApiPath(path) ||
-      WHITELIST.has(lastSegment)
-    ) {
+    if (!path.startsWith('/api/') || !isKnownApiPath(path) || WHITELIST.has(lastSegment)) {
       await next();
       return;
     }
