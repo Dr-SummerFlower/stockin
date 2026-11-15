@@ -1,18 +1,33 @@
 /**
- * better-sqlite3 连接与 PRAGMA 唯一落点。
+ * 数据层门面：端口类型 + 适配器装配 + PRAGMA 唯一落点。
  *
  * 依据：设计文档 v1.1 §3.3 / §4.5 / §7.6 ——
  * WAL + synchronous=NORMAL + busy_timeout=5000；启动 integrity_check +
  * user_version 自检；优雅停机前 wal_checkpoint(TRUNCATE)。
  *
- * 本文件是 server 内**唯一** `require('better-sqlite3')` 的位置；
- * Repository 只依赖此处导出的 `Db` 类型，不各自建连接。
+ * 分层（2026-11-15 起）：
+ *   Repository ──依赖──> `Db`(= DbPort，纯接口，见 `db.port.ts`)
+ *                              ▲
+ *                              └── 适配器：`adapters/node-sqlite.adapter.ts`（默认）
+ *                                          `adapters/do-sqlite.adapter.ts`（Workers）
+ *
+ * **本文件是 server 内唯一「选择哪个驱动」的位置**；Repository 只依赖此处导出的
+ * `Db` 类型与 8 个函数，不认识任何驱动。换后端时改这一处装配即可。
  */
-import Database from 'better-sqlite3';
+import { createNodeSqliteAdapter } from './adapters/node-sqlite.adapter';
+import type { DbPort } from './db.port';
 import { checkUserVersion, SCHEMA_EXPECTED, type UserVersionVerdict } from './schema';
 
-/** 连接句柄类型（从构造签名推导，避免依赖 @types 命名空间细节）。 */
-export type Db = InstanceType<typeof Database>;
+export type { DbPort, RunResultPort, StatementPort, TransactionMode } from './db.port';
+export { UnsupportedCapabilityError } from './db.port';
+
+/**
+ * 连接句柄类型。
+ *
+ * 历史上这里是 `InstanceType<typeof Database>`（better-sqlite3）；现在是端口接口，
+ * 16 个只写 `Db` 的 Repository 无需任何改动。
+ */
+export type Db = DbPort;
 
 export interface OpenDatabaseOptions {
   readonly filename: string;
@@ -22,22 +37,19 @@ export interface OpenDatabaseOptions {
 
 /** 打开连接并一次性设置三项 PRAGMA（文档要求维持原值，不调优）。 */
 export function openDatabase(options: OpenDatabaseOptions): Db {
-  const db: Db = new Database(options.filename, {
-    readonly: options.readonly ?? false,
-    fileMustExist: options.fileMustExist ?? false,
-  });
-  if (!options.readonly) {
-    db.pragma('journal_mode = WAL');
-    db.pragma('synchronous = NORMAL');
-    db.pragma('busy_timeout = 5000');
+  const db: Db = createNodeSqliteAdapter(options);
+  if (!(options.readonly ?? false)) {
+    db.exec('PRAGMA journal_mode = WAL');
+    db.exec('PRAGMA synchronous = NORMAL');
+    db.exec('PRAGMA busy_timeout = 5000');
   }
-  db.pragma('foreign_keys = ON');
+  db.exec('PRAGMA foreign_keys = ON');
   return db;
 }
 
 /** PRAGMA integrity_check，非 ok 时抛错（启动 fail-fast）。 */
 export function assertIntegrity(db: Db): string {
-  const result: unknown = db.pragma('integrity_check', { simple: true });
+  const result: unknown = db.readPragma('integrity_check');
   const text: string = typeof result === 'string' ? result : String(result);
   if (text !== 'ok') {
     throw new Error(`[db] integrity_check 失败: ${text}`);
@@ -55,7 +67,7 @@ export function tableExists(db: Db, name: string): boolean {
 
 /** 读取 user_version（唯一权威版本）。 */
 export function readUserVersion(db: Db): number {
-  const value: unknown = db.pragma('user_version', { simple: true });
+  const value: unknown = db.readPragma('user_version');
   const parsed: number = typeof value === 'number' ? value : Number(value);
   return Number.isInteger(parsed) ? parsed : 0;
 }
@@ -67,27 +79,27 @@ export function assertUserVersion(db: Db, dataDir: string): UserVersionVerdict {
 
 /** 优雅停机：先 checkpoint 再 close。 */
 export function closeDatabase(db: Db): void {
-  if (!db.open) {
+  if (!db.isOpen) {
     return;
   }
   try {
-    db.pragma('wal_checkpoint(TRUNCATE)');
+    db.checkpointTruncate();
   } finally {
     db.close();
   }
 }
 
 /**
- * `BEGIN IMMEDIATE` 事务入口（better-sqlite3 的 `.immediate()` 变体）。
+ * `BEGIN IMMEDIATE` 事务入口。
  *
  * 供 T03b 的「导入整批单事务、绝不拆分」、setup 四者同事务、
  * 业务写 + 操作日志同事务使用；任何异常自动 ROLLBACK。
  */
 export function immediateTransaction<T>(db: Db, fn: () => T): T {
-  return db.transaction(fn).immediate();
+  return db.transaction('immediate', fn);
 }
 
 /** 普通 DEFERRED 事务（只读快照 / 常规组合写）。 */
 export function deferredTransaction<T>(db: Db, fn: () => T): T {
-  return db.transaction(fn).deferred();
+  return db.transaction('deferred', fn);
 }

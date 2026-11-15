@@ -2,7 +2,7 @@
  * 在线备份、校验链与 GC。
  *
  * 依据：设计文档 v1.1 §4.5 / §7.5 / §10.1 裁决 32 ——
- * `db.backup()` 在线一致性快照；校验链 integrity_check → user_version →
+ * `db.backupTo()` 在线一致性快照；校验链 integrity_check → user_version →
  * 魔数 → sha256 → gzip → gzip -t → 入池 → GC（GC 前断言至少留 1 份 integrity=ok）；
  * 保留最近 7 份；空间不足跳过本次但不阻断启动；
  * baseline 基线快照 + init_state 元数据，避免「恢复后要求引导但初始密码已清」死锁。
@@ -14,13 +14,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { randomBytes } from 'node:crypto';
-import Database from 'better-sqlite3';
 import { BACKUP_KEEP_COUNT } from '@stockin/shared';
 import { sha256Hex } from '../lib/crypto';
 import { utcNowIso } from '../lib/today';
 import { logger } from '../lib/logger';
 import type { Db } from './db';
-import { assertIntegrity, readUserVersion } from './db';
+import { assertIntegrity, openDatabase, readUserVersion } from './db';
 
 /** SQLite 文件头魔数（前 16 字节）。 */
 export const SQLITE_MAGIC = 'SQLite format 3\u0000';
@@ -80,8 +79,32 @@ export function readSqliteMagic(file: string): string {
 }
 
 /**
+ * 清理只读打开 WAL 库时 SQLite 自动生成的边车文件。
+ *
+ * 背景（2026-11-15 实测）：快照文件头记录了 `journal_mode=WAL`，只读打开时
+ * SQLite 仍会生成 `<db>-shm`（32KB）与 `<db>-wal`（0 字节）。数据全在主文件里
+ * （已用隔离副本验证 integrity=ok），但 `gcBackups` 只删 .db/.gz/.meta.json，
+ * 边车会一直堆在备份池里。
+ *
+ * 仅当 `-wal` 为 0 字节时才删（0 字节表示没有待回放帧，删掉不丢数据）；
+ * 非 0 字节说明库不完整，此时保留边车并让上层看见。
+ */
+function removeStraySidecars(file: string): void {
+  const wal: string = `${file}-wal`;
+  const shm: string = `${file}-shm`;
+  try {
+    if (fs.existsSync(wal) && fs.statSync(wal).size === 0) {
+      fs.rmSync(wal, { force: true });
+      fs.rmSync(shm, { force: true });
+    }
+  } catch {
+    // 清理失败不影响校验结论；下次 GC 仍会看到 .db 本体。
+  }
+}
+
+/**
  * 校验链（不含 gzip）：integrity_check → user_version → 魔数 → sha256。
- * 只读打开，绝不改动快照。
+ * 只读打开，绝不改动快照内容。
  */
 export function verifyBackupFile(file: string): VerifiedBackupFile {
   const magic: string = readSqliteMagic(file);
@@ -91,7 +114,8 @@ export function verifyBackupFile(file: string): VerifiedBackupFile {
   const buffer: Buffer = fs.readFileSync(file);
   const sha256: string = sha256Hex(buffer);
 
-  const snapshot: InstanceType<typeof Database> = new Database(file, {
+  const snapshot: Db = openDatabase({
+    filename: file,
     readonly: true,
     fileMustExist: true,
   });
@@ -103,6 +127,7 @@ export function verifyBackupFile(file: string): VerifiedBackupFile {
     userVersion = readUserVersion(snapshot);
   } finally {
     snapshot.close();
+    removeStraySidecars(file);
   }
   return { magic, integrity, userVersion, sha256, sizeBytes: buffer.length };
 }
@@ -200,8 +225,8 @@ export async function createBackup(db: Db, options: CreateBackupOptions): Promis
   const fileName: string = `stockin-${stamp}-${tag}-${suffix}.db`;
   const destination: string = path.join(backupDir, fileName);
 
-  // db.backup() 在 WAL 下仍是一致性快照；不使用 cp 直接复制主库文件。
-  await db.backup(destination);
+  // backupTo 在 WAL 下仍是一致性快照；不使用 cp 直接复制主库文件。
+  await db.backupTo(destination);
 
   const verified: VerifiedBackupFile = verifyBackupFile(destination);
   if (verified.integrity !== 'ok') {

@@ -30,8 +30,15 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
-      // 覆盖率只对「纯逻辑层」设门槛：domain 与 shared 是全部业务规则的落点。
-      include: ['packages/domain/src/**/*.ts', 'packages/shared/src/**/*.ts'],
+      // 覆盖率对「纯逻辑层 + 数据层端口」设门槛：
+      // domain/shared 是业务规则的落点；adapters 与 db.port 是数据层唯一的
+      // 可替换边界（2026-11-15 引入端口后加入），必须由一致性测试钉住。
+      include: [
+        'packages/domain/src/**/*.ts',
+        'packages/shared/src/**/*.ts',
+        'apps/server/src/repositories/adapters/**/*.ts',
+        'apps/server/src/repositories/db.port.ts',
+      ],
       exclude: [
         '**/*.d.ts',
         // 纯类型/契约声明，无可执行语句。

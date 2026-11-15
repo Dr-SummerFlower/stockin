@@ -7,32 +7,42 @@
  * 必须保持的三件事（改动前请先读 `src/bootstrap.ts`）：
  *  ① **CommonJS 输出**：`package.json` 是 `"type": "commonjs"`，`start` 脚本是
  *     `node dist/index.js`，`__dirname` 依赖 CJS 语义（迁移目录探测用它）。
- *  ② **`better-sqlite3` 必须 external**：原生扩展（`.node`），打包器无法内联；
- *     它在运行时仍需从 `node_modules` 加载。
+ *  ② **原生扩展已清零**：数据库走 Node 内置 `node:sqlite`，产物里没有任何
+ *     `.node`；`node:sqlite` 只能以 `node:` 前缀访问且不在 `builtinModules`
+ *     清单内，故在 `nodeBuiltins` 里手工补一条才不会被 Rollup 当第三方包解析。
  *  ③ **迁移 SQL 必须随产物落地**：`tsc` 从来不拷贝 `.sql`，历史上靠 Dockerfile
  *     手工 `COPY` 进 `dist`。这里由 `copyMigrations` 插件在写盘后复制到
  *     `dist/repositories/migrations/`，正好命中 `resolveMigrationsDir()` 的候选 ②。
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { builtinModules } from 'node:module';
-import { join, resolve } from 'node:path';import { defineConfig, type Plugin } from 'vite';
+import { join, resolve } from 'node:path';
+import { defineConfig, type Plugin } from 'vite';
 
 /** 包根目录（本配置文件所在目录）。Node 26 支持 `import.meta.dirname`。 */
 const packageRoot: string = import.meta.dirname;
 
-/** Node 内置模块一律 external（`fs` 与 `node:fs` 两种写法都覆盖）。 */
+/**
+ * Node 内置模块一律 external（`fs` 与 `node:fs` 两种写法都覆盖）。
+ *
+ * 注意 `node:sqlite` **不在** `builtinModules` 里：`builtinModules` 只列
+ * 「可省略 `node:` 前缀」的模块，`node:sqlite` 这类只能带前缀访问的被排除。
+ * 不显式补上的话，Rollup 会把它当第三方包去解析并报 unresolved。
+ */
 const nodeBuiltins: string[] = [
   ...builtinModules,
   ...builtinModules.map((name: string) => `node:${name}`),
+  'node:sqlite',
 ];
 
 /**
  * 需要保持 external 的运行时依赖。
  *
- * `better-sqlite3` 是原生模块；其余依赖（hono / zod / pino / exceljs）均为纯 JS，
- * 由 `ssr.noExternal: true` 打进单文件。
+ * 2026-11-15 起为空：数据库改用 Node 内置 `node:sqlite`，不再有原生扩展，
+ * 全部依赖（hono / zod / pino / exceljs）均为纯 JS，由 `ssr.noExternal: true`
+ * 打进单文件。
  */
-const runtimeExternals: string[] = ['better-sqlite3'];
+const runtimeExternals: string[] = [];
 
 /**
  * 把 `src/repositories/migrations/*.sql` 复制到 `dist/repositories/migrations/`。
