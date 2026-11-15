@@ -38,6 +38,12 @@ export default defineConfig({
         'packages/shared/src/**/*.ts',
         'apps/server/src/repositories/adapters/**/*.ts',
         'apps/server/src/repositories/db.port.ts',
+        // 运行时层里**纯逻辑**的三块（任务卡 01）：平台开关表、内联迁移清单、
+        // 表存储版版本登记。落盘/静态资源/exceljs 等端口实现不在此列 —— 它们
+        // 依赖真实运行时能力，由端到端脚本覆盖，塞进来只会把门槛稀释成数字游戏。
+        'apps/server/src/runtime/platform.ts',
+        'apps/server/src/runtime/workers/migration-source.inline.ts',
+        'apps/server/src/runtime/workers/version-store.table.ts',
       ],
       exclude: [
         '**/*.d.ts',

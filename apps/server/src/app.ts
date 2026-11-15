@@ -24,6 +24,7 @@ import type { BootstrapRepositories } from './bootstrap';
 import { errorResponse } from './lib/response';
 import { logger } from './lib/logger';
 import type { AppEnv } from './types/hono';
+import type { StaticPort } from './runtime/ports';
 import { createAccessLogMiddleware } from './middleware/access-log';
 import { createRequestIdMiddleware } from './middleware/request-id';
 import { createSecureHeadersMiddleware } from './middleware/secure-headers';
@@ -42,14 +43,7 @@ import type { DashboardService } from './services/dashboard.service';
 import type { ExcelService } from './services/excel.service';
 import type { BackupService } from './services/backup.service';
 import { createApiRouter } from './routes';
-import {
-  assertStaticRootSafe,
-  createSpaFallback,
-  createStaticMiddleware,
-  defaultStaticRoot,
-  readIndexDocument,
-  type IndexDocument,
-} from './static';
+import { createSpaFallback } from './static';
 
 /**
  * 服务层统一结果。成功 / 失败用 discriminated union 表达，
@@ -71,21 +65,18 @@ export interface AppDeps {
   readonly backup: BackupService;
   readonly health: HealthService;
   readonly gate: HeavyTaskGate;
-  /** 可覆盖的静态根（自测用）；缺省由 static.ts 以绝对路径推导。 */
-  readonly staticRoot?: string;
-  /** 可覆盖的 index.html 文档（自测用）。 */
-  readonly indexDocument?: IndexDocument;
+  /**
+   * 静态资源端口。Node 传磁盘实现，Workers 传 `[assets]` 实现。
+   * 由组合根按运行时注入，`app.ts` 本身不认识任何平台 API。
+   */
+  readonly staticPort: StaticPort;
 }
 
 /** 构造完整 Hono 应用（不含监听）。 */
 export function createApp(deps: AppDeps): Hono<AppEnv> {
-  // A4：静态根优先级 = 自测覆盖(deps.staticRoot) > WEB_DIST_DIR(env.staticRoot) >
-  // defaultStaticRoot()（从 __filename 反推 apps/web/dist，与 cwd 无关）。
-  // env.staticRoot 仅在显式设置 WEB_DIST_DIR 时非 undefined，故裸跑时回落到
-  // defaultStaticRoot()；T05 容器在 WORKDIR=/app 下显式 WEB_DIST_DIR=/app/apps/web/dist。
-  const staticRoot: string = deps.staticRoot ?? deps.env.staticRoot ?? defaultStaticRoot();
-  assertStaticRootSafe(deps.env, staticRoot);
-  const document: IndexDocument = deps.indexDocument ?? readIndexDocument(staticRoot);
+  // A1：index.html 的内容 ETag 由静态端口提供，`/`、`/index.html` 与
+  // SPA fallback（如 `/records`）三者共用同一份，避免 304 判定不一致。
+  const document = deps.staticPort.indexDocument;
   const spaFallback = createSpaFallback(document);
 
   const app = new Hono<AppEnv>();
@@ -118,7 +109,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route('/', createApiRouter(deps));
 
   // 静态 fallback：API 命中时 handler 不调用 next，本中间件不会执行。
-  app.use('*', createStaticMiddleware(staticRoot));
+  app.use('*', deps.staticPort.middleware());
 
   // Hono 官方：notFound 只在顶层 app 生效，子路由上的 notFound 会被忽略。
   app.notFound((c) => {

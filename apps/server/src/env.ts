@@ -14,7 +14,6 @@
 import path from 'node:path';
 import {
   BACKUP_KEEP_COUNT,
-  COOKIE_POLICY,
   DEFAULT_PORT,
   DEFAULT_TZ,
   IMPORT_MAX_UNCOMPRESSED_BYTES,
@@ -31,15 +30,17 @@ export interface Env {
   readonly publicOrigin: string;
   /** 全部可信来源（CSRF 逐项比对）。默认同时含 `127.0.0.1` 与 `localhost` 两种回环写法。 */
   readonly publicOrigins: readonly string[];
+  /** 可信来源的 scheme：Node 纯 HTTP 为 `http`，Workers 为 `https`。 */
+  readonly originScheme: OriginScheme;
   readonly tz: string;
-  /** 本期固定 false（COOKIE_POLICY.secure 为唯一真源）。 */
-  readonly cookieSecure: false;
+  /** 是否给会话 Cookie 加 `Secure`：由来源 scheme 决定（https 必须加，http 不能加）。 */
+  readonly cookieSecure: boolean;
   readonly cookieName: string;
   readonly dataDir: string;
   readonly backupDir: string;
   readonly tmpDir: string;
   readonly dbFile: string;
-  /** 仅当显式设置 WEB_DIST_DIR（或自测覆盖）时才非 undefined；否则由 app.ts 用 defaultStaticRoot() 兜底。 */
+  /** 仅当显式设置 WEB_DIST_DIR（或自测覆盖）时才非 undefined；否则由运行时兜底。 */
   readonly staticRoot?: string;
   readonly backupKeepCount: number;
   readonly tmpfsBytes: number;
@@ -47,7 +48,7 @@ export interface Env {
   readonly nodeVersionExpected: string;
 }
 
-/** loadEnv 的可覆盖项，供内联自测与 CLI 注入临时目录使用。 */
+/** `loadEnv` 的可覆盖项，供内联自测与 CLI 注入临时目录使用。 */
 export interface EnvOverrides {
   readonly cwd?: string;
   readonly nodeEnv?: string;
@@ -55,6 +56,11 @@ export interface EnvOverrides {
   readonly publicOrigin?: string;
   /** 逗号分隔的多来源字面量，优先级高于 `publicOrigin`。 */
   readonly publicOrigins?: string;
+  /**
+   * 来源 scheme。由运行时画像（`ORIGIN_SCHEME`）注入；
+   * 不传时回落到 `process.env.ORIGIN_SCHEME`，再回落 `http`（=改造前行为）。
+   */
+  readonly originScheme?: OriginScheme;
   readonly tz?: string;
   readonly cookieSecure?: string;
   readonly dataDir?: string;
@@ -63,8 +69,20 @@ export interface EnvOverrides {
   readonly staticRoot?: string;
 }
 
-/** `http://<IP或主机名>:<PORT>` 字面量；禁止 https、路径、查询串、缺省端口。 */
-const PUBLIC_ORIGIN_PATTERN = /^http:\/\/([^/:?#]+|\[[0-9a-fA-F:]+\]):(\d{1,5})$/;
+/**
+ * 可信来源字面量：`<scheme>://<IP或主机名>[:<端口>]`。
+ *
+ * 端口是否必填由 scheme 决定（见 `loadEnv`）：
+ *  - `http`（Node 纯 HTTP）→ 端口必填且必须等于 `PORT`，与文档 §5.2 的
+ *    「含端口的字面量精确比对」一致；
+ *  - `https`（Workers）→ 端口可省略（隐式 443），写了就必须是 443 或 `PORT`。
+ *
+ * 两种都不接受路径、查询串。
+ */
+const ORIGIN_PATTERN = /^(https?):\/\/([^/:?#]+|\[[0-9a-fA-F:]+\])(?::(\d{1,5}))?$/;
+
+/** 支持的来源 scheme。 */
+export type OriginScheme = 'http' | 'https';
 
 /**
  * 回环主机写法。信任其中任一即自动等价展开到同机其它写法，
@@ -87,6 +105,18 @@ function parsePort(raw: number | string | undefined): number {
   return value;
 }
 
+/** 解析来源 scheme；空串视为 `http`（改造前行为），非法值直接报错。 */
+export function resolveOriginScheme(raw?: string): OriginScheme {
+  const value: string = (raw ?? '').trim();
+  if (value === '' || value === 'http') {
+    return 'http';
+  }
+  if (value === 'https') {
+    return 'https';
+  }
+  throw new RangeError(`[env] ORIGIN_SCHEME 必须是 http 或 https，收到: ${raw ?? ''}`);
+}
+
 function resolveDir(raw: string | undefined, cwd: string, fallback: string): string {
   return path.resolve(cwd, raw ?? fallback);
 }
@@ -105,6 +135,10 @@ export function isUnderDirectory(child: string, parent: string): boolean {
 export function loadEnv(overrides: EnvOverrides = {}): Env {
   const cwd: string = path.resolve(overrides.cwd ?? process.cwd());
   const port: number = parsePort(overrides.port ?? process.env.PORT);
+  const originScheme: OriginScheme = resolveOriginScheme(
+    overrides.originScheme ?? process.env.ORIGIN_SCHEME,
+  );
+
   // 可信来源集合：PUBLIC_ORIGINS（逗号分隔，优先）> PUBLIC_ORIGIN（单值，旧写法）
   // > 默认同时包含 127.0.0.1 与 localhost 两种回环写法，保证同机用不同地址都能登录。
   const rawOriginsCsv: string | undefined = overrides.publicOrigins ?? process.env.PUBLIC_ORIGINS;
@@ -120,40 +154,83 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     rawOrigins = [legacySingle.trim()];
   }
   if (rawOrigins.length === 0) {
-    rawOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+    rawOrigins = [`${originScheme}://127.0.0.1:${port}`, `${originScheme}://localhost:${port}`];
   }
 
   const publicOrigins: string[] = [];
   for (const rawOrigin of rawOrigins) {
-    const originMatch: RegExpExecArray | null = PUBLIC_ORIGIN_PATTERN.exec(rawOrigin);
+    const originMatch: RegExpExecArray | null = ORIGIN_PATTERN.exec(rawOrigin);
     if (originMatch === null) {
       throw new RangeError(
-        `[env] 每个可信来源必须是含端口的字面量 http://<IP>:<PORT>，收到: ${rawOrigin}`,
+        `[env] 每个可信来源必须是 ${originScheme}://<IP或域名>[:<端口>] 字面量，收到: ${rawOrigin}`,
       );
     }
-    const originPort: number = Number.parseInt(originMatch[2] ?? '', 10);
-    if (originPort !== port) {
-      throw new RangeError(`[env] 来源端口(${originPort}) 必须与 PORT(${port}) 一致：${rawOrigin}`);
+    const originHostScheme: string = originMatch[1] ?? '';
+    if (originHostScheme !== originScheme) {
+      throw new RangeError(
+        `[env] 来源 scheme(${originHostScheme}) 与 ORIGIN_SCHEME(${originScheme}) 不一致：${rawOrigin}`,
+      );
+    }
+    const rawPort: string | undefined = originMatch[3];
+    if (originScheme === 'http') {
+      // 纯 HTTP 直连：端口必填且必须与 PORT 一致（CSRF 按含端口字面量精确比对）。
+      if (rawPort === undefined) {
+        throw new RangeError(`[env] http 来源必须写明端口（http://<IP>:<PORT>）：${rawOrigin}`);
+      }
+      const originPort: number = Number.parseInt(rawPort, 10);
+      if (originPort !== port) {
+        throw new RangeError(
+          `[env] 来源端口(${originPort}) 必须与 PORT(${port}) 一致：${rawOrigin}`,
+        );
+      }
+    } else if (rawPort !== undefined) {
+      // HTTPS：省略端口即 443；写了就必须是 443 或 PORT（本地 wrangler dev 会用到后者）。
+      const originPort: number = Number.parseInt(rawPort, 10);
+      if (originPort !== 443 && originPort !== port) {
+        throw new RangeError(`[env] https 来源端口只能是 443 或 PORT(${port})：${rawOrigin}`);
+      }
     }
     if (!publicOrigins.includes(rawOrigin)) {
       publicOrigins.push(rawOrigin);
     }
-    // 回环等价展开：信任任一回环写法即等价信任同机其它写法（同端口）。
-    const originHost: string = originMatch[1] ?? '';
+    // 回环等价展开：信任任一回环写法即等价信任同机其它写法（同 scheme、同端口）。
+    // 只对回环主机生效，非回环（如局域网 IP / 域名）不会自动扩展。
+    const originHost: string = originMatch[2] ?? '';
     if (LOOPBACK_HOSTS.includes(originHost)) {
       for (const loopbackHost of LOOPBACK_HOSTS) {
-        const candidate: string = `http://${loopbackHost}:${port}`;
+        const candidate: string =
+          rawPort === undefined
+            ? `${originScheme}://${loopbackHost}`
+            : `${originScheme}://${loopbackHost}:${rawPort}`;
         if (!publicOrigins.includes(candidate)) {
           publicOrigins.push(candidate);
         }
       }
     }
   }
-  const publicOrigin: string = publicOrigins[0] ?? `http://127.0.0.1:${port}`;
+  const publicOrigin: string = publicOrigins[0] ?? `${originScheme}://127.0.0.1:${port}`;
 
-  const rawSecure: string = overrides.cookieSecure ?? process.env.COOKIE_SECURE ?? 'false';
-  if (rawSecure !== '' && rawSecure !== 'false' && rawSecure !== '0') {
-    throw new RangeError('[env] 本期 COOKIE_SECURE 固定为 false，不接受 true');
+  // HTTPS 下必须 `Secure`；纯 HTTP 下必须不带（`__Host-` 前缀因 Secure 缺失会被浏览器丢弃，
+  // 故本轮仍不使用 prefix）。显式设置与环境推导冲突时直接报错，不做静默纠正。
+  const derivedSecure: boolean = originScheme === 'https';
+  const rawSecure: string = (overrides.cookieSecure ?? process.env.COOKIE_SECURE ?? '').trim();
+  if (
+    rawSecure !== '' &&
+    rawSecure !== 'true' &&
+    rawSecure !== 'false' &&
+    rawSecure !== '0' &&
+    rawSecure !== '1'
+  ) {
+    throw new RangeError(`[env] COOKIE_SECURE 只能是 true / false，收到: ${rawSecure}`);
+  }
+  if (rawSecure !== '') {
+    const explicitSecure: boolean = rawSecure === 'true' || rawSecure === '1';
+    if (explicitSecure !== derivedSecure) {
+      throw new RangeError(
+        `[env] COOKIE_SECURE=${String(explicitSecure)} 与来源 scheme(${originScheme}) 不匹配：` +
+          `https 必须为 true、http 必须为 false`,
+      );
+    }
   }
 
   const tz: string = overrides.tz ?? process.env.TZ ?? DEFAULT_TZ;
@@ -196,8 +273,9 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     port,
     publicOrigin,
     publicOrigins,
+    originScheme,
     tz,
-    cookieSecure: COOKIE_POLICY.secure,
+    cookieSecure: derivedSecure,
     cookieName: SESSION_COOKIE_NAME,
     dataDir,
     backupDir,
@@ -211,7 +289,7 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
   };
 }
 
-/** 供 T03b CSRF 中间件使用：解析出可信 Origin 的主机部分（含端口）。 */
+/** 供 CSRF 中间件使用：解析出可信 Origin 的主机部分（含端口）。 */
 export function publicOriginHost(env: Env): string {
-  return env.publicOrigin.slice('http://'.length);
+  return new URL(env.publicOrigin).host;
 }

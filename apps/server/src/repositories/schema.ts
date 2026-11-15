@@ -92,12 +92,17 @@ export function consumeRollbackAllowance(dataDir: string): RollbackAllowance | n
  * - 相等 → ok；低于期望 → migrate（runner 执行 fix-forward）；
  * - 高于期望 → 必须存在匹配的一次性放行，否则抛错并提示先升级应用（fix-forward 优先）。
  *
- * @param dataDir 用于查找并消费一次性放行状态
+ * @param actual 当前读到的版本
+ * @param expected 程序期望版本
+ * @param consumeAllowance 读取并**消费**一次性放行凭据；只在"高于期望"这条
+ *   分支里调用，保证版本正常时不会误删放行文件（与改造前语义一致）。
+ *   具体存储位置由运行时决定：Node 是 data 卷里的 JSON 文件，
+ *   Workers 是 DO 存储里的一行。
  */
 export function checkUserVersion(
   actual: number,
-  dataDir: string,
-  expected: number = SCHEMA_EXPECTED,
+  expected: number,
+  consumeAllowance: () => RollbackAllowance | null,
 ): UserVersionVerdict {
   if (!Number.isInteger(actual) || actual < 0) {
     throw new RangeError(`[schema] user_version 非法: ${String(actual)}`);
@@ -119,7 +124,7 @@ export function checkUserVersion(
     return 'migrate';
   }
 
-  const allowance: RollbackAllowance | null = consumeRollbackAllowance(dataDir);
+  const allowance: RollbackAllowance | null = consumeAllowance();
   if (allowance !== null && allowance.fromVersion >= actual && allowance.toVersion <= expected) {
     return 'rollback-allowed';
   }

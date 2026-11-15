@@ -15,9 +15,14 @@ import type { AppEnv } from '../types/hono';
 
 const WRITE_METHODS: readonly string[] = ['POST', 'PUT', 'DELETE', 'PATCH'];
 
-/** 从 `http://host:port` 字面量取 host 部分。 */
+/**
+ * 从可信来源字面量取 host 部分（含端口）。
+ *
+ * 改用 `new URL()` 而非切 `'http://'` 前缀：Workers 下是 `https://<域名>`、
+ * 且通常不带端口，硬切前缀会得到 `s://...` 这种恒不命中的串。
+ */
 export function hostOfPublicOrigin(publicOrigin: string): string {
-  return publicOrigin.slice('http://'.length);
+  return new URL(publicOrigin).host;
 }
 
 /** 取 Referer 的 origin；解析失败返回 null（视为伪造）。 */

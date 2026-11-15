@@ -2,12 +2,17 @@
  * 启动自检、迁移与首启引导。
  *
  * 依据：设计文档 v1.1 §3.6 / §7.2 / §7.4 ——
- * 启动自检（卷可写 / 磁盘余量 / integrity_check / user_version）失败 fail-fast；
- * 失败写 `.selfcheck_failed` sentinel 后非零退出，避免无限重启风暴；
+ * 启动自检（卷可写 / 磁盘余量 / integrity_check / 版本等值）失败 fail-fast；
  * 首启生成 `admin` + 随机初始密码并打印 `[BOOTSTRAP]`；
  * **卷保留时不重生成、不重打印**；`meta.setup_completed` 单向 0→1。
  *
- * 硬约束（主理人裁决 / T01 勘误）：`process.versions.node` 必须精确等于
+ * 2026-11-15：四处平台相关动作改为读 `PlatformProfile` 而不是无条件执行 ——
+ * Workers 上「卷可写 / 磁盘余量 / integrity_check / Node 版本断言」既无意义
+ * （没有持久盘、没有真实 socket、`process.versions.node` 是兼容层谎报值）
+ * 又会直接失败，必须按运行时画像跳过。判定只有 `platform.*` 字段，
+ * 不出现 `if (isWorkers)`。
+ *
+ * 硬约束（主理人裁决 / T01 勘误）：Node 下 `process.versions.node` 必须精确等于
  * `NODE_VERSION_EXPECTED`（26.13.0），不匹配打印明确错误并非零退出。
  */
 import fs from 'node:fs';
@@ -15,6 +20,7 @@ import path from 'node:path';
 import { NODE_VERSION_EXPECTED } from '@stockin/shared';
 import { loadEnv, type Env, type EnvOverrides } from './env';
 import { logger } from './lib/logger';
+import { configureCookiePolicy } from './lib/cookie';
 import {
   derivePasswordHash,
   generateReadablePassword,
@@ -22,13 +28,7 @@ import {
   serializeScryptParams,
 } from './lib/crypto';
 import { configureServerTimeZone, utcNowIso } from './lib/today';
-import {
-  assertIntegrity,
-  closeDatabase,
-  openDatabase,
-  tableExists,
-  type Db,
-} from './repositories/db';
+import { assertIntegrity, closeDatabase, tableExists, type Db } from './repositories/db';
 import { runMigrations, type MigrationResult } from './repositories/migrations/runner';
 import { CredentialRepository } from './repositories/credential.repository';
 import { MetaRepository } from './repositories/meta.repository';
@@ -36,8 +36,16 @@ import { RecordRepository } from './repositories/record.repository';
 import { SessionRepository } from './repositories/session.repository';
 import { SettingsRepository } from './repositories/settings.repository';
 import { OperationLogRepository } from './repositories/operation-log.repository';
+import type {
+  BackupPort,
+  MigrationSource,
+  RuntimeBundle,
+  StaticPort,
+  VersionStore,
+  WorkbookReader,
+} from './runtime/ports';
 
-/** 启动自检失败 sentinel 文件名（落在 data 卷）。 */
+/** 启动自检失败 sentinel 文件名（落在 data 卷；仅持久文件系统运行时使用）。 */
 export const SELFCHECK_FAILED_FILE = '.selfcheck_failed';
 
 /** 首启默认账号（文档 §7.4 `[BOOTSTRAP] admin + 随机初始密码`）。 */
@@ -60,44 +68,6 @@ export function assertNodeVersion(expected: string = NODE_VERSION_EXPECTED): voi
     process.stderr.write(`${message}\n`);
     throw new BootstrapError(message);
   }
-}
-
-/**
- * 解析迁移脚本目录（QA 修复 A3：**完全不依赖 process.cwd()**）。
- *
- * tsc 只编译 `.ts`，不会把 `001_init.sql` 拷进 dist；QA 实测
- * `apps/server/dist/repositories/migrations/` 里只有 `runner.js`。
- * 因此每个候选都以「目录内存在 001_init.sql」判定，避免选中空目录。
- *
- * 优先级：
- *  ① `BootstrapOptions.migrationsDir` / `MIGRATIONS_DIR` 显式覆盖；
- *  ② 编译产物内 migrations 目录（`<dist>/repositories/migrations`）——
- *     T05 Dockerfile 会把 `001_init.sql` 一并拷进 dist；
- *  ③ 从 `__filename` 反推的源码目录（`<root>/src/repositories/migrations`）——
- *     本机 / tsx 开发形态；
- *  ④ 兼容 `rootDir=src` 时 `<root>/dist/src/*.js` 的编译形态。
- *
- * `node apps/server/dist/index.js` 在任意 cwd 下都能命中 ②（容器）或 ③（本机）。
- */
-export function resolveMigrationsDir(explicit?: string): string {
-  const here: string = path.dirname(__filename);
-  const marker = '001_init.sql';
-  const candidates: string[] = [
-    explicit ?? '',
-    process.env.MIGRATIONS_DIR ?? '',
-    path.join(here, 'repositories', 'migrations'),
-    path.join(here, '..', 'src', 'repositories', 'migrations'),
-    path.join(here, '..', '..', 'src', 'repositories', 'migrations'),
-  ].filter((item) => item !== '');
-  for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, marker))) {
-      return candidate;
-    }
-  }
-  throw new BootstrapError(
-    `[BOOTSTRAP] 找不到 ${marker}，已尝试: ${candidates.join(' | ')}。` +
-      'T05 runtime 镜像必须把 migrations/*.sql 一并拷入 dist（或设置 MIGRATIONS_DIR）。',
-  );
 }
 
 /** 写 sentinel；返回写入路径，写失败不覆盖原始错误。 */
@@ -147,8 +117,9 @@ export function checkDiskSpace(dir: string, minFreeBytes: number): boolean {
 }
 
 export interface BootstrapOptions {
+  /** 运行时端口集合；决定用哪套驱动、迁移来源、备份方式。 */
+  readonly bundle: RuntimeBundle;
   readonly overrides?: EnvOverrides;
-  readonly migrationsDir?: string;
   /** 关闭 [BOOTSTRAP] 明文打印（仅供内联自测使用，生产必须开启）。 */
   readonly suppressCredentialPrint?: boolean;
 }
@@ -162,6 +133,15 @@ export interface BootstrapRepositories {
   readonly logs: OperationLogRepository;
 }
 
+/** 装配期解析出的端口实例，交给 `assemble()` 复用，避免重复构造。 */
+export interface ResolvedPorts {
+  readonly versionStore: VersionStore;
+  readonly migrations: MigrationSource;
+  readonly backup: BackupPort;
+  readonly staticPort: StaticPort;
+  readonly workbookReader: WorkbookReader;
+}
+
 export interface BootstrapResult {
   readonly db: Db;
   readonly env: Env;
@@ -170,41 +150,70 @@ export interface BootstrapResult {
   readonly initialPassword: string | null;
   readonly migration: MigrationResult;
   readonly repositories: BootstrapRepositories;
+  readonly ports: ResolvedPorts;
 }
 
 /**
- * 完整启动流程。抛出 BootstrapError 时由 main() 写 sentinel 并非零退出。
- * 返回的 db 保持打开状态，交给 T03b 的 app 使用；优雅停机调用 closeDatabase。
+ * 完整启动流程。抛出 BootstrapError 时由组合根写 sentinel 并非零退出。
+ * 返回的 db 保持打开状态，交给 app 使用；优雅停机调用 closeDatabase。
  */
-export async function bootstrap(options: BootstrapOptions = {}): Promise<BootstrapResult> {
-  assertNodeVersion();
-  const env: Env = loadEnv(options.overrides);
-  configureServerTimeZone(env.tz);
+export async function bootstrap(options: BootstrapOptions): Promise<BootstrapResult> {
+  const { bundle } = options;
+  const platform = bundle.platform;
 
-  for (const [label, dir] of [
-    ['DATA_DIR', env.dataDir],
-    ['BACKUP_DIR', env.backupDir],
-    ['TMP_DIR', env.tmpDir],
-  ] as const) {
-    assertVolumeWritable(dir, label);
+  if (platform.nodeVersionAssert === 'strict') {
+    assertNodeVersion();
   }
-  checkDiskSpace(env.dataDir, env.minFreeBytes);
+  const env: Env = loadEnv({
+    ...options.overrides,
+    originScheme: options.overrides?.originScheme ?? platform.originScheme,
+  });
+  configureServerTimeZone(env.tz);
+  configureCookiePolicy({ secure: env.cookieSecure });
 
-  const db: Db = openDatabase({ filename: env.dbFile });
+  if (platform.persistentFileSystem) {
+    for (const [label, dir] of [
+      ['DATA_DIR', env.dataDir],
+      ['BACKUP_DIR', env.backupDir],
+      ['TMP_DIR', env.tmpDir],
+    ] as const) {
+      assertVolumeWritable(dir, label);
+    }
+    checkDiskSpace(env.dataDir, env.minFreeBytes);
+  } else {
+    // 无持久盘：卷可写与余量都不成立（写了也在请求结束后消失），如实记录后跳过。
+    logger.info(
+      { target: platform.target },
+      '[BOOTSTRAP] 当前运行时不提供持久文件卷，已跳过卷可写与磁盘余量自检',
+    );
+  }
+
+  const db: Db = bundle.openDb(env);
   try {
-    assertIntegrity(db);
-    // user_version 等值自检与「一次性回滚放行」的消费统一由 runMigrations 执行：
+    if (platform.integrityCheck === 'pragma') {
+      assertIntegrity(db);
+    } else {
+      // DO 的 `PRAGMA integrity_check` 返回 `not authorized: SQLITE_AUTH`，
+      // 平台侧另有完整性保障，这里跳过而不是把启动卡死。
+      logger.info('[BOOTSTRAP] 当前运行时不允许 PRAGMA integrity_check，已跳过完整性自检');
+    }
+    // 版本等值自检与「一次性回滚放行」的消费统一由 runMigrations 执行：
     // 若在此处提前校验会消费掉放行状态，导致 runner 第二次校验误判为未放行。
 
     // 全新空库在迁移前还没有 meta 表，此时 init_state 视作 0（快照元数据用）。
     const initStateForBackup: 0 | 1 = tableExists(db, 'meta')
       ? new MetaRepository(db).initState()
       : 0;
+
+    const versionStore: VersionStore = bundle.versionStore(env);
+    const migrations: MigrationSource = bundle.migrations(env);
+    const backup: BackupPort = bundle.backup(env);
+
     const migration: MigrationResult = await runMigrations({
       db,
-      migrationsDir: resolveMigrationsDir(options.migrationsDir),
-      dataDir: env.dataDir,
-      backupDir: env.backupDir,
+      migrations,
+      versionStore,
+      backup,
       initState: initStateForBackup,
       minFreeBytes: env.minFreeBytes,
       keepCount: env.backupKeepCount,
@@ -248,51 +257,16 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
       settings: new SettingsRepository(db),
       logs: new OperationLogRepository(db),
     };
-    return { db, env, initializedNow, initialPassword, migration, repositories };
+    const ports: ResolvedPorts = {
+      versionStore,
+      migrations,
+      backup,
+      staticPort: await bundle.staticPort(env),
+      workbookReader: bundle.workbookReader(env),
+    };
+    return { db, env, initializedNow, initialPassword, migration, repositories, ports };
   } catch (error) {
     closeDatabase(db);
     throw error;
   }
-}
-
-/** CLI 入口：供 `node dist/bootstrap.js` 或 T05 CMD 前的自检阶段调用。 */
-export async function main(): Promise<void> {
-  let dataDir: string = path.resolve(process.cwd(), 'data');
-  try {
-    assertNodeVersion();
-    dataDir = loadEnv().dataDir;
-    const result: BootstrapResult = await bootstrap();
-    logger.info(
-      {
-        initializedNow: result.initializedNow,
-        userVersion: result.migration.toVersion,
-        applied: result.migration.applied,
-      },
-      '[BOOTSTRAP] 启动自检通过',
-    );
-    // CLI 自检模式不常驻，正常关闭连接；T03b 的 app 模式不调用 main()。
-    closeDatabase(result.db);
-  } catch (error) {
-    writeSelfcheckFailed(dataDir, error);
-    logger.fatal(
-      { err: error instanceof Error ? error.message : String(error) },
-      '[BOOTSTRAP] 启动自检失败，已写 .selfcheck_failed',
-    );
-    process.exitCode = 1;
-  }
-}
-
-/**
- * 仅在「本文件被直接当作脚本执行」时跑 CLI 自检。
- *
- * 不能只用 `require.main === module`：后端现由 Vite 打成单文件 `dist/index.js`，
- * bootstrap.ts 被内联进同一个 bundle 后 `module` 就是 bundle 本身，该判断恒为真，
- * 会在正常启动之外再跑一遍 bootstrap —— 迁移与快照并发，表现为启动失败
- * 「快照 user_version=1 与发起备份时的 0 不符，已丢弃」。
- * 因此叠加「入口脚本文件名必须是 bootstrap.js」这一条件：
- * `node dist/bootstrap.js` 仍走自检；被打包时不会误触发。
- */
-const entryScript: string = (process.argv[1] ?? '').replace(/\\/g, '/');
-if (require.main === module && entryScript.endsWith('/bootstrap.js')) {
-  void main();
 }

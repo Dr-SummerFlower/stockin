@@ -27,7 +27,7 @@ import type { MetaRepository } from '../repositories/meta.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
-import { createBaselineBackup } from '../repositories/backup';
+import type { BackupPort } from '../runtime/ports';
 import type { Env } from '../env';
 import {
   derivePasswordHash,
@@ -53,6 +53,8 @@ export interface AuthServiceDeps {
   readonly sessions: SessionRepository;
   readonly meta: MetaRepository;
   readonly logs: OperationLogRepository;
+  /** 引导完成后的基线快照端口（Node 落快照池，Workers 走 PITR 并明确跳过）。 */
+  readonly backup: BackupPort;
 }
 
 export interface LoginResult {
@@ -223,10 +225,13 @@ export class AuthService {
     }
 
     // baseline 基线快照：避免「恢复后要求引导但初始密码已清」死锁。
-    const baseline = await createBaselineBackup(this.deps.db, {
-      backupDir: this.deps.env.backupDir,
+    // Workers 上端口走 PITR，`create()` 返回 skipped，此时不写 baseline 文件名。
+    const baseline = await this.deps.backup.create(this.deps.db, {
+      reason: 'post-setup-baseline',
+      initState: 1,
+      baseline: true,
       minFreeBytes: this.deps.env.minFreeBytes,
-      keepCount: this.deps.env.backupKeepCount,
+      keepCount: this.deps.backup.keepCount,
     });
     if (baseline.status === 'ok') {
       this.deps.meta.setBaseline(baseline.meta.file);

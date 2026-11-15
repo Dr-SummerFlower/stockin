@@ -1,17 +1,30 @@
 /**
- * Hono 应用环境类型（供 T03b 的 `new Hono<AppEnv>()` 使用）。
+ * Hono 应用环境类型（供 `new Hono<AppEnv>()` 使用）。
  *
- * Bindings 继承 @hono/node-server 的 HttpBindings（incoming/outgoing），
- * 供限流中间件取 `c.env.incoming.socket.remoteAddress`；
- * Variables 承载 requestId / session / actor，贯穿中间件、日志与操作日志表。
+ * Bindings 刻意**中性化**：改造前继承 `@hono/node-server` 的 `HttpBindings`
+ * （`incoming` / `outgoing`），这让整个应用在类型上绑死了 Node。Workers 侧
+ * 没有 `incoming.socket`，同一份代码必须两边都能编译。
+ *
+ * 因此这里只声明运行时中立的字段，`incoming` 保留为**可选**，供 Node 侧的
+ * 限流中间件按需读取（Worker 上为 undefined，走平台头部兜底）。
+ *
+ * Variables 承载 requestId / session / actor / clientIp，贯穿中间件、日志与操作日志表。
  */
-import type { HttpBindings } from '@hono/node-server';
 import type { SessionIdentity } from '../repositories/session.repository';
 
-/** 具备静态托管根与数据库句柄能力的 Bindings 扩展。 */
-export interface AppBindings extends HttpBindings {
-  readonly publicOrigins: readonly string[];
-  readonly staticRoot: string;
+/** Node 原生 HTTP 连接的可选窄化视图（仅 @hono/node-server 会注入）。 */
+export interface NodeIncomingLike {
+  readonly socket?: { readonly remoteAddress?: string };
+}
+
+/** 请求作用域绑定的平台对象。 */
+export interface AppBindings {
+  /** Node（@hono/node-server）注入；Workers 上不存在。 */
+  readonly incoming?: NodeIncomingLike;
+  /** Workers 的 `[assets]` 绑定；Node 上不存在。 */
+  readonly ASSETS?: unknown;
+  /** 其余平台绑定按需扩展，避免每接一个运行时都要改类型。 */
+  readonly [key: string]: unknown;
 }
 
 /** 请求级变量。 */
@@ -22,7 +35,7 @@ export interface AppVariables {
   clientIp: string;
 }
 
-/** T03b 创建 app 时使用的 Env 泛型。 */
+/** 创建 app 时使用的 Env 泛型。 */
 export interface AppEnv {
   Bindings: AppBindings;
   Variables: AppVariables;
@@ -38,4 +51,4 @@ declare module 'hono' {
   }
 }
 
-export type { HttpBindings, SessionIdentity };
+export type { SessionIdentity };

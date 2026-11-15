@@ -19,7 +19,8 @@ import { sha256Hex } from '../lib/crypto';
 import { utcNowIso } from '../lib/today';
 import { logger } from '../lib/logger';
 import type { Db } from './db';
-import { assertIntegrity, openDatabase, readUserVersion } from './db';
+import { assertIntegrity, readUserVersion } from './db';
+import { openDatabase } from '../runtime/node/db.factory';
 
 /** SQLite 文件头魔数（前 16 字节）。 */
 export const SQLITE_MAGIC = 'SQLite format 3\u0000';

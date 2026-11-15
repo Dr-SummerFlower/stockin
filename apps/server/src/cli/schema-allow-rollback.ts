@@ -10,7 +10,9 @@
 import path from 'node:path';
 import { assertNodeVersion } from '../bootstrap';
 import { loadEnv, type Env, type EnvOverrides } from '../env';
-import { openDatabase, closeDatabase, readUserVersion } from '../repositories/db';
+import { closeDatabase, readUserVersion } from '../repositories/db';
+// openDatabase 已移入 Node 运行时；CLI 是纯 Node 脚本，直接依赖 Node 实现。
+import { openDatabase } from '../runtime/node/db.factory';
 import {
   SCHEMA_EXPECTED,
   rollbackAllowancePath,

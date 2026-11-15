@@ -1,0 +1,63 @@
+# 进货统计 —— Cloudflare Workers 部署配置
+#
+# 同一份后端代码（apps/server）在 Node 与 Workers 上运行，平台差异全部由
+# `[vars]` 里的环境变量控制，见 apps/server/src/runtime/platform.ts。
+#
+# 部署前必改两处：
+#   1. PUBLIC_ORIGINS —— 换成 Worker 的真实域名（如 https://stockin.<account>.workers.dev）
+#      或自定义域名。写错的后果：登录与任何写请求返回「请求来源校验失败」(403)。
+#   2. name —— Worker 名称，会决定默认域名的二级部分。
+#
+# 本地开发（wrangler dev）需要 http 来源，用命令行覆盖即可，不要改这里：
+#   wrangler dev --port 8787 \
+#     --var ORIGIN_SCHEME:http \
+#     --var PUBLIC_ORIGINS:http://localhost:8787,http://127.0.0.1:8787 \
+#     --var COOKIE_SECURE:false \
+#     --var PORT:8787
+
+name = "stockin"
+main = "apps/server/dist/worker.mjs"
+compatibility_date = "2026-11-11"
+
+# workerd 的 Node 兼容层：crypto / stream / fs / buffer / process 都需要它。
+compatibility_flags = ["nodejs_compat"]
+
+# ---------------------------------------------------------------- 静态资源 ----
+[assets]
+# 前端产物目录（Umi + Vite 构建输出，纯静态 index.html + hashed assets）。
+directory = "./apps/web/dist"
+binding = "ASSETS"
+# 所有请求先到 Worker，再由 Hono 逐层下发 CSP / cache-control —— 若让平台直接
+# 返回静态文件，这些安全头会在 HTML 与 JS 上失效（CSP 由 Hono 唯一签发）。
+run_worker_first = true
+# 不做平台级 SPA 兜底：`/api/*` 未命中必须返回 JSON 404，
+# SPA 路由由 Hono 的 notFound 统一处理（apps/server/src/static.ts）。
+not_found_handling = "none"
+
+# ------------------------------------------------------------ Durable Object ----
+# 整个应用跑在单个 DO 里：它是同步 SQLite 的宿主，且单实例串行天然满足
+# 「单进程单写者」这个事务前提。
+[[durable_objects.bindings]]
+name = "STOCKIN_DO"
+class_name = "StockinDurableObject"
+
+[[migrations]]
+tag = "v1"
+# SQLite 后端必须用 new_sqlite_classes（KV 后端不支持 SQL）。
+new_sqlite_classes = ["StockinDurableObject"]
+
+# ------------------------------------------------------------------- 变量 ----
+# 缺省值与 Node 侧逐字一致的原则见 platform.ts；这里只覆盖 Workers 必需的几项。
+[vars]
+RUNTIME_TARGET = "workers"
+ORIGIN_SCHEME = "https"
+# 【必改】把 stockin.example.workers.dev 换成实际域名；可写多个，逗号分隔。
+PUBLIC_ORIGINS = "https://stockin.example.workers.dev"
+# 中国大陆访问不到 *.workers.dev（DNS 污染 + 代理 502），
+# 若目标是国内可用，请在此处换成已接入 Cloudflare 的自定义域名。
+TZ = "Asia/Shanghai"
+
+# -------------------------------------------------------------- 定时备份 ----
+# 每日 19:00 UTC = 次日 03:00 CST；对应 Node 侧的每日定时备份。
+[triggers]
+crons = ["0 19 * * *"]

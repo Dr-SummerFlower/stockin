@@ -24,8 +24,10 @@ import {
   assertIntegrity,
   closeDatabase,
   immediateTransaction,
-  openDatabase,
+  // openDatabase 已移入 Node 运行时（Workers 侧不能出现 node:sqlite 的实例化路径）。
+  // CLI 是纯 Node 脚本，直接依赖 Node 实现即可。
 } from '../repositories/db';
+import { openDatabase } from '../runtime/node/db.factory';
 import { CredentialRepository } from '../repositories/credential.repository';
 import { MetaRepository } from '../repositories/meta.repository';
 import { OperationLogRepository } from '../repositories/operation-log.repository';

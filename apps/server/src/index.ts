@@ -1,90 +1,55 @@
 /**
- * 进程入口：启动自检 → 迁移 → 首启凭据 → 监听 → 优雅停机。
+ * Node 组合根：启动自检 → 装配 → 迁移 → 首启凭据 → 监听 → 优雅停机。
  *
  * 依据：设计文档 v1.1 §3.6 / §7.4 / §7.5 ——
- * `bootstrap()` 内含 `assertNodeVersion()`（精确 26.13.0）、integrity_check、
- * user_version、卷可写与磁盘余量自检；监听前完成首启 `[BOOTSTRAP]` 打印；
- * SIGINT/SIGTERM 停调度器、`server.close()`、checkpoint + closeDatabase。
- * 本文件重写 T01 的最小 serve + health。
+ * 启动自检（Node 版本断言 / 卷可写 / 磁盘余量 / integrity_check / 版本等值）
+ * 失败 fail-fast 并写 `.selfcheck_failed` sentinel；监听前完成首启
+ * `[BOOTSTRAP]` 打印；SIGINT/SIGTERM 停调度器、`server.close()`、
+ * checkpoint + closeDatabase。
+ *
+ * 2026-11-15 双运行时改造后，本文件只负责 **Node 特有**的部分：
+ * 套用 `nodeRuntime()` 端口集合、用 `@hono/node-server` 监听、处理信号。
+ * 服务接线已移入 `assembly.ts`，与 Worker 组合根共用同一份。
  */
+import path from 'node:path';
 import { serve } from '@hono/node-server';
-import { bootstrap } from './bootstrap';
-import { createApp, type AppDeps } from './app';
+import { bootstrap, writeSelfcheckFailed } from './bootstrap';
+import { assemble } from './assembly';
 import { logger } from './lib/logger';
+import { loadEnv } from './env';
 import { closeDatabase } from './repositories/db';
-import { HealthService } from './services/health.service';
-import { heavyTaskGate } from './services/heavy-task';
-import { AuthService } from './services/auth.service';
-import { RecordService } from './services/record.service';
-import { DashboardService } from './services/dashboard.service';
-import { BackupService } from './services/backup.service';
-import { ExcelService } from './services/excel.service';
-import { BackupScheduler } from './services/backup-scheduler';
+import { assertStaticRootSafe } from './static';
+import { nodeRuntime, resolveStaticRoot } from './runtime/node';
 
-/** 启动 HTTP 服务；任何失败写 fatal 日志并非零退出。 */
+/** 启动 HTTP 服务；任何失败写 fatal 日志、落 sentinel 并非零退出。 */
 async function main(): Promise<void> {
-  // bootstrap() 内部第一步即 assertNodeVersion()，无需在此重复。
-  const boot = await bootstrap();
-  const { db, env, repositories } = boot;
-  const gate = heavyTaskGate;
+  // 平台判定先于一切：它决定后面用哪套端口。
+  const bundle = nodeRuntime();
+  // bootstrap 内部第一步即 assertNodeVersion()（Node 预设下 nodeVersionAssert=strict）。
+  const boot = await bootstrap({ bundle });
+  const { db, env, repositories, ports } = boot;
 
-  const health = new HealthService();
-  const backup = new BackupService({
-    db,
-    env,
-    meta: repositories.meta,
-    logs: repositories.logs,
-    gate,
-  });
-  const auth = new AuthService({
-    db,
-    env,
-    credentials: repositories.credentials,
-    sessions: repositories.sessions,
-    meta: repositories.meta,
-    logs: repositories.logs,
-  });
-  const records = new RecordService({
-    db,
-    records: repositories.records,
-    logs: repositories.logs,
-    settings: repositories.settings,
-  });
-  const dashboard = new DashboardService({
-    db,
-    records: repositories.records,
-    settings: repositories.settings,
-  });
-  const excel = new ExcelService({
-    db,
-    env,
-    records: repositories.records,
-    logs: repositories.logs,
-    settings: repositories.settings,
-    gate,
-    backup,
-  });
+  // 静态根安全守卫：三卷绝不能落进静态托管根（loadEnv 与静态层双守卫，
+  // 后者在此显式执行 —— 静态根的最终值由 runtime/node 解析，env 层看不到）。
+  assertStaticRootSafe(env, resolveStaticRoot(env));
 
-  const deps: AppDeps = {
+  const runtime = assemble({
     db,
     env,
     repositories,
-    auth,
-    records,
-    dashboard,
-    excel,
-    backup,
-    health,
-    gate,
-  };
-  const app = createApp(deps);
-  const scheduler = new BackupScheduler(backup);
+    ports,
+    platform: bundle.platform,
+  });
 
-  health.markReady();
-  const server = serve({ fetch: app.fetch, port: env.port });
-  scheduler.start();
+  runtime.start();
+  const server = serve({ fetch: runtime.app.fetch, port: env.port });
   logger.info(
-    { port: env.port, publicOrigins: env.publicOrigins, userVersion: boot.migration.toVersion },
+    {
+      runtime: bundle.platform.target,
+      port: env.port,
+      publicOrigins: env.publicOrigins,
+      userVersion: boot.migration.toVersion,
+    },
     '[stockin] server listening',
   );
 
@@ -94,8 +59,7 @@ async function main(): Promise<void> {
       return;
     }
     shuttingDown = true;
-    health.markNotReady();
-    scheduler.stop();
+    runtime.stop();
     server.close(() => {
       closeDatabase(db);
       logger.info('[stockin] 优雅停机完成');
@@ -107,9 +71,17 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
+  // sentinel 落在 data 卷；env 可能还没解析成功，故先按 cwd 兜底再尝试 loadEnv。
+  let dataDir: string = path.resolve(process.cwd(), 'data');
+  try {
+    dataDir = loadEnv().dataDir;
+  } catch {
+    // 环境非法时仍写 cwd/data，保证"失败可见"。
+  }
+  writeSelfcheckFailed(dataDir, error);
   logger.fatal(
     { err: error instanceof Error ? error.message : String(error) },
-    '[stockin] 启动失败',
+    '[stockin] 启动失败，已写 .selfcheck_failed',
   );
   process.exitCode = 1;
 });

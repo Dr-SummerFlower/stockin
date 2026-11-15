@@ -7,12 +7,10 @@
  * 导入前备份）；逐行 Zod + domain 补算；文件内 Map 自比 + 库内批量判重；
  * **有 issue 不开写事务直接 422**；全通过才 `BEGIN IMMEDIATE` 整批单事务
  * + 1 条汇总日志 + COMMIT；导出走 StreamingWorkbookWriter 逐行 commit +
- * Repository `iterate()` 游标 + pipe 到 Hono `stream()`（带第三参数错误处理器）。
+ * Repository `iterate()` 游标 + 写入 Hono `stream()`（带第三参数错误处理器）。
  * 错误行号一律 Excel 物理行号。exceljs 仅本服务使用。
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { PassThrough, Readable } from 'node:stream';
+import { Writable } from 'node:stream';
 import * as ExcelJS from 'exceljs';
 import { stream } from 'hono/streaming';
 import type { Context } from 'hono';
@@ -59,6 +57,8 @@ import { serverToday, utcNowIso } from '../lib/today';
 import { logger } from '../lib/logger';
 import type { HeavyTaskGate } from './heavy-task';
 import type { BackupService } from './backup.service';
+import type { WorkbookReader } from '../runtime/ports';
+import type { ExcelWriteKind } from '../runtime/platform';
 import type { ServiceResult } from '../app';
 
 export interface ExcelServiceDeps {
@@ -69,6 +69,16 @@ export interface ExcelServiceDeps {
   readonly settings: SettingsRepository;
   readonly gate: HeavyTaskGate;
   readonly backup: BackupService;
+  /**
+   * 上传字节 → 工作簿。Node 落 tmp 卷再 readFile（保留既有排障习惯），
+   * Workers 走内存 `load(buffer)`（无持久盘）。
+   */
+  readonly readWorkbook: WorkbookReader;
+  /**
+   * 写出方式（平台开关，见 `runtime/platform.ts` 的 `ExcelWriteKind`）。
+   * `stream` = 逐行流式管进响应；`buffer` = 整份生成后一次返回。
+   */
+  readonly excelWrite: ExcelWriteKind;
 }
 
 export interface ExcelContext {
@@ -148,84 +158,170 @@ function elapsedMs(started: bigint): number {
   return Number(process.hrtime.bigint() - started) / 1_000_000;
 }
 
+/**
+ * 把 Hono 的 `write()` 适配成 exceljs 流式 writer 需要的 Node `Writable`
+ * （exceljs 内部执行 `zip.pipe(stream)`，并在 `finish` 事件上兑现 commit）。
+ *
+ * **不要**换回 `PassThrough` + `Readable.toWeb()` 的老写法：workerd 的
+ * `node:stream` 实现里，`toWeb()` 产出的 Web 流在 `pipeTo()` 下不会把已写入的
+ * chunk 交付出去，表现是响应 200 但 body 为 **0 字节**（Node 侧完全正常，
+ * 极易误判成"流式写失败"——日志里能看到 ZIP 魔数 `50 4b 07 08` 早已进了
+ * PassThrough）。直接桥到 `write()` 既跨运行时一致，也保住了背压。
+ */
+function writableFrom(sink: { write(chunk: Uint8Array): Promise<unknown> }): Writable {
+  return new Writable({
+    write(chunk: Buffer, _encoding, callback): void {
+      // 必须等 Hono 真正接收（`writer.write` 兑现）后再回调，背压才成立；
+      // 用 async IIFE 而不是 `.then(cb)` —— 后者会触发 lint 的
+      // `promise/no-callback-in-promise`，而这里回调本来就该在 promise 之外。
+      void (async (): Promise<void> => {
+        try {
+          await sink.write(chunk);
+          callback();
+        } catch (error) {
+          callback(error as Error);
+        }
+      })();
+    },
+  });
+}
+
 /** Excel 服务（单进程单例）。 */
 export class ExcelService {
   constructor(private readonly deps: ExcelServiceDeps) {}
 
-  /** GET /api/excel/template：流式写表头，不含示例行。 */
-  createTemplateResponse(c: Context, ctx: ExcelContext): Response {
+  /** GET /api/excel/template：只有表头，不含示例行。 */
+  createTemplateResponse(c: Context, ctx: ExcelContext): Response | Promise<Response> {
     // 契约清理：模板恒不含示例行，不再下发无效的 withSample 字段。
     this.appendLog(Action.EXCEL_TEMPLATE, ctx, {});
-    c.header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    c.header('content-disposition', 'attachment; filename="stockin-template.xlsx"');
-    c.header('cache-control', SECURITY_HEADERS.CACHE_CONTROL_API);
+    this.setDownloadHeaders(c, 'stockin-template.xlsx');
+
+    if (this.deps.excelWrite === 'buffer') {
+      return this.writeWhole(c, ctx, '模板', (sheet): void => {
+        sheet.addRow([...EXCEL_HEADER_TEXTS]);
+      });
+    }
     return stream(
       c,
       async (s): Promise<void> => {
-        const pass = new PassThrough();
-        const piping: Promise<void> = s.pipe(Readable.toWeb(pass) as unknown as ReadableStream);
-        const writer = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: pass });
+        const writer = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: writableFrom(s) });
         const sheet = writer.addWorksheet('进货记录');
-        const header = sheet.addRow([...EXCEL_HEADER_TEXTS]);
-        header.commit();
+        sheet.addRow([...EXCEL_HEADER_TEXTS]).commit();
         await sheet.commit();
         await writer.commit();
-        await piping;
       },
       async (error: Error, s): Promise<void> => {
-        logger.error({ err: error.message, requestId: ctx.requestId }, '[excel] 模板流式写失败');
+        logger.error({ err: error.message, requestId: ctx.requestId }, '[excel] 模板写出失败');
         s.abort();
       },
     );
   }
 
-  /** POST /api/excel/export：按筛选游标逐行 commit，pipe 到 Hono stream()。 */
-  createExportResponse(c: Context, filter: RecordFilter, ctx: ExcelContext): Response {
+  /** POST /api/excel/export：按筛选导出全部命中记录。 */
+  createExportResponse(
+    c: Context,
+    filter: RecordFilter,
+    ctx: ExcelContext,
+  ): Response | Promise<Response> {
     const thresholdDays: number = this.deps.settings.getThresholdDays();
     const today: string = serverToday();
     this.appendLog(Action.EXCEL_EXPORT, ctx, { filter });
-    c.header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    c.header('content-disposition', 'attachment; filename="stockin-export.xlsx"');
-    c.header('cache-control', SECURITY_HEADERS.CACHE_CONTROL_API);
+    this.setDownloadHeaders(c, 'stockin-export.xlsx');
 
+    if (this.deps.excelWrite === 'buffer') {
+      return this.writeWhole(c, ctx, '导出', async (sheet): Promise<void> => {
+        await this.fillExportSheet(sheet, filter, today, thresholdDays, false);
+      });
+    }
     return stream(
       c,
       async (s): Promise<void> => {
-        const pass = new PassThrough();
-        const piping: Promise<void> = s.pipe(Readable.toWeb(pass) as unknown as ReadableStream);
-        const writer = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: pass });
+        const writer = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: writableFrom(s) });
         const sheet = writer.addWorksheet('进货记录');
-        sheet.addRow([...EXCEL_HEADER_TEXTS]).commit();
-
-        let written = 0;
-        for (const row of this.deps.records.iterate(filter, today, thresholdDays)) {
-          const fields = toRecordFields(row);
-          sheet
-            .addRow([
-              fields.name,
-              fields.purchaseDate,
-              fields.productionDate ?? '',
-              formatShelfLifeCell(fields.shelfLifeValue, fields.shelfLifeUnit),
-              fields.expiryDate ?? '',
-              fields.spec ?? '',
-              fields.unitPrice / SCALE.UNIT_PRICE,
-              fields.quantity / SCALE.QUANTITY,
-              fields.amountCents / SCALE.AMOUNT_CENTS,
-              fields.remark ?? '',
-            ])
-            .commit();
-          written += 1;
-          await this.deps.gate.yieldIfNeeded(written);
-        }
+        await this.fillExportSheet(sheet, filter, today, thresholdDays, true);
         await sheet.commit();
         await writer.commit();
-        await piping;
       },
       async (error: Error, s): Promise<void> => {
-        logger.error({ err: error.message, requestId: ctx.requestId }, '[excel] 导出流式写失败');
+        logger.error({ err: error.message, requestId: ctx.requestId }, '[excel] 导出写出失败');
         s.abort();
       },
     );
+  }
+
+  /** 下载响应的三个公共头（两种写出方式共用，避免两处漂移）。 */
+  private setDownloadHeaders(c: Context, filename: string): void {
+    c.header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    c.header('content-disposition', `attachment; filename="${filename}"`);
+    c.header('cache-control', SECURITY_HEADERS.CACHE_CONTROL_API);
+  }
+
+  /**
+   * `buffer` 写出方式：整份生成后一次返回。
+   *
+   * 走的是 `Workbook.writeBuffer()`，zip 条目是 Buffer（非流），因此不会碰到
+   * archiver 的 `source instanceof Stream` 判定 —— 这正是 Workers 上能跑通的原因，
+   * 细节见 `runtime/platform.ts` 的 `ExcelWriteKind` 注释。
+   */
+  private async writeWhole(
+    c: Context,
+    ctx: ExcelContext,
+    label: string,
+    fill: (sheet: ExcelJS.Worksheet) => void | Promise<void>,
+  ): Promise<Response> {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('进货记录');
+      await fill(sheet);
+      const bytes = await workbook.xlsx.writeBuffer();
+      return c.body(bytes as unknown as ArrayBuffer, 200);
+    } catch (error) {
+      logger.error(
+        { err: (error as Error).message, requestId: ctx.requestId },
+        `[excel] ${label}生成失败`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * 往工作表里填导出数据。
+   *
+   * @param streaming 流式 writer 的行必须 `commit()` 才会落盘；普通工作表没有
+   *   这个方法，误调会抛 TypeError，所以由调用方显式声明。
+   */
+  private async fillExportSheet(
+    sheet: ExcelJS.Worksheet,
+    filter: RecordFilter,
+    today: string,
+    thresholdDays: number,
+    streaming: boolean,
+  ): Promise<void> {
+    const headerRow = sheet.addRow([...EXCEL_HEADER_TEXTS]);
+    if (streaming) {
+      (headerRow as unknown as { commit(): void }).commit();
+    }
+    let written = 0;
+    for (const row of this.deps.records.iterate(filter, today, thresholdDays)) {
+      const fields = toRecordFields(row);
+      const added = sheet.addRow([
+        fields.name,
+        fields.purchaseDate,
+        fields.productionDate ?? '',
+        formatShelfLifeCell(fields.shelfLifeValue, fields.shelfLifeUnit),
+        fields.expiryDate ?? '',
+        fields.spec ?? '',
+        fields.unitPrice / SCALE.UNIT_PRICE,
+        fields.quantity / SCALE.QUANTITY,
+        fields.amountCents / SCALE.AMOUNT_CENTS,
+        fields.remark ?? '',
+      ]);
+      if (streaming) {
+        (added as unknown as { commit(): void }).commit();
+      }
+      written += 1;
+      await this.deps.gate.yieldIfNeeded(written);
+    }
   }
 
   /**
@@ -263,15 +359,9 @@ export class ExcelService {
         return { ok: false, code: ErrorCode.EXCEL_UNSUPPORTED_FILE };
       }
 
-      // tmpfs 临时文件：写入项目内 tmp 卷。按主理人口径不做任何删除/清理动作，
-      // 临时文件保留在 tmp/ 下且已被 .gitignore 忽略。
-      fs.mkdirSync(this.deps.env.tmpDir, { recursive: true });
-      const tempDir: string = fs.mkdtempSync(path.join(this.deps.env.tmpDir, 'import-'));
-      const tempFile: string = path.join(tempDir, 'upload.xlsx');
-      fs.writeFileSync(tempFile, payload.buffer);
-
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(tempFile);
+      // 上传字节 → 工作簿。具体落地方式由运行时端口决定：Node 写 tmp 卷再读，
+      // Workers 直接内存解析（临时文件在 Workers 上没有持久性）。
+      const workbook: ExcelJS.Workbook = await this.deps.readWorkbook(payload.buffer);
       if (workbook.worksheets.length !== 1) {
         return { ok: false, code: ErrorCode.EXCEL_UNSUPPORTED_FILE };
       }

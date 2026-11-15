@@ -25,11 +25,30 @@ const byIp = new Map<string, Bucket>();
 /** 按 IP + 用户名的计数桶。 */
 const byIpUser = new Map<string, Bucket>();
 
-/** 供其它中间件复用的客户端 IP 提取（只认真实 socket）。 */
+/**
+ * 供其它中间件复用的客户端 IP 提取。
+ *
+ * Node：只认真实 socket（`c.env.incoming.socket.remoteAddress`），**永不读 XFF**，
+ * 因为纯 HTTP 直连下任何转发头都由客户端自由填写。
+ *
+ * Workers：没有 socket（`incoming` 为 undefined）。此时读 `CF-Connecting-IP` ——
+ * 该头由 Cloudflare 边缘在入口处覆写，客户端自带的同名头会被丢弃，因此
+ * 与 socket 地址等效。**仅在 `incoming` 不存在时才读头部**，避免在 Node 侧
+ * 把可伪造的头当成真实地址。
+ */
 export function clientIpOf(c: Context): string {
-  const raw: unknown = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })?.incoming
-    ?.socket?.remoteAddress;
-  return typeof raw === 'string' && raw !== '' ? raw : 'unknown';
+  const incoming: unknown = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
+    ?.incoming;
+  if (incoming !== undefined) {
+    const socketIp: unknown = (incoming as { socket?: { remoteAddress?: string } })?.socket
+      ?.remoteAddress;
+    return typeof socketIp === 'string' && socketIp !== '' ? socketIp : 'unknown';
+  }
+  const edgeIp: string | undefined = c.req.header('cf-connecting-ip');
+  if (typeof edgeIp === 'string' && edgeIp.trim() !== '') {
+    return edgeIp.trim();
+  }
+  return 'unknown';
 }
 
 function pairKey(ip: string, username: string): string {
