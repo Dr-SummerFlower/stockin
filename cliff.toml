@@ -1,0 +1,72 @@
+# git-cliff 配置：从 Conventional Commits 自动生成 CHANGELOG.md
+# 文档：https://git-cliff.org/docs/configuration
+#
+# 设计约定：
+#  - 分组标题用中文、无 emoji（与项目「去装饰化」一致）。
+#  - 每条带短哈希并链接到 GitHub commit，便于从变更追溯到提交。
+#  - 无版本 tag 时所有提交归入 [Unreleased]；正式打 v* tag 后自动按版本分段。
+#  - 只生成 CHANGELOG.md，不改版本号、不打 tag、不触发发布。
+
+[changelog]
+header = """# 变更记录
+
+本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 约定。
+本文件由 git-cliff 从 Conventional Commits 自动生成，请勿手工编辑。
+未发布改动统一放在 [Unreleased] 段，正式打 v* tag 后按版本分段。
+
+"""
+# 每个版本段的模板；Tera 语法：https://keats.github.io/tera/
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [Unreleased]
+{% endif %}\
+{% for entry in commits | commit_groups(groups=commit_parsers_groups) %}
+    ### {{ entry.group | striptags | trim }}
+    {% for commit in entry.commits %}
+        - {% if commit.scope %}**{{ commit.scope }}**：{% endif %}\
+            {% if commit.breaking %}[破坏性] {% endif %}\
+            {{ commit.message | upper_first }} \
+            ([{{ commit.id | truncate(length=7, end="") }}](<REPO>/commit/{{ commit.id }}))\
+    {% endfor %}
+{% endfor %}
+"""
+trim = true
+render_always = true
+postprocessors = [
+    { pattern = '<REPO>', replace = "https://github.com/Dr-SummerFlower/stockin" },
+]
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+require_conventional = false
+commit_preprocessors = []
+protect_breaking_commits = true
+# 分组顺序即数组顺序；skip = true 的提交不进 CHANGELOG（纯版本维护噪声）。
+commit_parsers = [
+    { message = "^feat", group = "新增" },
+    { message = "^fix", group = "修复" },
+    { message = "^perf", group = "性能" },
+    { message = "^refactor", group = "重构" },
+    { message = "^test", group = "测试" },
+    { message = "^doc", group = "文档" },
+    { message = "^build", group = "构建" },
+    { message = "^ci", group = "持续集成" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore\\(deps", skip = true },
+    # 自动生成 CHANGELOG 的提交自身不进 CHANGELOG，避免自指噪声。
+    { message = "^chore\\(changelog\\)", skip = true },
+    { message = "^chore", group = "杂项" },
+    { message = "^revert", group = "回滚" },
+    { message = ".*", group = "其他" },
+]
+filter_commits = false
+fail_on_unmatched_commit = false
+link_parsers = []
+use_branch_tags = false
+topo_order = false
+topo_order_commits = true
+sort_commits = "oldest"
+recurse_submodules = false

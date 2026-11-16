@@ -1,0 +1,61 @@
+name: 更新变更记录
+
+# 每次 push 到任意分支后，用 git-cliff 从 Conventional Commits 重新生成
+# CHANGELOG.md；若有变化则以 github-actions[bot] 身份提交回同一分支。
+#
+# 防循环：bot 提交信息含 `[skip ci]`，GitHub Actions 对 commit message 含
+# `[skip ci]` 的推送不会触发新的 workflow run（原生机制，无需额外判断）。
+# 生成用的提交本身也被 cliff.toml 的 `^chore\(changelog\)` 规则跳过，
+# 因此不会出现在 CHANGELOG 内容里（自指噪声）。
+#
+# 本工作流只写 CHANGELOG.md，不改版本号、不打 tag、不触发发布；
+# 发布流程在 release.yml，两者职责分离。
+
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: changelog-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update-changelog:
+    name: 生成并提交 CHANGELOG
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码（完整历史，git-cliff 需要 tag 与 commit）
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: 安装 Node.js（版本取自 .node-version）
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
+
+      - name: 安装 pnpm
+        run: npm install -g pnpm@12.15.0 && pnpm --version
+
+      - name: 冻结依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 生成 CHANGELOG.md
+        run: pnpm changelog
+
+      - name: 有变化则提交回本分支
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "CHANGELOG.md 无变化，跳过提交"
+            exit 0
+          fi
+          git add CHANGELOG.md
+          git commit -m "chore(changelog): 自动更新变更记录 [skip ci]"
+          git push origin HEAD:"${GITHUB_REF_NAME}"

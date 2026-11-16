@@ -17,12 +17,15 @@
     "format": "oxfmt apps/server/src packages/domain/src packages/shared/src packages/domain/tests packages/shared/tests apps/server/tests",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "changelog": "git-cliff --config cliff.toml --output CHANGELOG.md",
+    "changelog:check": "node scripts/check-changelog.mjs",
     "verify": "node scripts/verify.mjs",
     "clean": "pnpm -r clean"
   },
   "devDependencies": {
     "@types/node": "^26",
     "@vitest/coverage-v8": "^5.1.0",
+    "git-cliff": "2.14.2",
     "oxfmt": "0.78.0",
     "oxlint": "1.93.0",
     "tsx": "^4",
