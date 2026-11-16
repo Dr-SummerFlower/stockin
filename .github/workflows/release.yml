@@ -245,7 +245,7 @@ jobs:
           # 发布说明保持简短且单一真源：一行摘要 + 指向 CHANGELOG 的链接，
           # 完整变更记录集中在仓库 CHANGELOG.md，避免每次发布重写一大段模板文案。
           CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/CHANGELOG.md"
-          NOTES="${CHANNEL} ${VERSION}"$'\n\n'"变更记录：${CHANGELOG_URL}"
+          NOTES="构建版本 ${VERSION}"$'\n\n'"变更记录：${CHANGELOG_URL}"
 
           if [[ "${CHANNEL}" == "stable" ]]; then
             # `--target` 必须显式给：workflow_dispatch 触发的构建用的是被选分支的
