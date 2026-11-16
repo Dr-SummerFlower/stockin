@@ -23,6 +23,15 @@
 **/.umi-production/
 **/*.tsbuildinfo
 **/node_modules/.cache/
+coverage/
+.tmp/
+.github/
+.idea/
+
+# --- 历史手工打包产物（根目录 stockin-0.1.0.tar.gz 等） ---
+*.tar.gz
+*.tgz
+*.zip
 
 # --- Umi 配置必须保留（上面排的是目录，这里显式兜底取反，防止将来规则调整误伤） ---
 !.umirc.ts
