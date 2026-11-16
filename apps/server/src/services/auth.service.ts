@@ -62,6 +62,24 @@ export interface LoginResult {
   readonly initState: 0 | 1;
 }
 
+/**
+ * 凭据比对：**用户名与密码同时校验**。
+ *
+ * 此前只看密码，任何用户名配正确密码都能登录；而 `operation_logs.actor`
+ * 记录的是请求里提交的用户名 —— 等于让攻击者自定义审计署名。
+ *
+ * 两项都算完再取与、不做短路：scrypt 是耗时主体，短路会让「用户名错」
+ * 比「密码错」快一个数量级，反而泄漏账号是否存在。
+ */
+export function credentialsMatch(
+  row: { readonly username: string; readonly password_hash: string; readonly salt: string },
+  input: { readonly username: string; readonly password: string },
+): boolean {
+  const usernameMatches: boolean = row.username === input.username;
+  const passwordMatches: boolean = verifyPasswordHash(input.password, row.password_hash, row.salt);
+  return usernameMatches && passwordMatches;
+}
+
 /** 认证服务（单进程单例）。 */
 export class AuthService {
   constructor(private readonly deps: AuthServiceDeps) {}
@@ -100,8 +118,7 @@ export class AuthService {
     ctx: AuthContext,
   ): ServiceResult<LoginResult> {
     const row = this.deps.credentials.find();
-    const valid: boolean =
-      row !== null && verifyPasswordHash(input.password, row.password_hash, row.salt);
+    const valid: boolean = row !== null && credentialsMatch(row, input);
 
     if (!valid) {
       recordLoginFailure(ctx.clientIp, input.username);

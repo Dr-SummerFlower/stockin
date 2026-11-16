@@ -3,8 +3,9 @@
  *
  * 关键点：**静态请求必须穿过 Hono**，不能靠 assets 的 `run_worker_first=false`
  * 直接短路。原因是 CSP、`cache-control`、`x-request-id` 这三个头由 Hono 的
- * 中间件链唯一签发（`createFinalizeHeadersMiddleware` 的注释写明了这一点）；
- * 一旦让平台直接返回静态文件，整站安全头就会在 HTML 与 JS 上缺失。
+ * 中间件链唯一签发（见 `middleware/secure-headers.ts` 与
+ * `middleware/cache-control.ts`）；一旦让平台直接返回静态文件，
+ * 整站安全头就会在 HTML 与 JS 上缺失。
  *
  * 因此 `wrangler.toml` 需要 `[assets] run_worker_first = true` +
  * `not_found_handling = "none"`：所有请求先到 Worker，未命中的再由本文件

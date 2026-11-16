@@ -9,6 +9,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { ErrorCode, LOGIN_RATE_LIMIT } from '@stockin/shared';
 import { epochSeconds } from '../lib/today';
 import { errorResponse } from '../lib/response';
+import { TtlMap } from '../lib/ttl-map';
 import type { AppEnv } from '../types/hono';
 
 interface Bucket {
@@ -20,10 +21,14 @@ interface Bucket {
 const WINDOW_SECONDS: number = LOGIN_RATE_LIMIT.windowMinutes * 60;
 const MAX_ATTEMPTS: number = LOGIN_RATE_LIMIT.maxAttempts;
 
-/** 按 IP 的计数桶。 */
-const byIp = new Map<string, Bucket>();
-/** 按 IP + 用户名的计数桶。 */
-const byIpUser = new Map<string, Bucket>();
+/**
+ * 按 IP / 按 IP+用户名的计数桶。
+ *
+ * 用 `TtlMap` 而不是裸 `Map`：窗口结束后这些桶没有任何读取价值，裸 `Map`
+ * 会让它们永久驻留（换 IP 扫描登录接口即可无限增长）。
+ */
+const byIp = new TtlMap<Bucket>();
+const byIpUser = new TtlMap<Bucket>();
 
 /**
  * 供其它中间件复用的客户端 IP 提取。
@@ -55,13 +60,13 @@ function pairKey(ip: string, username: string): string {
   return `${ip}\u0000${username}`;
 }
 
-function windowBucket(map: Map<string, Bucket>, key: string, now: number): Bucket {
-  const existing: Bucket | undefined = map.get(key);
-  if (existing !== undefined && existing.resetAt > now) {
+function windowBucket(map: TtlMap<Bucket>, key: string, now: number): Bucket {
+  const existing: Bucket | undefined = map.get(key, now);
+  if (existing !== undefined) {
     return existing;
   }
   const fresh: Bucket = { count: 0, resetAt: now + WINDOW_SECONDS };
-  map.set(key, fresh);
+  map.set(key, fresh, fresh.resetAt, now);
   return fresh;
 }
 
@@ -78,6 +83,17 @@ export function clearLoginFailures(ip: string, username: string): void {
   byIpUser.delete(pairKey(ip, username));
 }
 
+/**
+ * 清空全部限流状态。
+ *
+ * 桶是模块级单例（限流语义要求跨请求保留），因此测试必须显式重置，
+ * 否则前一条用例打满 5 次失败会让后续用例直接拿到 429。
+ */
+export function resetLoginRateLimit(): void {
+  byIp.clear();
+  byIpUser.clear();
+}
+
 /** 当前限流状态；retryAfterSeconds 为剩余窗口秒数。 */
 export function loginBlockState(
   ip: string,
@@ -85,12 +101,12 @@ export function loginBlockState(
 ): { blocked: boolean; retryAfterSeconds: number } {
   const now: number = epochSeconds();
   const candidates: Bucket[] = [];
-  const ipBucket: Bucket | undefined = byIp.get(ip);
-  if (ipBucket !== undefined && ipBucket.resetAt > now) {
+  const ipBucket: Bucket | undefined = byIp.get(ip, now);
+  if (ipBucket !== undefined) {
     candidates.push(ipBucket);
   }
-  const pairBucket: Bucket | undefined = byIpUser.get(pairKey(ip, username));
-  if (pairBucket !== undefined && pairBucket.resetAt > now) {
+  const pairBucket: Bucket | undefined = byIpUser.get(pairKey(ip, username), now);
+  if (pairBucket !== undefined) {
     candidates.push(pairBucket);
   }
   let retryAfterSeconds = 0;

@@ -2,7 +2,7 @@
  * Hono 应用组装（T03b 收口）。
  *
  * 中间件链固定顺序：
- * requestId → secureHeaders/CSP → CSRF → bodyLimit → rateLimit →
+ * requestId → clientIp → secureHeaders/CSP → CSRF → bodyLimit → rateLimit →
  * session → authGuard → initGuard → cacheControl → zod validator →
  * handler → 静态 fallback → onError → accessLog（日志写入在链尾）。
  *
@@ -11,13 +11,7 @@
  * 绝不 fallback 到 index.html。
  */
 import { Hono } from 'hono';
-import type { MiddlewareHandler } from 'hono';
-import {
-  CSP_HEADER_VALUE,
-  ErrorCode,
-  SECURITY_HEADERS,
-  type ErrorCode as ErrorCodeType,
-} from '@stockin/shared';
+import { ErrorCode, type ErrorCode as ErrorCodeType } from '@stockin/shared';
 import type { Env } from './env';
 import type { Db } from './repositories/db';
 import type { BootstrapRepositories } from './bootstrap';
@@ -27,7 +21,8 @@ import type { AppEnv } from './types/hono';
 import type { StaticPort } from './runtime/ports';
 import { createAccessLogMiddleware } from './middleware/access-log';
 import { createRequestIdMiddleware } from './middleware/request-id';
-import { createSecureHeadersMiddleware } from './middleware/secure-headers';
+import { createClientIpMiddleware } from './middleware/client-ip';
+import { createSecureHeadersMiddleware, applySecurityHeaders } from './middleware/secure-headers';
 import { createCsrfMiddleware } from './middleware/csrf';
 import { createBodyLimitMiddleware } from './middleware/body-limit';
 import { createRateLimitMiddleware } from './middleware/rate-limit';
@@ -83,10 +78,11 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   // accessLog 注册在最外层：await next() 之后写日志，语义上位于链尾。
   app.use('*', createAccessLogMiddleware());
-  // 兜底安全头注册在次外层：洋葱模型下它的 after 代码在所有内层中间件之后执行，
-  // 保证中间件直接返回的原生 Response / notFound / onError 同样带 CSP 基线头。
-  app.use('*', createFinalizeHeadersMiddleware());
   app.use('*', createRequestIdMiddleware());
+  // clientIp 必须早于 CSRF：否则被 CSRF 拒绝的请求在访问日志里 clientIp 为空串，
+  // 安全事件恰好是最需要溯源的那一类。
+  app.use('*', createClientIpMiddleware());
+  // 安全头只有这一个发起点（after 代码覆盖内层所有响应，含被直接拒绝的）。
   app.use('*', createSecureHeadersMiddleware());
   app.use('*', createCsrfMiddleware(deps.env.publicOrigins));
   app.use('*', createBodyLimitMiddleware());
@@ -125,28 +121,12 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       { err: error instanceof Error ? error.message : String(error), requestId, path: c.req.path },
       '[app] 未处理异常',
     );
-    return errorResponse(ErrorCode.COMMON_INTERNAL, requestId);
+    const response: Response = errorResponse(ErrorCode.COMMON_INTERNAL, requestId);
+    // 异常可能发生在安全头中间件的内层之外（如中间件自身抛错），此处再调用
+    // 同一个函数，保证「任何响应都带 CSP」这条不因注册顺序而漏。
+    applySecurityHeaders(response.headers);
+    return response;
   });
 
   return app;
-}
-
-/**
- * 兜底安全头：在 next() 之后把 CSP 基线头写到最终响应，
- * 并显式删除 HSTS（纯 HTTP）。注册位置在次外层，覆盖所有内层响应。
- */
-function createFinalizeHeadersMiddleware(): MiddlewareHandler<AppEnv> {
-  return async (c, next): Promise<void> => {
-    await next();
-    const headers: Headers = c.res.headers;
-    headers.set('content-security-policy', CSP_HEADER_VALUE);
-    headers.set('x-frame-options', SECURITY_HEADERS.X_FRAME_OPTIONS);
-    headers.set('x-content-type-options', SECURITY_HEADERS.X_CONTENT_TYPE_OPTIONS);
-    headers.set('referrer-policy', SECURITY_HEADERS.REFERRER_POLICY);
-    headers.delete('strict-transport-security');
-    const requestId: string = c.get('requestId') ?? '';
-    if (requestId !== '') {
-      headers.set('x-request-id', requestId);
-    }
-  };
 }

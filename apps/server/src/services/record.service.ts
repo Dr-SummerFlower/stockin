@@ -29,6 +29,7 @@ import type { OperationLogRepository } from '../repositories/operation-log.repos
 import type { SettingsRepository } from '../repositories/settings.repository';
 import { toRecordView, type RecordRow, type WriteContext } from '../repositories/types';
 import { epochSeconds, serverToday, utcNowIso } from '../lib/today';
+import { TtlMap } from '../lib/ttl-map';
 import type { ServiceResult } from '../app';
 
 export interface RecordServiceDeps {
@@ -38,13 +39,20 @@ export interface RecordServiceDeps {
   readonly settings: SettingsRepository;
 }
 
-interface IdempotencyEntry {
-  readonly snapshot: ServiceResult<RecordView>;
-  readonly expiresAt: number;
-}
-
 const IDEMPOTENCY_TTL_SECONDS: number = IDEMPOTENCY_TTL_HOURS * 3_600;
-const idempotencyStore = new Map<string, IdempotencyEntry>();
+
+/**
+ * 幂等键快照表（`Idempotency-Key` → 首次成功的响应）。
+ *
+ * 用 `TtlMap`：快照过期后没有任何读取入口，裸 `Map` 会让「每次保存一个新
+ * 幂等键」的流量把内存永久撑大（24 小时后条目仍然在表里）。
+ */
+const idempotencyStore = new TtlMap<ServiceResult<RecordView>>();
+
+/** 清空幂等快照（模块级单例，测试必须显式重置才能重复使用同一个键）。 */
+export function resetIdempotencyStore(): void {
+  idempotencyStore.clear();
+}
 
 /** RecordSaveInput → RecordFields（原样透传，绝不重算或改写）。 */
 function toFields(input: RecordSaveInput): RecordFields {
@@ -125,16 +133,13 @@ export class RecordService {
       return produce();
     }
     const now: number = epochSeconds();
-    const cached: IdempotencyEntry | undefined = idempotencyStore.get(key);
-    if (cached !== undefined && cached.expiresAt > now) {
-      return cached.snapshot;
+    const cached: ServiceResult<RecordView> | undefined = idempotencyStore.get(key, now);
+    if (cached !== undefined) {
+      return cached;
     }
     const result: ServiceResult<RecordView> = produce();
     if (result.ok) {
-      idempotencyStore.set(key, {
-        snapshot: result,
-        expiresAt: now + IDEMPOTENCY_TTL_SECONDS,
-      });
+      idempotencyStore.set(key, result, now + IDEMPOTENCY_TTL_SECONDS, now);
     }
     return result;
   }

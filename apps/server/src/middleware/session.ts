@@ -18,7 +18,6 @@ import {
 } from '../repositories/session.repository';
 import type { MetaRepository } from '../repositories/meta.repository';
 import type { CredentialRepository } from '../repositories/credential.repository';
-import { clientIpOf } from './rate-limit';
 import type { AppEnv } from '../types/hono';
 
 export interface SessionMiddlewareDeps {
@@ -48,7 +47,6 @@ export function createSessionMiddleware(deps: SessionMiddlewareDeps): Middleware
 
     c.set('session', identity);
     c.set('actor', actor);
-    c.set('clientIp', clientIpOf(c));
     await next();
   };
 }
