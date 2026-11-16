@@ -6,19 +6,6 @@
 
 ## [Unreleased]
 
-### 修复
-
-- **release**：发布说明去掉通道与版本前缀重复 ([f137015](https://github.com/Dr-SummerFlower/stockin/commit/f137015bbfbefa23fa368e592579e6ebe8c900f2))
-
-### 文档
-
-- **release**：新增 CHANGELOG 并简化 Release 发布说明模板 ([61ad51e](https://github.com/Dr-SummerFlower/stockin/commit/61ad51e3eeddfb8a8b1f7855993e4ff8d883f0a5))
-
-### 构建
-
-- **tools**：接入 git-cliff 自动生成 CHANGELOG 并加入 CI ([d44a33f](https://github.com/Dr-SummerFlower/stockin/commit/d44a33f9a203ddc72e8829cdb24769b053f06d88))
-## [pre] - 2026-11-16
-
 ### 新增
 
 - **domain**：实现 shared 契约层与 domain 纯函数层 ([40f54b5](https://github.com/Dr-SummerFlower/stockin/commit/40f54b5fffc21c88947cd6a615b8032f71efd2e4))
@@ -39,6 +26,8 @@
 - **web**：布局移出 src/layouts/index.tsx 约定路径，消除 Umi 全局布局导致的双层嵌套 ([4be2da6](https://github.com/Dr-SummerFlower/stockin/commit/4be2da63c59f2f2a99533b771c0160c5baa510b6))
 - **server**：收敛进程内状态与安全头，登录改用户名密码双校验 ([a3785f0](https://github.com/Dr-SummerFlower/stockin/commit/a3785f0b3af2fc9d624203f2163d74284e0560b1))
 - **ci**：门禁前预构建共享包，修复干净 checkout 的类型检查失败 ([e737de1](https://github.com/Dr-SummerFlower/stockin/commit/e737de128e528e2d7fd51e352ca44ae70fd7a5fd))
+- **release**：发布说明去掉通道与版本前缀重复 ([f137015](https://github.com/Dr-SummerFlower/stockin/commit/f137015bbfbefa23fa368e592579e6ebe8c900f2))
+- **changelog**：忽略滚动 pre tag，避免 CHANGELOG 被拆成多段 ([b40cb81](https://github.com/Dr-SummerFlower/stockin/commit/b40cb811b4d6b7d7ff0e60670ff3e46f6e5e0026))
 
 ### 重构
 
@@ -51,6 +40,7 @@
 ### 文档
 
 - 补全根目录 README 与 MIT LICENSE ([3b8b422](https://github.com/Dr-SummerFlower/stockin/commit/3b8b422f606e8b3dafb2b68a3085f7b6616f33ad))
+- **release**：新增 CHANGELOG 并简化 Release 发布说明模板 ([61ad51e](https://github.com/Dr-SummerFlower/stockin/commit/61ad51e3eeddfb8a8b1f7855993e4ff8d883f0a5))
 
 ### 构建
 
