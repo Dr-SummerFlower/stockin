@@ -46,6 +46,7 @@ design/
 docs/
 *.md
 !README.md
+!CHANGELOG.md
 
 # --- 打包/压缩产物 ---
 *.tar.gz

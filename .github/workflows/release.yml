@@ -242,7 +242,10 @@ jobs:
             [[ -e "$f" ]] && ASSETS+=("$f")
           done
 
-          NOTES="构建提交：${GITHUB_SHA}"$'\n'"镜像：${{ steps.meta.outputs.image_base }}:${VERSION}"$'\n'$'\n'"部署包：win-x64 / linux-x64 / docker / workers（若已生成）。各包内含 README，解压即用；win 与 linux 需自备 Node.js 26.13.0。"
+          # 发布说明保持简短且单一真源：一行摘要 + 指向 CHANGELOG 的链接，
+          # 完整变更记录集中在仓库 CHANGELOG.md，避免每次发布重写一大段模板文案。
+          CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/CHANGELOG.md"
+          NOTES="${CHANNEL} ${VERSION}"$'\n\n'"变更记录：${CHANGELOG_URL}"
 
           if [[ "${CHANNEL}" == "stable" ]]; then
             # `--target` 必须显式给：workflow_dispatch 触发的构建用的是被选分支的
