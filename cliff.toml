@@ -39,6 +39,10 @@ postprocessors = [
 ]
 
 [git]
+# 只把 v* tag 当版本边界。预发布的 `pre` 是滚动 tag（每次预发布都会移动），
+# 若被识别为版本段会让 CHANGELOG 随发布波动；忽略它，所有提交留在 Unreleased，
+# 直到正式打 v1.0 这类 tag。
+tag_pattern = "^v[0-9]"
 conventional_commits = true
 filter_unconventional = true
 require_conventional = false

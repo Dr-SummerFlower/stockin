@@ -57,6 +57,7 @@
 - 全栈切换 Vite 引擎 + 补齐单测与 lint 质量门禁 ([1b3c1a7](https://github.com/Dr-SummerFlower/stockin/commit/1b3c1a7bfb334bf5ec0985037706acfdbd4fc99d))
 - **docker**：基础镜像换成 OpenCloudOS 9 minimal ([319e538](https://github.com/Dr-SummerFlower/stockin/commit/319e538a6fcbb49d7a3dae0aa5525d62e41ee161))
 - **release**：收紧发布制品与部署配置 ([a496c58](https://github.com/Dr-SummerFlower/stockin/commit/a496c5892844c23db3a7a5b6380898654c0f780e))
+- **tools**：接入 git-cliff 自动生成 CHANGELOG 并加入 CI ([d44a33f](https://github.com/Dr-SummerFlower/stockin/commit/d44a33f9a203ddc72e8829cdb24769b053f06d88))
 
 ### 杂项
 
