@@ -1,0 +1,413 @@
+name: 构建与发布
+
+# 发布通道：
+#  - 默认分支 push → 预发布：Release tag `pre`（滚动覆盖）、GHCR `pre-<sha7>` / `pre`
+#  - tag v*（如 v1.0）→ 正式发布：Release `v1.0`、GHCR `1.0` + `sha-<sha7>`
+#  - workflow_dispatch → 手动指定通道，便于演练与补发
+#
+# 所有 `uses:` 均锁定到完整 commit SHA（对应 lightweight tag）：
+#   actions/checkout v6.1.0 / actions/setup-node v6.5.0
+#   docker/setup-buildx-action v4.4.1 / docker/login-action v4.8.0
+#   docker/build-push-action v6.9.0
+# 升级 action 时必须重新取对应 tag 的 commit SHA，不要改回浮动 tag。
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 发布通道
+        required: true
+        default: pre
+        type: choice
+        options:
+          - pre
+          - stable
+      version:
+        description: 正式版本号（channel=stable 时必填，如 1.0）
+        required: false
+        type: string
+
+# 权限按 job 收敛（发布审查 P3）：只有 publish 需要写 contents / packages，
+# verify 只读源码、workers 只下载制品，都不该拿到写权限。
+# 顶层不设 permissions，避免「最小权限」被一次全局声明抹平。
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 质量门禁
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: 安装 Node.js（版本取自 .node-version）
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
+
+      - name: 安装 pnpm
+        run: npm install -g pnpm@12.15.0 && pnpm --version && node --version
+
+      - name: 冻结依赖
+        run: pnpm install --frozen-lockfile
+
+      # fail-fast：lint → typecheck → test:coverage → build，任一失败即停并打印阶段。
+      - name: 质量闸门
+        run: pnpm verify
+
+      # 覆盖率口径必须写在流水线里：不写清楚，91% 这种子集读数会被当成
+      # 「整个后端都测过了」（发布审查 P1-3）。
+      - name: 覆盖率口径说明
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### 覆盖率口径"
+            echo ""
+            echo '- 统计范围：`packages/domain`、`packages/shared`、整个 `apps/server/src`（含路由 / Service / 中间件）'
+            echo '- 排除项仅三类：入口文件（`index.ts` / `worker.ts` / `cli/`）、纯类型声明、以及 Worker 运行时端口实现（只能在 workerd 跑，由 `wrangler dev` 端到端脚本覆盖）'
+            echo '- 阈值 70/70/70/65 是对上述**整体**范围生效，不是某个子集'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  publish:
+    name: 制品与镜像发布
+    needs: verify
+    permissions:
+      contents: write
+      packages: write
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      channel: ${{ steps.meta.outputs.channel }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
+
+      - name: 安装 pnpm 并构建
+        run: |
+          npm install -g pnpm@12.15.0
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # Worker 静态门禁：编译 + 校验 wrangler 配置与绑定，**不访问账号、不上传**。
+      # 放在产出任何制品之前，配置或产物写错时直接失败，不会留下半套发布物。
+      - name: Worker 静态门禁
+        run: |
+          npm install -g wrangler@4.158.0
+          wrangler deploy --dry-run
+
+      - name: 计算版本与镜像标签
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA7="${GITHUB_SHA::7}"
+          OWNER_LC="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE_BASE="ghcr.io/${OWNER_LC}/stockin"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            CHANNEL="stable"
+            VERSION="${GITHUB_REF_NAME#v}"
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            ASSET_PREFIX="stockin-${VERSION}"
+            IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:sha-${SHA7}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${{ inputs.channel }}" == "stable" ]]; then
+            VERSION="${{ inputs.version }}"
+            if [[ -z "${VERSION}" ]]; then
+              echo "::error::channel=stable 时必须填写 version"
+              exit 1
+            fi
+            CHANNEL="stable"
+            RELEASE_TAG="v${VERSION}"
+            ASSET_PREFIX="stockin-${VERSION}"
+            IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:sha-${SHA7}"
+          else
+            CHANNEL="pre"
+            VERSION="pre-${SHA7}"
+            RELEASE_TAG="pre"
+            # 预发布资产名**固定**（不含 sha）：`pre` 是滚动 Release，
+            # 名字里带 sha 会让每次 push 都新增一套文件、旧文件永远留着
+            # （发布审查 P2-6）。固定名 + `--clobber` 才是真正的覆盖。
+            ASSET_PREFIX="stockin-pre"
+            IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:pre"
+          fi
+
+          {
+            echo "channel=${CHANNEL}"
+            echo "version=${VERSION}"
+            echo "release_tag=${RELEASE_TAG}"
+            echo "asset_prefix=${ASSET_PREFIX}"
+            echo "image_base=${IMAGE_BASE}"
+            echo "sha7=${SHA7}"
+            echo 'image_tags<<TAGS_EOF'
+            printf '%s\n' "${IMAGE_TAGS}"
+            echo 'TAGS_EOF'
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "### 发布 ${CHANNEL} / ${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
+          printf '资产前缀：%s\n镜像标签：\n%s\n' "${ASSET_PREFIX}" "${IMAGE_TAGS}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 生成多平台部署包
+        run: >-
+          node scripts/package-artifacts.mjs
+          "${{ steps.meta.outputs.version }}"
+          "${{ steps.meta.outputs.version }}"
+          "${{ steps.meta.outputs.image_base }}"
+
+      # 把已通过 dry-run 的 Worker 制品交给部署 job，避免重复构建（一次构建、多平台晋升）。
+      - name: 上传 Worker 制品
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: worker-bundle
+          path: .tmp/artifacts/workers
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: 压缩制品并计算校验和
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="${{ steps.meta.outputs.asset_prefix }}"
+          (cd .tmp/artifacts/win-x64   && zip -qr "${GITHUB_WORKSPACE}/${PREFIX}-win-x64.zip" stockin)
+          (cd .tmp/artifacts/linux-x64 && tar -czf "${GITHUB_WORKSPACE}/${PREFIX}-linux-x64.tar.gz" stockin)
+          (cd .tmp/artifacts/docker    && zip -qr "${GITHUB_WORKSPACE}/${PREFIX}-docker.zip" stockin)
+          if [[ -d .tmp/artifacts/workers ]]; then
+            (cd .tmp/artifacts/workers && zip -qr "${GITHUB_WORKSPACE}/${PREFIX}-workers.zip" stockin)
+          else
+            echo "::warning::本次未生成 workers 部署包（Worker 产物或 wrangler.toml 缺失）"
+          fi
+          sha256sum stockin-*.zip stockin-*.tar.gz > SHA256SUMS.txt
+          ls -lh stockin-*.zip stockin-*.tar.gz SHA256SUMS.txt
+
+      - name: 启用 Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+
+      - name: 登录 GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 一次构建、按版本晋升：linux/amd64 单架构，镜像内由 pnpm runtime 装 Node 26.13.0。
+      - name: 构建并推送镜像
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.image_tags }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          # runner 在境外：把默认的国内 npm / Node 源覆盖回官方源。
+          # dnf 仍用基础镜像自带的 OpenCloudOS.repo / epol.repo。
+          build-args: |
+            NPM_REGISTRY=https://registry.npmjs.org/
+            NODE_DOWNLOAD_MIRROR=https://nodejs.org/download/release/
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 发布 GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          CHANNEL="${{ steps.meta.outputs.channel }}"
+          RELEASE_TAG="${{ steps.meta.outputs.release_tag }}"
+
+          ASSETS=()
+          for f in stockin-*.zip stockin-*.tar.gz SHA256SUMS.txt; do
+            [[ -e "$f" ]] && ASSETS+=("$f")
+          done
+
+          NOTES="构建提交：${GITHUB_SHA}"$'\n'"镜像：${{ steps.meta.outputs.image_base }}:${VERSION}"$'\n'$'\n'"部署包：win-x64 / linux-x64 / docker / workers（若已生成）。各包内含 README，解压即用；win 与 linux 需自备 Node.js 26.13.0。"
+
+          if [[ "${CHANNEL}" == "stable" ]]; then
+            # `--target` 必须显式给：workflow_dispatch 触发的构建用的是被选分支的
+            # 提交，而 `gh release create` 默认把 tag 打在**默认分支 HEAD**，
+            # 两者不同就会给错的提交打上版本标签（发布审查 P3）。
+            gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
+              --target "${GITHUB_SHA}" \
+              --title "进货统计 v${VERSION}" \
+              --notes "${NOTES}"
+          elif gh release view pre >/dev/null 2>&1; then
+            # 清理历史遗留的「带 sha 资产名」（旧命名 stockin-pre-<sha7>-*）：
+            # 现在资产名固定，旧文件不会被 --clobber 覆盖，只能显式删。
+            STALE="$(gh release view pre --json assets --jq '.assets[].name' \
+              | grep -E '^stockin-pre-[0-9a-f]{7}-' || true)"
+            if [[ -n "${STALE}" ]]; then
+              while IFS= read -r name; do
+                [[ -z "${name}" ]] && continue
+                gh release delete-asset pre "${name}" --yes \
+                  || echo "::warning::删除旧预发布资产失败：${name}"
+              done <<< "${STALE}"
+            fi
+            gh release upload pre "${ASSETS[@]}" --clobber
+            gh release edit pre --prerelease --title "预发布 · ${VERSION}" --notes "${NOTES}"
+          else
+            gh release create pre "${ASSETS[@]}" \
+              --target "${GITHUB_SHA}" \
+              --prerelease \
+              --title "预发布 · ${VERSION}" \
+              --notes "${NOTES}"
+          fi
+
+          echo "### Release ${RELEASE_TAG} 已发布" >> "${GITHUB_STEP_SUMMARY}"
+
+  # Worker 部署放在境外 runner 上执行：中国大陆访问不到 *.workers.dev
+  # （DNS 污染 + 代理 502），本地无法完成部署后的冒烟验证。
+  workers:
+    name: Worker 部署
+    needs: [verify, publish]
+    permissions:
+      contents: read
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    # 同一账户下同一时刻只允许一次 Worker 发布，避免两个分支互相覆盖版本。
+    concurrency:
+      group: worker-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_NAME: stockin
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
+
+      - name: 校验凭据
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::缺少 Repository secret ${name}，无法部署 Worker"
+              missing=1
+            fi
+          done
+          [[ "${missing}" == "0" ]]
+
+      - name: 下载已校验的 Worker 制品
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: worker-bundle
+          path: .tmp/artifacts/workers
+
+      - name: 安装 wrangler
+        run: npm install -g wrangler@4.158.0
+
+      # 可信来源（PUBLIC_ORIGINS）必须在部署时确定，写错等于全站写操作 403。
+      # 优先取仓库变量 WORKER_PUBLIC_ORIGINS（有自定义域名时用它，可逗号分隔多个），
+      # 未设置则按「worker 名 + 账户 workers.dev 子域」自动推导，免手工维护。
+      - name: 解析可信来源
+        id: origins
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGINS="${{ vars.WORKER_PUBLIC_ORIGINS }}"
+          if [[ -z "${ORIGINS}" ]]; then
+            SUBDOMAIN="$(curl -fsS --max-time 20 \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain" \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);process.stdout.write(String(r?.result?.subdomain??""))}catch{process.stdout.write("")}})')"
+            if [[ -z "${SUBDOMAIN}" ]]; then
+              echo "::error::无法自动解析 workers.dev 子域，请设置仓库变量 WORKER_PUBLIC_ORIGINS"
+              exit 1
+            fi
+            ORIGINS="https://${WORKER_NAME}.${SUBDOMAIN}.workers.dev"
+          fi
+          echo "origins=${ORIGINS}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Worker 可信来源"
+            echo '```'
+            printf '%s\n' "${ORIGINS}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 部署
+        id: deploy
+        working-directory: .tmp/artifacts/workers/stockin
+        shell: bash
+        run: |
+          set -uo pipefail
+          VERSION="${{ needs.publish.outputs.version }}"
+          # 不用 set -e：deploy 失败时也要把 wrangler 的报错原样打出来，
+          # 否则命令替换会把失败输出一起吞掉、日志里只剩一行 set -e 退出。
+          OUT="$(wrangler deploy \
+            --name "${WORKER_NAME}" \
+            --tag "${VERSION}" \
+            --var "PUBLIC_ORIGINS:${{ steps.origins.outputs.origins }}" 2>&1)"
+          rc=$?
+          printf '%s\n' "${OUT}"
+          if [[ "${rc}" -ne 0 ]]; then
+            echo "::error::wrangler deploy 失败（exit ${rc}）"
+            exit "${rc}"
+          fi
+          URL="$(printf '%s\n' "${OUT}" | grep -oiE 'https://[a-z0-9._-]+\.workers\.dev' | head -1)"
+          echo "url=${URL}" >> "${GITHUB_OUTPUT}"
+          echo "### Worker 已部署 ${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
+          printf '%s\n' "${URL}" >> "${GITHUB_STEP_SUMMARY}"
+
+      # 部署后冒烟：Worker 首次请求要跑迁移与 DO 初始化，失败会持续 5xx，
+      # 因此重试而不是一次定论。
+      - name: 部署后冒烟
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 优先用 wrangler 报告的实际 workers.dev 地址；自定义域名可能尚未生效，
+          # 拿 WHITE_LIST 首项去探活会误判。
+          TARGET="${{ steps.deploy.outputs.url }}"
+          if [[ -z "${TARGET}" ]]; then
+            TARGET="$(printf '%s' "${{ steps.origins.outputs.origins }}" | cut -d, -f1 | sed 's:/*$::')"
+          fi
+          code=000
+          for _ in $(seq 1 12); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${TARGET}/api/health" || echo 000)"
+            [[ "${code}" == "200" ]] && break
+            sleep 5
+          done
+          echo "GET ${TARGET}/api/health -> ${code}"
+          if [[ "${code}" != "200" ]]; then
+            echo "::error::Worker 健康检查未通过（HTTP ${code}）"
+            exit 1
+          fi
+
+      # 只有失败时才回滚，避免把成功部署回退掉；失败可能是 deploy 本身，也可能是冒烟。
+      # 回滚只换代码版本，**不回滚 Durable Object 数据**：schema 已升级时旧版本会自检失败。
+      - name: 失败则回滚
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          wrangler rollback --name "${WORKER_NAME}" --yes -m "冒烟失败自动回滚 ${GITHUB_SHA}" || true
+          echo "::warning::已尝试回滚到上一个 Worker 版本，数据库不随代码回滚" >> "${GITHUB_STEP_SUMMARY}"
+

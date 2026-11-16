@@ -3,10 +3,11 @@
 # 同一份后端代码（apps/server）在 Node 与 Workers 上运行，平台差异全部由
 # `[vars]` 里的环境变量控制，见 apps/server/src/runtime/platform.ts。
 #
-# 部署前必改两处：
-#   1. PUBLIC_ORIGINS —— 换成 Worker 的真实域名（如 https://stockin.<account>.workers.dev）
-#      或自定义域名。写错的后果：登录与任何写请求返回「请求来源校验失败」(403)。
-#   2. name —— Worker 名称，会决定默认域名的二级部分。
+# 部署前**必须**改的一处：
+#   PUBLIC_ORIGINS —— 下面留的是占位域名，换成实际访问地址（见 [vars] 注释）。
+#   写错的后果是登录与任何写请求返回「请求来源校验失败」(403)。
+#
+# name 决定 workers.dev 默认域名的二级部分，与 PUBLIC_ORIGINS 必须一致。
 #
 # 本地开发（wrangler dev）需要 http 来源，用命令行覆盖即可，不要改这里：
 #   wrangler dev --port 8787 \
@@ -51,7 +52,14 @@ new_sqlite_classes = ["StockinDurableObject"]
 [vars]
 RUNTIME_TARGET = "workers"
 ORIGIN_SCHEME = "https"
-# 【必改】把 stockin.example.workers.dev 换成实际域名；可写多个，逗号分隔。
+# 可信来源白名单：浏览器 Host / Origin / Referer 必须命中其一，否则写操作 403
+# 「请求来源校验失败」(AUTH_CSRF_FAILED)。逗号分隔，不要写端口。
+#
+# 这里是**占位值**，不是可用配置：仓库公开时不泄漏账户的 workers.dev 子域，
+# 换账户也不需要改文件。
+#  - 手工部署：换成自己的地址，如 https://stockin.<你的子域>.workers.dev
+#  - GitHub Actions 部署：工作流会用 `--var` 覆盖本项（见
+#    .github/workflows/release.yml 的 workers job），按仓库归属自动推导。
 PUBLIC_ORIGINS = "https://stockin.example.workers.dev"
 # 中国大陆访问不到 *.workers.dev（DNS 污染 + 代理 502），
 # 若目标是国内可用，请在此处换成已接入 Cloudflare 的自定义域名。

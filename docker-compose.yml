@@ -1,10 +1,19 @@
-# 进货统计应用 —— 单机部署编排（T05）
+# 进货统计应用 —— 单机部署编排
 #
-# 用法：在与本文件同目录创建 .env（.dockerignore 已排除，不会进镜像），至少设置
-#   PUBLIC_ORIGIN=http://<服务器IP>:8080
-# 如需允许多个访问地址（如同时用服务器IP、127.0.0.1、localhost 登录），再加：
-#   PUBLIC_ORIGINS=http://<服务器IP>:8080,http://127.0.0.1:8080,http://localhost:8080
-# 然后：docker compose up -d --build
+# 用法：在与本文件同目录创建 .env，设置
+#   IMAGE_REPO=<镜像仓库，如 ghcr.io/<owner>/stockin；制品包内已由 CI 填好>
+#   IMAGE_TAG=<GitHub Release 的版本号或 pre>
+#   PUBLIC_ORIGINS=<逗号分隔的全部访问地址，见下方「端口同步」>
+# 然后：docker compose up -d。也可直接运行随制品附带的 start.sh / start.bat，
+#       它会自动探测本机 IP 生成白名单后再启动。
+#
+# 【来源白名单】漏配任何实际访问地址，从该地址登录 / 写数据都会返回
+# 「请求来源校验失败」(403 AUTH_CSRF_FAILED)。镜像内已预置回环基线。
+#
+# 【镜像来源】不再本地构建：CI 把 linux/amd64 镜像推到 GHCR，
+# 由 IMAGE_TAG 选定版本；升级 = 改 IMAGE_TAG 后重新 up -d，
+# 回滚 = 改回上一版 IMAGE_TAG 后重新 up -d。
+# 发布用的压缩包已附带本文件与 .env 模板，解压后无需源码即可启动。
 #
 # 【端口同步 · 重要】
 #  - 容器内固定监听 8080（Dockerfile: ENV PORT=8080 / EXPOSE 8080）。
@@ -14,8 +23,7 @@
 #    端口就是 URL 里的宿主端口。
 #  - 因此来源端口、HOST_PORT、容器 PORT 三者必须一致，默认全为 8080。
 #    若单独把 HOST_PORT 改成非 8080，Host 变为 <IP>:<HOST_PORT> 与来源不匹配，
-#    会让所有写操作返回 403 AUTH_CSRF_FAILED。本期容器端口固定，
-#    请勿单独修改 HOST_PORT；需要换端口时须同步调整镜像 PORT 与映射两侧。
+#    会让所有写操作返回 403 AUTH_CSRF_FAILED。
 #
 # 【卷】data / backups 用命名卷持久化；首次创建时 Docker 会继承镜像内目录属主
 #  （Dockerfile 已 chown 10001:10001），保证 USER 10001 可写。
@@ -24,12 +32,9 @@
 
 services:
   stockin:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:26.13.0-bookworm-slim}
-    image: stockin:local
+    # 镜像仓库与标签都来自 .env：CI 按仓库归属自动写入 IMAGE_REPO，换账号或
+    # fork 后不需要改本文件；升级只改 IMAGE_TAG。
+    image: ${IMAGE_REPO:-ghcr.io/dr-summerflower/stockin}:${IMAGE_TAG:?set IMAGE_TAG in .env}
     container_name: stockin
     restart: unless-stopped
     # 优雅停机：index.ts 监听 SIGTERM 停调度器 → server.close → closeDatabase。
@@ -38,11 +43,13 @@ services:
     ports:
       - "${HOST_PORT:-8080}:8080"
     environment:
-      # 必填：主可信来源，必须是含端口的 http 字面量（用作日志主来源与默认集合首项）。
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?必须设置为 http://<服务器IP>:<宿主端口>}
-      # 可选：逗号分隔的多来源；一旦设置即覆盖 PUBLIC_ORIGIN（用于同机 localhost/127.0.0.1
-      # 或追加局域网 IP 等）。留空则仅用 PUBLIC_ORIGIN 单值。
-      PUBLIC_ORIGINS: ${PUBLIC_ORIGINS:-}
+      # 【来源白名单】把所有可能用到的访问地址都列进 PUBLIC_ORIGINS，逗号分隔，
+      # 每个都必须是含端口的 http 字面量；漏配任何地址，从该地址登录/写数据
+      # 都会返回「请求来源校验失败」(403 AUTH_CSRF_FAILED)。
+      # PUBLIC_ORIGINS 一旦设置即覆盖 PUBLIC_ORIGIN（env.ts 的既定优先级）。
+      # 回环写法会自动等价展开到 127.0.0.1 / localhost / [::1]。
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://127.0.0.1:8080}
+      PUBLIC_ORIGINS: ${PUBLIC_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}
       NODE_ENV: production
       TZ: Asia/Shanghai
       PORT: "8080"
