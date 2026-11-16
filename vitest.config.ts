@@ -30,20 +30,26 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
-      // 覆盖率对「纯逻辑层 + 数据层端口」设门槛：
-      // domain/shared 是业务规则的落点；adapters 与 db.port 是数据层唯一的
-      // 可替换边界（2026-11-15 引入端口后加入），必须由一致性测试钉住。
+      /**
+       * 覆盖率统计范围（发布审查 P1-3）。
+       *
+       * 旧口径只含 domain/shared/adapters，报出的 91% 是**子集**指标：
+       * 路由 + Service + 中间件约 6000 行完全不在分母里，读数再高也不代表
+       * 后端被测过。现在口径 = 两个共享包 + 整个 `apps/server/src`，
+       * 由 `tests/http/**` 的集成测试在真实 Hono 应用上覆盖。
+       *
+       * 仍然排除的只有三类，排除理由都是「结构性不可测」，不是「没测好」：
+       *  ① 入口文件（进程入口 / Worker 入口 / CLI）——import 即启动副作用；
+       *  ② 纯类型声明（dto/schema/types/ports.d 等）——没有可执行语句；
+       *  ③ Worker 运行时端口实现（`runtime/workers/*` 里依赖 `cloudflare:workers`
+       *     与 DO storage 的部分）——只能在 workerd 里跑，由 `wrangler dev`
+       *     端到端脚本覆盖（见任务卡 01 的执行结论）。
+       * 这些文件若出现在报告里会显式报 0%，不要用 `exclude` 去把它们藏起来。
+       */
       include: [
         'packages/domain/src/**/*.ts',
         'packages/shared/src/**/*.ts',
-        'apps/server/src/repositories/adapters/**/*.ts',
-        'apps/server/src/repositories/db.port.ts',
-        // 运行时层里**纯逻辑**的三块（任务卡 01）：平台开关表、内联迁移清单、
-        // 表存储版版本登记。落盘/静态资源/exceljs 等端口实现不在此列 —— 它们
-        // 依赖真实运行时能力，由端到端脚本覆盖，塞进来只会把门槛稀释成数字游戏。
-        'apps/server/src/runtime/platform.ts',
-        'apps/server/src/runtime/workers/migration-source.inline.ts',
-        'apps/server/src/runtime/workers/version-store.table.ts',
+        'apps/server/src/**/*.ts',
       ],
       exclude: [
         '**/*.d.ts',
@@ -51,7 +57,15 @@ export default defineConfig({
         'packages/shared/src/dto/**',
         'packages/shared/src/schema/**',
         'packages/domain/src/types.ts',
-        '**/index.ts',
+        'apps/server/src/types/**',
+        'apps/server/src/runtime/ports.ts',
+        // 对外 barrel，只做 re-export。
+        'packages/shared/src/index.ts',
+        'packages/domain/src/index.ts',
+        // 入口文件：import 即产生进程副作用（监听端口 / 注册 Worker 处理器）。
+        'apps/server/src/index.ts',
+        'apps/server/src/worker.ts',
+        'apps/server/src/cli/**',
       ],
       thresholds: {
         lines: 70,
