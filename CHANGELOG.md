@@ -1,9 +1,5 @@
 # 变更记录
 
-本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 约定。
-本文件由 git-cliff 从 Conventional Commits 自动生成，请勿手工编辑。
-未发布改动统一放在 [Unreleased] 段，正式打 v* tag 后按版本分段。
-
 ## [Unreleased]
 
 ### 新增
@@ -27,7 +23,6 @@
 - **server**：收敛进程内状态与安全头，登录改用户名密码双校验 ([a3785f0](https://github.com/Dr-SummerFlower/stockin/commit/a3785f0b3af2fc9d624203f2163d74284e0560b1))
 - **ci**：门禁前预构建共享包，修复干净 checkout 的类型检查失败 ([e737de1](https://github.com/Dr-SummerFlower/stockin/commit/e737de128e528e2d7fd51e352ca44ae70fd7a5fd))
 - **release**：发布说明去掉通道与版本前缀重复 ([f137015](https://github.com/Dr-SummerFlower/stockin/commit/f137015bbfbefa23fa368e592579e6ebe8c900f2))
-- **changelog**：忽略滚动 pre tag，避免 CHANGELOG 被拆成多段 ([b40cb81](https://github.com/Dr-SummerFlower/stockin/commit/b40cb811b4d6b7d7ff0e60670ff3e46f6e5e0026))
 
 ### 重构
 
@@ -40,14 +35,12 @@
 ### 文档
 
 - 补全根目录 README 与 MIT LICENSE ([3b8b422](https://github.com/Dr-SummerFlower/stockin/commit/3b8b422f606e8b3dafb2b68a3085f7b6616f33ad))
-- **release**：新增 CHANGELOG 并简化 Release 发布说明模板 ([61ad51e](https://github.com/Dr-SummerFlower/stockin/commit/61ad51e3eeddfb8a8b1f7855993e4ff8d883f0a5))
 
 ### 构建
 
 - 全栈切换 Vite 引擎 + 补齐单测与 lint 质量门禁 ([1b3c1a7](https://github.com/Dr-SummerFlower/stockin/commit/1b3c1a7bfb334bf5ec0985037706acfdbd4fc99d))
 - **docker**：基础镜像换成 OpenCloudOS 9 minimal ([319e538](https://github.com/Dr-SummerFlower/stockin/commit/319e538a6fcbb49d7a3dae0aa5525d62e41ee161))
 - **release**：收紧发布制品与部署配置 ([a496c58](https://github.com/Dr-SummerFlower/stockin/commit/a496c5892844c23db3a7a5b6380898654c0f780e))
-- **tools**：接入 git-cliff 自动生成 CHANGELOG 并加入 CI ([d44a33f](https://github.com/Dr-SummerFlower/stockin/commit/d44a33f9a203ddc72e8829cdb24769b053f06d88))
 
 ### 杂项
 

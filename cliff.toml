@@ -10,10 +10,6 @@
 [changelog]
 header = """# 变更记录
 
-本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 约定。
-本文件由 git-cliff 从 Conventional Commits 自动生成，请勿手工编辑。
-未发布改动统一放在 [Unreleased] 段，正式打 v* tag 后按版本分段。
-
 """
 # 每个版本段的模板；Tera 语法：https://keats.github.io/tera/
 body = """
@@ -48,8 +44,15 @@ filter_unconventional = true
 require_conventional = false
 commit_preprocessors = []
 protect_breaking_commits = true
-# 分组顺序即数组顺序；skip = true 的提交不进 CHANGELOG（纯版本维护噪声）。
+# 解析器首次匹配即命中，故 skip 规则必须排在分组规则之前。
+# 变更记录自身、版本维护、依赖更新等内部噪声不进 CHANGELOG（对使用者无价值）。
 commit_parsers = [
+    { message = "^chore\\(changelog\\)", skip = true },
+    { message = "^build\\(tools\\).*CHANGELOG", skip = true },
+    { message = "^docs\\(release\\).*CHANGELOG", skip = true },
+    { message = "^fix\\(changelog\\)", skip = true },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore\\(deps", skip = true },
     { message = "^feat", group = "新增" },
     { message = "^fix", group = "修复" },
     { message = "^perf", group = "性能" },
@@ -58,10 +61,6 @@ commit_parsers = [
     { message = "^doc", group = "文档" },
     { message = "^build", group = "构建" },
     { message = "^ci", group = "持续集成" },
-    { message = "^chore\\(release\\)", skip = true },
-    { message = "^chore\\(deps", skip = true },
-    # 自动生成 CHANGELOG 的提交自身不进 CHANGELOG，避免自指噪声。
-    { message = "^chore\\(changelog\\)", skip = true },
     { message = "^chore", group = "杂项" },
     { message = "^revert", group = "回滚" },
     { message = ".*", group = "其他" },
