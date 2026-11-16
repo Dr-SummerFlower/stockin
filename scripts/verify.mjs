@@ -11,8 +11,19 @@
  */
 import { spawnSync } from 'node:child_process';
 
-/** 阶段顺序即依赖顺序：先静态检查，再跑用例，最后才打包。 */
+/**
+ * 阶段顺序即依赖顺序。
+ * shared / domain 的 package.json 把 types 指向 dist/index.d.ts；CI 干净
+ * checkout 时该目录尚不存在，若直接跑 lint / typecheck 会报
+ * 「Cannot find module '@stockin/shared'」。本地因残留历史 dist 掩盖了此问题。
+ * 故先做一次仅共享包的预构建（纯 tsc，零副作用），再进入静态检查。
+ * 末段完整 build 仍保留：它会重新生成全部产物，是发布产物的真正来源。
+ */
 const STAGES = [
+  {
+    label: 'prebuild',
+    command: 'pnpm --filter @stockin/shared --filter @stockin/domain build',
+  },
   { label: 'lint', command: 'pnpm run lint' },
   { label: 'typecheck', command: 'pnpm run typecheck' },
   { label: 'test:coverage', command: 'pnpm run test:coverage' },
