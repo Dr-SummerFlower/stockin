@@ -33,6 +33,22 @@ export const SESSION_IDLE_DAYS = 7;
 export const SESSION_ABSOLUTE_DAYS = 30;
 export const SESSION_COOKIE_NAME = 'sid';
 
+/**
+ * 管理员会话（系统维护侧，与店主会话完全隔离）。
+ *
+ * - Cookie 刻意**不设 `Max-Age` / `Expires`**：浏览器关闭即丢弃，对应
+ *   「关浏览器就退出登录」；服务端再加空闲超时兜底，防止长期挂着的标签页。
+ * - 绝对上限只约束服务端判定，不改变 Cookie 的窗口级语义。
+ * - 审计留存口径见 README「合规与日志留存」：身份鉴别/访问控制/关键操作
+ *   需可追溯 6 个月（网络安全法第 21 条、等保 2.0 安全审计）。
+ */
+export const ADMIN_SESSION_COOKIE_NAME = 'admin_sid';
+export const ADMIN_OAUTH_STATE_COOKIE_NAME = 'admin_oauth_state';
+export const ADMIN_SESSION_IDLE_MINUTES = 30;
+export const ADMIN_SESSION_ABSOLUTE_HOURS = 12;
+/** OAuth state 的一次性窗口；只够走完 GitHub 授权页，过期即拒绝。 */
+export const ADMIN_OAUTH_STATE_TTL_SECONDS = 600;
+
 /** 密码哈希 scrypt 参数（Node 内置 crypto）。文档 §3.4。N = 2^15。 */
 export const SCRYPT_PARAMS = {
   N: 32_768,
@@ -63,6 +79,11 @@ export const IDEMPOTENCY_TTL_HOURS = 24;
 
 /** 默认端口（可经 PORT 覆盖）。文档 §7.1 / §10.2 裁决 38。 */
 export const DEFAULT_PORT = 8_080;
+/**
+ * 应用版本（管理员系统概览与导出的 `appVersion` 字段）。
+ * 发布时与五处 package.json 同步修改，避免运行时读不到 package.json。
+ */
+export const APP_VERSION = '1.2.0';
 export const DEFAULT_TZ = 'Asia/Shanghai';
 export const NODE_VERSION_EXPECTED = '26.13.0';
 export const PNPM_MAJOR_VERSION = 12;

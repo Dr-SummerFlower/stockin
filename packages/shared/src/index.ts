@@ -15,8 +15,10 @@ export * from './dto/record.dto';
 export * from './dto/auth.dto';
 export * from './dto/dashboard.dto';
 export * from './dto/excel.dto';
+export * from './dto/admin.dto';
 
 export * from './schema/record.schema';
 export * from './schema/auth.schema';
 export * from './schema/excel.schema';
 export * from './schema/settings.schema';
+export * from './schema/admin.schema';

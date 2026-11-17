@@ -112,21 +112,23 @@ export function groupOfSlot(slot: LinkageSlot): 'date' | 'amount' {
   return (DATE_GROUP_SLOTS as readonly string[]).includes(slot) ? 'date' : 'amount';
 }
 
-/** 操作日志 action（append-only，文档 §4.2 / §5.2）。 */
+/**
+ * 操作日志 action（append-only）。
+ *
+ * 合规口径（网络安全法第 21 条 / 等保 2.0 安全审计）：只保留
+ * **身份鉴别、访问控制、不可逆或批量操作、系统维护**四类可审计事件。
+ * 日常增删改（RECORD_CREATE / UPDATE / DELETE）、模板下载、数据导出与
+ * 退出登录不再产生审计记录 —— 记录行自身已有创建/更新时间与来源位，
+ * 退出登录不构成安全事件。历史行仍在库内，前端映射保留兼容。
+ */
 export const Action = {
   LOGIN: 'LOGIN',
   LOGIN_FAILED: 'LOGIN_FAILED',
-  LOGOUT: 'LOGOUT',
   SETUP_COMPLETE: 'SETUP_COMPLETE',
-  RECORD_CREATE: 'RECORD_CREATE',
-  RECORD_UPDATE: 'RECORD_UPDATE',
-  RECORD_DELETE: 'RECORD_DELETE',
   RECORD_BATCH_DELETE: 'RECORD_BATCH_DELETE',
   RECORD_RESTORE: 'RECORD_RESTORE',
   RECORD_PURGE: 'RECORD_PURGE',
-  EXCEL_TEMPLATE: 'EXCEL_TEMPLATE',
   EXCEL_IMPORT: 'EXCEL_IMPORT',
-  EXCEL_EXPORT: 'EXCEL_EXPORT',
   SETTINGS_UPDATE: 'SETTINGS_UPDATE',
   BACKUP_CREATE: 'BACKUP_CREATE',
   BACKUP_RESTORE: 'BACKUP_RESTORE',
@@ -134,6 +136,13 @@ export const Action = {
   PASSWORD_CHANGE: 'PASSWORD_CHANGE',
   SECURITY_UPDATE: 'SECURITY_UPDATE',
   PASSWORD_RESET: 'PASSWORD_RESET',
+  /** 管理员（系统维护身份）侧的鉴别与访问控制事件。 */
+  ADMIN_LOGIN: 'ADMIN_LOGIN',
+  ADMIN_LOGIN_FAILED: 'ADMIN_LOGIN_FAILED',
+  ADMIN_BACKUP_DOWNLOAD: 'ADMIN_BACKUP_DOWNLOAD',
+  ADMIN_DATA_EXPORT: 'ADMIN_DATA_EXPORT',
+  ADMIN_AUDIT_EXPORT: 'ADMIN_AUDIT_EXPORT',
+  ADMIN_OWNER_RESET: 'ADMIN_OWNER_RESET',
 } as const;
 export type Action = (typeof Action)[keyof typeof Action];
 
@@ -144,6 +153,7 @@ export const TARGET_TYPE = {
   SETTINGS: 'settings',
   SESSION: 'session',
   BACKUP: 'backup',
+  ADMIN: 'admin',
   NONE: 'none',
 } as const;
 export type TargetType = (typeof TARGET_TYPE)[keyof typeof TARGET_TYPE];
