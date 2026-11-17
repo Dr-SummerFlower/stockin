@@ -4,8 +4,8 @@
  * 只信 `GET /api/auth/init-status` 判定初始化态；账密错误 401 由
  * `services/api/auth.ts` 的 `silent: true` 内联渲染，不触发全局跳转。
  *
- * 附录 B.6：移除「前往初始化引导」入口 —— 多数 initState 下会被 app.tsx
- * 的全局守卫跳回，属无效入口；初始化只由登录返回的 initState === 0 触达。
+ * 未初始化（initState=0）时提示并给出「完成初始化设置」入口；
+ * 已初始化时提供「忘记密码」入口（密保问题一步式重置）。
  */
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Input } from 'antd';
@@ -83,7 +83,16 @@ const LoginPage: React.FC = () => {
                   color: 'var(--stockin-color-muted)',
                 }}
               >
-                首次登录使用初始密码，登录后设置正式账号与密码。
+                系统尚未初始化，请先
+                <button
+                  type="button"
+                  className="stockin-link-btn"
+                  style={{ marginLeft: 2 }}
+                  onClick={(): void => navigate(ROUTES.setup)}
+                >
+                  完成初始化设置
+                </button>
+                。
               </p>
             ) : null}
           </div>
@@ -131,6 +140,15 @@ const LoginPage: React.FC = () => {
           >
             登录
           </Button>
+          <div style={{ textAlign: 'center' }}>
+            <button
+              type="button"
+              className="stockin-link-btn"
+              onClick={(): void => navigate(ROUTES.forgotPassword)}
+            >
+              忘记密码
+            </button>
+          </div>
           <details className="stockin-login-tech">
             <summary>技术信息</summary>
             <div>未加密连接下，账号与密码以明文传输，仅适用于可信网络。</div>

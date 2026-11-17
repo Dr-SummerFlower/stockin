@@ -9,6 +9,8 @@ import type {
   PageResult,
   RecordDraft,
   RecordFilter,
+  RecordSuggestionField,
+  RecordSuggestionResponse,
   RecordView,
 } from '@stockin/shared';
 import { request } from '../request';
@@ -34,6 +36,17 @@ export function toRecordQuery(
 
 export function listRecords(filter: RecordFilter): Promise<PageResult<RecordView>> {
   return request<PageResult<RecordView>>('/api/records', { query: toRecordQuery(filter) });
+}
+
+/** 输入建议：商品名称（附最近一次规格/单价）或规格；失败静默，不打扰录入。 */
+export function getRecordSuggestions(
+  field: RecordSuggestionField,
+  q: string,
+): Promise<RecordSuggestionResponse> {
+  return request<RecordSuggestionResponse>('/api/records/suggestions', {
+    query: { field, q },
+    silent: true,
+  });
 }
 
 export function getRecord(id: number): Promise<RecordView> {

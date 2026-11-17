@@ -214,23 +214,23 @@ setRequestNotifier((level: NoticeLevel, content: string): void => {
 
 /**
  * 路由守卫：
+ * - 未完成初始化（initState=0）：直接去 `/setup` 自助引导 —— 首启不再生成
+ *   随机初始密码，不存在“先登录再设置”的中间态。
  * - 已完成初始化（initState=1）：未登录 → /login；已登录 → 放行。
- * - 未完成初始化（initState=0 首启）：先检测登录态 ——
- *   未登录 → /login（输入部署日志中的初始密码）；
- *   已用初始密码登录 → /setup（设置正式账号与密码）。
+ * - `/login`、`/forgot-password`、`/setup`、`/404` 为公开页，直接放行。
  */
 async function authGuard(pathname: string): Promise<void> {
-  if (pathname === '/login' || pathname === '/setup' || pathname === '/404') {
+  if (
+    pathname === '/login' ||
+    pathname === '/forgot-password' ||
+    pathname === '/setup' ||
+    pathname === '/404'
+  ) {
     return;
   }
   const init = await getInitStatus().catch(() => null);
   if (init !== null && init.initState === 0) {
-    const me = await getMe().catch(() => null);
-    if (me !== null && me.authenticated) {
-      history.push('/setup');
-    } else {
-      history.push('/login');
-    }
+    history.push('/setup');
     return;
   }
   const me = await getMe().catch(() => null);

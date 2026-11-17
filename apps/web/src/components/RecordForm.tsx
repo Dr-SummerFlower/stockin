@@ -45,6 +45,7 @@ import NumericInput from '@/components/NumericInput';
 import DateInput from '@/components/DateInput';
 import FieldGroup from '@/components/FieldGroup';
 import Icon from '@/components/Icon';
+import SuggestionInput from '@/components/SuggestionInput';
 import { RECORD_FIELD_LABELS, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 import {
   formatMoneyInput,
@@ -328,7 +329,7 @@ const RecordForm: React.FC<RecordFormProps> = ({
           />
         ) : null}
 
-        <FieldGroup title="基础信息">
+        <FieldGroup title="基础信息" tourId="record-base">
           <div className="stockin-form-grid">
             <div className="stockin-field-wrap">
               <div className="stockin-field-label">
@@ -339,16 +340,27 @@ const RecordForm: React.FC<RecordFormProps> = ({
                   </span>
                 </span>
               </div>
-              <Input
+              <SuggestionInput
+                field="name"
                 value={base.name}
-                aria-label="商品名称"
-                aria-required
+                ariaLabel="商品名称"
                 placeholder="请输入商品名称"
                 maxLength={200}
-                allowClear
-                onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-                  patchBase({ name: event.target.value })
-                }
+                onChange={(value: string): void => patchBase({ name: value })}
+                onPick={(item): void => {
+                  // 只补空/覆盖规格与单价：用户从历史名称里选，本身就是明确意图。
+                  if (item.spec !== null && item.spec !== '') {
+                    patchBase({ spec: item.spec });
+                  }
+                  if (item.unitPrice !== null && item.unitPrice > 0) {
+                    dispatch({
+                      type: 'userInput',
+                      slot: 'unitPrice',
+                      raw: formatUnitPrice(item.unitPrice),
+                      parsed: item.unitPrice,
+                    });
+                  }
+                }}
               />
             </div>
 
@@ -373,15 +385,13 @@ const RecordForm: React.FC<RecordFormProps> = ({
               <div className="stockin-field-label">
                 <span>{RECORD_FIELD_LABELS.spec ?? '规格'}</span>
               </div>
-              <Input
+              <SuggestionInput
+                field="spec"
                 value={base.spec}
-                aria-label="规格"
+                ariaLabel="规格"
                 placeholder="请输入规格"
                 maxLength={200}
-                allowClear
-                onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-                  patchBase({ spec: event.target.value })
-                }
+                onChange={(value: string): void => patchBase({ spec: value })}
               />
             </div>
 
@@ -403,7 +413,7 @@ const RecordForm: React.FC<RecordFormProps> = ({
           </div>
         </FieldGroup>
 
-        <FieldGroup title="日期信息" badge="三选二" locked={linkage.date.locked}>
+        <FieldGroup title="日期信息" badge="三选二" locked={linkage.date.locked} tourId="record-date">
           <div className="stockin-form-grid is-three">
             <BadgedField
               label={RECORD_FIELD_LABELS.productionDate ?? '生产日期'}
@@ -473,7 +483,7 @@ const RecordForm: React.FC<RecordFormProps> = ({
           </div>
         </FieldGroup>
 
-        <FieldGroup title="金额信息" badge="三选二" locked={linkage.amount.locked}>
+        <FieldGroup title="金额信息" badge="三选二" locked={linkage.amount.locked} tourId="record-amount">
           <div className="stockin-form-grid is-three">
             <BadgedField
               label={RECORD_FIELD_LABELS.unitPrice ?? '单价'}
@@ -523,7 +533,11 @@ const RecordForm: React.FC<RecordFormProps> = ({
           </div>
         </FieldGroup>
 
-        <div className="stockin-submit-bar" style={{ justifyContent: 'flex-end' }}>
+        <div
+          className="stockin-submit-bar"
+          data-tour-id="record-submit"
+          style={{ justifyContent: 'flex-end' }}
+        >
           <div className="stockin-btn-row">
             <Button
               onClick={onCancel}

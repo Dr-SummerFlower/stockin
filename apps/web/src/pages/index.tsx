@@ -137,7 +137,7 @@ const DashboardPage: React.FC = () => {
 
           <MetricBand metrics={data.metrics} />
 
-          <div className="stockin-dashboard-grid">
+          <div className="stockin-dashboard-grid" data-tour-id="dashboard-cards">
             <ExpiryList
               alerts={data.alerts}
               metrics={data.metrics}

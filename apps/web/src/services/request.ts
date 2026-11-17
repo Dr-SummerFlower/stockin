@@ -94,6 +94,10 @@ const AUTH_PATH_PREFIXES: readonly string[] = [
   '/api/auth/init-status',
   '/api/auth/me',
   '/api/auth/logout',
+  '/api/auth/change-password',
+  '/api/auth/security',
+  '/api/auth/security-question',
+  '/api/auth/forgot-password',
   '/api/health',
 ];
 

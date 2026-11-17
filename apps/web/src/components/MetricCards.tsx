@@ -51,7 +51,7 @@ export const MetricBand: React.FC<MetricCardsProps> = ({ metrics }) => {
   ];
 
   return (
-    <div className="stockin-metric-band-wrap">
+    <div className="stockin-metric-band-wrap" data-tour-id="dashboard-metrics">
       <div className="stockin-metric-band">
         {items.map((item) => (
           <div key={item.label} className="stockin-metric">

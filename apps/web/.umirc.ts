@@ -107,6 +107,7 @@ export default defineConfig({
   routes: [
     // 顶层独立路由：不使用 layout:false，天然不继承导航布局。
     { path: '/login', component: 'login' },
+    { path: '/forgot-password', component: 'forgot-password' },
     { path: '/setup', component: 'setup' },
     {
       // 布局文件刻意放在 src/layouts/MainLayout.tsx 而非 src/layouts/index.tsx：

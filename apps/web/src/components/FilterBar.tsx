@@ -10,10 +10,11 @@
  * 不再拼两个原生日期框。
  */
 import React, { useState } from 'react';
-import { Button, Input, Select } from 'antd';
+import { Button, Select } from 'antd';
 import type { RecordFilter } from '@stockin/shared';
 import Icon from '@/components/Icon';
 import InfoTip from '@/components/InfoTip';
+import SuggestionInput from '@/components/SuggestionInput';
 import { DateRangeInput } from '@/components/DateInput';
 import { describeRecordFilter } from '@/utils/format';
 import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
@@ -76,19 +77,17 @@ const FilterBar: React.FC<FilterBarProps> = ({
 
   return (
     <>
-      <div className="stockin-filter-bar">
+      <div className="stockin-filter-bar" data-tour-id="record-filter">
         <div className="stockin-filter-row">
           {item(
             '商品名称',
-            <Input
+            <SuggestionInput
+              field="name"
               value={filter.name ?? ''}
-              aria-label="按商品名称前缀筛选"
+              ariaLabel="按商品名称前缀筛选"
               placeholder="请输入商品名称"
-              allowClear
-              onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-                onChange({
-                  name: event.target.value === '' ? undefined : event.target.value,
-                })
+              onChange={(value: string): void =>
+                onChange({ name: value === '' ? undefined : value })
               }
             />,
           )}
@@ -147,14 +146,12 @@ const FilterBar: React.FC<FilterBarProps> = ({
             <div className="stockin-filter-row">
               {item(
                 '规格',
-                <Input
+                <SuggestionInput
+                  field="spec"
                   value={filter.spec ?? ''}
-                  aria-label="按规格前缀筛选"
-                  allowClear
-                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-                    onChange({
-                      spec: event.target.value === '' ? undefined : event.target.value,
-                    })
+                  ariaLabel="按规格前缀筛选"
+                  onChange={(value: string): void =>
+                    onChange({ spec: value === '' ? undefined : value })
                   }
                 />,
                 'sm',

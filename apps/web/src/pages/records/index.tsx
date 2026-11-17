@@ -216,14 +216,16 @@ const RecordsPage: React.FC = () => {
           >
             导出
           </Button>
-          <Button
-            type="primary"
-            icon={<Icon name="plus" size="sm" />}
-            onClick={(): void => navigate(ROUTES.recordNew)}
-            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-          >
-            新增记录
-          </Button>
+          <span data-tour-id="records-new" style={{ display: 'inline-flex' }}>
+            <Button
+              type="primary"
+              icon={<Icon name="plus" size="sm" />}
+              onClick={(): void => navigate(ROUTES.recordNew)}
+              style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+            >
+              新增记录
+            </Button>
+          </span>
         </div>
       </div>
 

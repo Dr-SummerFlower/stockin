@@ -7,10 +7,12 @@
  * 顶栏日期按北京时间（UTC+8）显示，与 utils/format.ts 的口径一致。
  * 顶栏不做面包屑：侧栏选中项已表明当前位置，重复一遍只是噪声。
  */
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { App as AntdApp } from 'antd';
 import { Link, Outlet, useLocation, useModel, useNavigate } from 'umi';
 import Icon, { type IconName } from '@/components/Icon';
+import OnboardingTour from '@/components/OnboardingTour';
+import { getSettings } from '@/services/api/settings';
 import { NAV_ITEMS, ROUTES, type NavItem } from '@/constants/routes';
 
 /** NavItem.icon → 内联 SVG 名；保持 routes.ts 的既有取值以免扩散改动。 */
@@ -45,10 +47,26 @@ const AppLayout: React.FC = () => {
   const navigate = useNavigate();
   const { username, refresh, signOut } = useModel('session');
   const { message: holderMessage } = AntdApp.useApp();
+  const [shopName, setShopName] = useState<string>('');
 
   useEffect((): void => {
     void refresh();
   }, [refresh]);
+
+  // 店铺名称用于品牌位；取不到时回落默认名，不阻塞布局。
+  useEffect((): (() => void) => {
+    let active = true;
+    void getSettings()
+      .then((settings): void => {
+        if (active) {
+          setShopName(settings.shopName ?? '');
+        }
+      })
+      .catch((): void => undefined);
+    return (): void => {
+      active = false;
+    };
+  }, []);
 
   const selected = selectedNavKey(location.pathname);
 
@@ -68,7 +86,7 @@ const AppLayout: React.FC = () => {
         <div className="stockin-brand">
           <div className="stockin-brand-mark">进</div>
           <div className="stockin-brand-text">
-            <strong>进货统计</strong>
+            <strong>{shopName === '' ? '进货统计' : shopName}</strong>
           </div>
         </div>
 
@@ -81,6 +99,7 @@ const AppLayout: React.FC = () => {
                 className={`stockin-nav-item${selected === item.path ? ' is-active' : ''}`}
                 aria-current={selected === item.path ? 'page' : undefined}
                 title={item.label}
+                data-tour-id={`nav-${item.key}`}
               >
                 <Icon name={NAV_ICONS[item.icon]} />
                 <span>{item.label}</span>
@@ -138,6 +157,7 @@ const AppLayout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+      <OnboardingTour />
     </div>
   );
 };

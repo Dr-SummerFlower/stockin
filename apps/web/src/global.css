@@ -1194,6 +1194,29 @@ a.stockin-touch {
   color: var(--stockin-color-faint);
   margin-top: 5px;
 }
+/* 引导页分区标题：仅做层级分隔，不加装饰。 */
+.stockin-section-label {
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+  color: var(--stockin-color-muted);
+  letter-spacing: 0.02em;
+  margin: 0 0 10px;
+  padding-top: 4px;
+}
+/* 5 步向导：允许步骤项收窄，避免横向超出卡片；标签保持单行。 */
+.stockin-setup-steps {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+}
+.stockin-setup-steps .ant-steps-item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.stockin-setup-steps .ant-steps-item-title {
+  font-size: var(--stockin-fs-caption);
+  white-space: nowrap;
+}
 .stockin-input-group {
   display: flex;
   gap: 8px;

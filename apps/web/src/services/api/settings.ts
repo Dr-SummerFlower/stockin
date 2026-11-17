@@ -7,6 +7,7 @@ import { request } from '../request';
 
 export interface SettingsView {
   readonly expiryThresholdDays: number;
+  readonly shopName: string;
 }
 
 export function getSettings(): Promise<SettingsView> {

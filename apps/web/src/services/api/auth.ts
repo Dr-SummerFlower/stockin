@@ -3,11 +3,17 @@
  */
 import type {
   AuthMeResponse,
+  ChangePasswordRequest,
+  ForgotPasswordRequest,
   HealthResponse,
   InitStatusResponse,
   LoginRequest,
   LogoutResponse,
+  SecurityQuestionRequest,
+  SecurityQuestionResponse,
   SetupRequest,
+  SimpleOkResponse,
+  UpdateSecurityRequest,
 } from '@stockin/shared';
 import { request } from '../request';
 
@@ -46,4 +52,42 @@ export function logout(): Promise<LogoutResponse> {
 /** 重复 setup（409 `AUTH_INIT_COMPLETED`）由调用方内联提示。 */
 export function setup(input: SetupRequest): Promise<SetupResult> {
   return request<SetupResult>('/api/auth/setup', { method: 'POST', json: input, silent: true });
+}
+
+/** 登录态改密：成功后全部会话被吊销，调用方应跳登录页。 */
+export function changePassword(input: ChangePasswordRequest): Promise<SimpleOkResponse> {
+  return request<SimpleOkResponse>('/api/auth/change-password', {
+    method: 'POST',
+    json: input,
+    silent: true,
+  });
+}
+
+/** 登录态设置 / 修改密保问题（需当前密码）。 */
+export function updateSecurity(input: UpdateSecurityRequest): Promise<SimpleOkResponse> {
+  return request<SimpleOkResponse>('/api/auth/security', {
+    method: 'POST',
+    json: input,
+    silent: true,
+  });
+}
+
+/** 忘记密码第一步：按用户名取回密保问题。 */
+export function lookupSecurityQuestion(
+  input: SecurityQuestionRequest,
+): Promise<SecurityQuestionResponse> {
+  return request<SecurityQuestionResponse>('/api/auth/security-question', {
+    method: 'POST',
+    json: input,
+    silent: true,
+  });
+}
+
+/** 忘记密码第二步：用户名 + 密保答案 + 新密码一步式重置。 */
+export function forgotPassword(input: ForgotPasswordRequest): Promise<SimpleOkResponse> {
+  return request<SimpleOkResponse>('/api/auth/forgot-password', {
+    method: 'POST',
+    json: input,
+    silent: true,
+  });
 }

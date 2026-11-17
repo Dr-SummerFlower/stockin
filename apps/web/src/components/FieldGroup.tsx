@@ -20,6 +20,8 @@ export interface FieldGroupProps {
   readonly badge?: string;
   /** 联动组是否因「手填覆盖自动值」而锁定；不传表示非联动组。 */
   readonly locked?: boolean;
+  /** 可选：供首次漫游定位的锚点标识。 */
+  readonly tourId?: string;
   readonly children: React.ReactNode;
 }
 
@@ -57,8 +59,8 @@ const BadgeHint: React.FC<{ readonly text: string }> = ({ text }) => {
   );
 };
 
-const FieldGroup: React.FC<FieldGroupProps> = ({ title, badge, locked, children }) => (
-  <section className="stockin-form-section">
+const FieldGroup: React.FC<FieldGroupProps> = ({ title, badge, locked, tourId, children }) => (
+  <section className="stockin-form-section" data-tour-id={tourId}>
     <div className="stockin-form-section-head">
       <div className="stockin-form-section-heading">
         <h3>{title}</h3>

@@ -8,6 +8,7 @@
 /** 与 `.umirc.ts` 中 `routes` 一一对应的页面路径。 */
 export const ROUTES = {
   login: '/login',
+  forgotPassword: '/forgot-password',
   setup: '/setup',
   dashboard: '/',
   records: '/records',
@@ -55,6 +56,9 @@ export const ACTION_LABELS: Readonly<Record<string, string>> = {
   BACKUP_CREATE: '创建备份',
   BACKUP_RESTORE: '恢复备份',
   CREDENTIALS_RESET: '重置凭据',
+  PASSWORD_CHANGE: '修改密码',
+  SECURITY_UPDATE: '修改密保',
+  PASSWORD_RESET: '忘记密码重置',
 };
 
 /** target_type 中文文案。 */

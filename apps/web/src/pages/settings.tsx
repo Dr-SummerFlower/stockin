@@ -6,12 +6,21 @@
  * 工程排查信息统一收进技术信息折叠区，配中文标签、用途说明与完整值展示。
  * 服务端内部标记一律映射为中文，未知值回落中性文案。文案保持中性书面语。
  */
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, App as AntdApp, Button, Input, Table, Tag } from 'antd';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, App as AntdApp, Button, Input, Select, Table, Tag } from 'antd';
 import type { TableProps } from 'antd';
-import { EXPIRY_THRESHOLD_MAX, EXPIRY_THRESHOLD_MIN } from '@stockin/shared';
-import { useModel } from 'umi';
+import {
+  EXPIRY_THRESHOLD_MAX,
+  EXPIRY_THRESHOLD_MIN,
+  PRESET_SECURITY_QUESTIONS,
+} from '@stockin/shared';
+import { useModel, useNavigate } from 'umi';
 import { getSettings, updateSettings } from '@/services/api/settings';
+import {
+  changePassword,
+  lookupSecurityQuestion,
+  updateSecurity,
+} from '@/services/api/auth';
 import {
   listBackups,
   triggerBackup,
@@ -23,6 +32,7 @@ import EmptyState from '@/components/EmptyState';
 import ErrorView from '@/components/ErrorView';
 import Icon, { type IconName } from '@/components/Icon';
 import InfoTip from '@/components/InfoTip';
+import { resetTour } from '@/components/OnboardingTour';
 import {
   describeBackupReason,
   formatBytes,
@@ -31,7 +41,9 @@ import {
 } from '@/utils/format';
 import { THEME_MODE_OPTIONS, type ThemeMode } from '@/utils/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
+import { ROUTES, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
+
+const CUSTOM_QUESTION = 'custom';
 
 /** 三态主题对应的装饰图标。 */
 const THEME_ICONS: Readonly<Record<ThemeMode, IconName>> = {
@@ -215,8 +227,11 @@ const SettingsPage: React.FC = () => {
   const { bumpRefresh } = useModel('ui');
   const { message } = AntdApp.useApp();
   const { mode, setMode } = useModel('theme');
+  const { username, refresh: refreshSession } = useModel('session');
+  const navigate = useNavigate();
   const { useCardList } = useBreakpoint();
   const [threshold, setThreshold] = useState<string>('');
+  const [shopName, setShopName] = useState<string>('');
   const [thresholdError, setThresholdError] = useState<string | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
@@ -227,12 +242,39 @@ const SettingsPage: React.FC = () => {
   const [backupBusy, setBackupBusy] = useState<boolean>(false);
   const [reloadToken, setReloadToken] = useState<number>(0);
 
+  // 账号安全：修改密码
+  const [currentPassword, setCurrentPassword] = useState<string>('');
+  const [newPassword, setNewPassword] = useState<string>('');
+  const [confirmPassword, setConfirmPassword] = useState<string>('');
+  const [passwordBusy, setPasswordBusy] = useState<boolean>(false);
+
+  // 账号安全：密保问题
+  const [currentQuestion, setCurrentQuestion] = useState<string | null>(null);
+  const [securityConfigured, setSecurityConfigured] = useState<boolean>(true);
+  const [questionChoice, setQuestionChoice] = useState<string>('0');
+  const [customQuestion, setCustomQuestion] = useState<string>('');
+  const [securityPassword, setSecurityPassword] = useState<string>('');
+  const [securityAnswer, setSecurityAnswer] = useState<string>('');
+  const [securityBusy, setSecurityBusy] = useState<boolean>(false);
+
+  const questionOptions = useMemo(
+    () => [
+      ...PRESET_SECURITY_QUESTIONS.map((text, index) => ({
+        value: String(index),
+        label: text,
+      })),
+      { value: CUSTOM_QUESTION, label: '自定义问题' },
+    ],
+    [],
+  );
+
   const load = useCallback((): void => {
     setLoading(true);
     setError(null);
     void Promise.all([getSettings(), listBackups()])
       .then(([settings, list]): void => {
         setThreshold(String(settings.expiryThresholdDays));
+        setShopName(settings.shopName ?? '');
         setBackups(list.items);
         setKeepCount(list.keepCount);
         setLastBackupAt(list.lastBackupAt);
@@ -244,6 +286,28 @@ const SettingsPage: React.FC = () => {
   useEffect((): void => {
     load();
   }, [load, reloadToken]);
+
+  // 回显当前密保问题；未取到时不显示，避免误以为“没有密保”。
+  useEffect((): (() => void) => {
+    let active = true;
+    if (typeof username === 'string' && username !== '') {
+      void lookupSecurityQuestion({ username })
+        .then((result): void => {
+          if (active) {
+            setCurrentQuestion(result.question);
+            setSecurityConfigured(result.configured);
+          }
+        })
+        .catch((): void => {
+          if (active) {
+            setCurrentQuestion(null);
+          }
+        });
+    }
+    return (): void => {
+      active = false;
+    };
+  }, [username, reloadToken]);
 
   // 唯一的重试入口：ErrorView 与手动刷新共用，避免多处各自维护刷新逻辑。
   const retry = useCallback((): void => {
@@ -267,9 +331,9 @@ const SettingsPage: React.FC = () => {
     setThresholdError(null);
     setSaving(true);
     try {
-      await updateSettings({ expiryThresholdDays: value });
+      await updateSettings({ expiryThresholdDays: value, shopName: shopName.trim() });
       bumpRefresh();
-      message.success('临期阈值已保存');
+      message.success('店铺设置已保存');
     } catch (cause) {
       message.error(errorMessage(cause, '设置保存失败'));
     } finally {
@@ -294,6 +358,57 @@ const SettingsPage: React.FC = () => {
     }
   };
 
+  const submitPassword = async (): Promise<void> => {
+    if (currentPassword === '' || newPassword === '') {
+      message.warning('请填写当前密码与新密码');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      message.warning('两次输入的新密码不一致');
+      return;
+    }
+    setPasswordBusy(true);
+    try {
+      await changePassword({ currentPassword, newPassword });
+      message.success('密码已修改，请重新登录');
+      await refreshSession().catch((): void => undefined);
+      navigate(ROUTES.login, { replace: true });
+    } catch (cause) {
+      message.error(errorMessage(cause, '密码修改失败'));
+    } finally {
+      setPasswordBusy(false);
+    }
+  };
+
+  const submitSecurity = async (): Promise<void> => {
+    const question: string =
+      questionChoice === CUSTOM_QUESTION
+        ? customQuestion.trim()
+        : (PRESET_SECURITY_QUESTIONS[Number(questionChoice)] ?? '').trim();
+    if (securityPassword === '' || question === '' || securityAnswer.trim() === '') {
+      message.warning('请填写当前密码、密保问题与答案');
+      return;
+    }
+    setSecurityBusy(true);
+    try {
+      await updateSecurity({
+        currentPassword: securityPassword,
+        securityQuestion: question,
+        securityAnswer: securityAnswer.trim(),
+      });
+      setCurrentQuestion(question);
+      setSecurityConfigured(true);
+      setSecurityPassword('');
+      setSecurityAnswer('');
+      setCustomQuestion('');
+      message.success('密保问题已更新');
+    } catch (cause) {
+      message.error(errorMessage(cause, '密保更新失败'));
+    } finally {
+      setSecurityBusy(false);
+    }
+  };
+
   const failedCount: number = backups.filter(
     (record: BackupMetaView): boolean => record.integrity !== 'ok',
   ).length;
@@ -302,6 +417,13 @@ const SettingsPage: React.FC = () => {
     <div className="stockin-page">
       <div className="stockin-page-head">
         <h1 className="stockin-page-title">设置</h1>
+        <Button
+          type="text"
+          onClick={(): void => resetTour()}
+          style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+        >
+          重新查看引导
+        </Button>
       </div>
 
       {error !== null ? (
@@ -356,12 +478,12 @@ const SettingsPage: React.FC = () => {
             </div>
           </section>
 
-          <section className="stockin-panel">
+          <section className="stockin-panel" data-tour-id="settings-shop">
             <div className="stockin-panel-head">
               <div className="stockin-title-row">
                 <h2 className="stockin-panel-title">
-                  <Icon name="clock" size="sm" />
-                  临期阈值
+                  <Icon name="setting" size="sm" />
+                  店铺设置
                 </h2>
                 <InfoTip
                   label="查看临期阈值说明"
@@ -371,9 +493,28 @@ const SettingsPage: React.FC = () => {
               </div>
             </div>
             <div className="stockin-setting-row">
-              <div className="stockin-setting-field">
+              <div className="stockin-setting-field" style={{ width: '100%', maxWidth: 320 }}>
+                <label className="stockin-field-label" htmlFor="shop-name">
+                  店铺名称
+                </label>
+                <Input
+                  id="shop-name"
+                  value={shopName}
+                  aria-label="店铺名称"
+                  placeholder="请输入店铺名称"
+                  maxLength={100}
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                    setShopName(event.target.value)
+                  }
+                  style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX }}
+                />
+                <div className="stockin-field-hint">用于页面与备份说明，可留空。</div>
+              </div>
+            </div>
+            <div className="stockin-setting-row">
+              <div className="stockin-setting-field" style={{ width: '100%', maxWidth: 320 }}>
                 <label className="stockin-field-label" htmlFor="threshold-days">
-                  天数
+                  临期阈值（天）
                 </label>
                 <div className="stockin-setting-actions">
                   <Input
@@ -411,6 +552,131 @@ const SettingsPage: React.FC = () => {
                     {thresholdError}
                   </div>
                 ) : null}
+              </div>
+            </div>
+          </section>
+
+          <section className="stockin-panel" data-tour-id="settings-security">
+            <div className="stockin-panel-head">
+              <h2 className="stockin-panel-title">
+                <Icon name="info" size="sm" />
+                账号安全
+              </h2>
+            </div>
+            <div className="stockin-setting-row">
+              <div className="stockin-setting-field" style={{ width: '100%', maxWidth: 320 }}>
+                <div className="stockin-field-label">修改密码</div>
+                <Input.Password
+                  value={currentPassword}
+                  autoComplete="current-password"
+                  aria-label="当前密码"
+                  placeholder="请输入当前密码"
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                    setCurrentPassword(event.target.value)
+                  }
+                  style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX, marginBottom: 8 }}
+                />
+                <Input.Password
+                  value={newPassword}
+                  autoComplete="new-password"
+                  aria-label="新密码"
+                  placeholder="请输入新密码"
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                    setNewPassword(event.target.value)
+                  }
+                  style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX, marginBottom: 8 }}
+                />
+                <Input.Password
+                  value={confirmPassword}
+                  autoComplete="new-password"
+                  aria-label="确认新密码"
+                  placeholder="请再次输入新密码"
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                    setConfirmPassword(event.target.value)
+                  }
+                  style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX, marginBottom: 8 }}
+                />
+                <Button
+                  loading={passwordBusy}
+                  onClick={(): void => {
+                    void submitPassword();
+                  }}
+                  style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+                >
+                  修改密码
+                </Button>
+                <div className="stockin-field-hint">修改后所有设备需重新登录。</div>
+              </div>
+            </div>
+            <div className="stockin-setting-row">
+              <div className="stockin-setting-field" style={{ width: '100%', maxWidth: 320 }}>
+                <div className="stockin-field-label">密保问题</div>
+                {!securityConfigured ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="尚未设置密保问题"
+                    description="未设置时无法通过忘记密码找回账号，请立即设置。"
+                    style={{ marginBottom: 8 }}
+                  />
+                ) : null}
+                {securityConfigured && currentQuestion !== null ? (
+                  <div className="stockin-field-hint" style={{ marginBottom: 8 }}>
+                    当前：{currentQuestion}
+                  </div>
+                ) : null}
+                <Select
+                  value={questionChoice}
+                  options={questionOptions}
+                  aria-label="密保问题"
+                  onChange={(value: string): void => setQuestionChoice(value)}
+                  style={{ width: '100%', maxWidth: 320, minHeight: TOUCH_TARGET_MIN_PX }}
+                />
+                {questionChoice === CUSTOM_QUESTION ? (
+                  <Input
+                    value={customQuestion}
+                    aria-label="自定义密保问题"
+                    placeholder="请输入自定义问题"
+                    maxLength={120}
+                    onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                      setCustomQuestion(event.target.value)
+                    }
+                    style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX, marginTop: 8 }}
+                  />
+                ) : null}
+                <Input
+                  value={securityAnswer}
+                  autoComplete="off"
+                  aria-label="新密保答案"
+                  placeholder="请输入新密保答案"
+                  maxLength={256}
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                    setSecurityAnswer(event.target.value)
+                  }
+                  style={{ width: '100%', minHeight: TOUCH_TARGET_MIN_PX, marginTop: 8 }}
+                />
+                <Input.Password
+                  value={securityPassword}
+                  autoComplete="current-password"
+                  aria-label="当前密码（修改密保）"
+                  placeholder="请输入当前密码以确认"
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
+                    setSecurityPassword(event.target.value)
+                  }
+                  style={{ maxWidth: 320, minHeight: TOUCH_TARGET_MIN_PX, marginTop: 8 }}
+                />
+                <Button
+                  loading={securityBusy}
+                  onClick={(): void => {
+                    void submitSecurity();
+                  }}
+                  style={{ minHeight: TOUCH_TARGET_MIN_PX, marginTop: 8 }}
+                >
+                  更新密保
+                </Button>
+                <div className="stockin-field-hint">
+                  忘记密码时需要回答此题，不区分大小写。
+                </div>
               </div>
             </div>
           </section>
