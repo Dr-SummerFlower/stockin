@@ -421,7 +421,9 @@ jobs:
             echo "::error::wrangler deploy 失败（exit ${rc}）"
             exit "${rc}"
           fi
-          URL="$(printf '%s\n' "${OUT}" | grep -oiE 'https://[a-z0-9._-]+\.workers\.dev' | head -1)"
+          # 绑自定义域后 workers.dev 默认关闭，输出里可能没有 `*.workers.dev`；
+          # 这里必须容忍无匹配，否则 GitHub 默认的 `-e` 会让整个步骤误报失败。
+          URL="$(printf '%s\n' "${OUT}" | grep -oiE 'https://[a-z0-9._-]+\.workers\.dev' | head -1 || true)"
           echo "url=${URL}" >> "${GITHUB_OUTPUT}"
           echo "### Worker 已部署 ${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
           printf '%s\n' "${URL}" >> "${GITHUB_STEP_SUMMARY}"
