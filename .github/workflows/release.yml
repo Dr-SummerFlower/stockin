@@ -435,21 +435,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # 优先用 wrangler 报告的实际 workers.dev 地址；自定义域名可能尚未生效，
-          # 拿 WHITE_LIST 首项去探活会误判。
-          TARGET="${{ steps.deploy.outputs.url }}"
-          if [[ -z "${TARGET}" ]]; then
-            TARGET="$(printf '%s' "${{ steps.origins.outputs.origins }}" | cut -d, -f1 | sed 's:/*$::')"
+          # 绑定自定义域后 workers.dev 会被禁用，两者理论上只有一个可达；
+          # 因此两个入口都探，任一返回 200 即通过，避免入口选错导致误判。
+          CANONICAL="$(printf '%s' "${{ steps.origins.outputs.origins }}" | cut -d, -f1 | sed 's:/*$::')"
+          TARGETS=("${CANONICAL}")
+          WORKERS_URL="${{ steps.deploy.outputs.url }}"
+          if [[ -n "${WORKERS_URL}" && "${WORKERS_URL}" != "${CANONICAL}" ]]; then
+            TARGETS+=("${WORKERS_URL}")
           fi
+          ok=0
           code=000
-          for _ in $(seq 1 12); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${TARGET}/api/health" || echo 000)"
-            [[ "${code}" == "200" ]] && break
-            sleep 5
+          for TARGET in "${TARGETS[@]}"; do
+            for _ in $(seq 1 12); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${TARGET}/api/health" || echo 000)"
+              [[ "${code}" == "200" ]] && break
+              sleep 5
+            done
+            echo "GET ${TARGET}/api/health -> ${code}"
+            if [[ "${code}" == "200" ]]; then
+              ok=1
+              break
+            fi
           done
-          echo "GET ${TARGET}/api/health -> ${code}"
-          if [[ "${code}" != "200" ]]; then
-            echo "::error::Worker 健康检查未通过（HTTP ${code}）"
+          if [[ "${ok}" != "1" ]]; then
+            echo "::error::Worker 健康检查未通过（已尝试 ${#TARGETS[@]} 个入口）"
             exit 1
           fi
 
