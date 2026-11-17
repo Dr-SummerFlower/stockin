@@ -29,13 +29,20 @@ cp .env.example .env          # 编辑 .env：确认镜像标签与来源白名�
 
 也可直接 `docker compose up -d`，此时使用 `.env` 里的 `PUBLIC_ORIGINS`（不会自动探测 IP）。
 
-首次启动查看初始凭据：
+首次启动直接打开 `http://127.0.0.1:8080`，页面会进入 `/setup` 自助引导：
 
-```bash
-docker compose logs -f stockin
-```
+1. 设置管理员用户名与密码；
+2. 设置密保问题与答案（忘记密码时使用，不区分大小写）；
+3. 填写店铺名称、临期阈值与界面主题。
 
-控制台会打印 `[BOOTSTRAP] username=admin password=xxxx`。用该账号打开 `http://127.0.0.1:8080` 登录，随后被强制引导到 `/setup` 设置正式账密。初始密码只在首次启动时打印一次；引导不可重入。
+完成后用刚设置的账号登录。**不再生成或打印任何初始密码**，因此日志里不需要找凭据。
+
+> ⚠️ **抢注风险**：初始化完成前，任何能访问到本实例的人都可以完成 `/setup` 成为管理员。
+> 公网部署（尤其 Cloudflare Workers）必须在初始化前限制入口访问，例如 Cloudflare Access、
+> IP 白名单或临时下线路由；完成初始化后再开放。Node 自托管不要把端口直接暴露公网。
+
+登录后可在「设置 → 账号安全」修改密码或更换密保问题；忘记密码时在登录页点「忘记密码」，
+回答密保问题即可重置。修改密码或重置密码都会吊销全部会话，所有设备需重新登录。
 
 ### 来源白名单（最容易踩的坑）
 
@@ -56,7 +63,14 @@ docker compose logs -f stockin
 ## 其他部署形态
 
 - **Node 裸包（win-x64 / linux-x64）**：需自行安装 **Node.js 26.13.0**（启动时精确校验）。Windows 双击 `start.bat`，Linux 执行 `./start.sh`。数据在包目录的 `data/`、`backups/`、`tmp/`；升级时只替换 `server/` 与 `web/`，保留这三个目录。局域网访问需把启动脚本里的 `PUBLIC_ORIGIN` 改成 `http://<IP>:8080`。
-- **Cloudflare Workers**：解压后按包内 README 执行 `npx wrangler deploy`；部署前必须把 `wrangler.toml` 的 `PUBLIC_ORIGINS` 占位域名换成实际地址（或用 `--var` 覆盖）。数据存于 Durable Object 内置 SQLite，备份由平台 PITR 托管。
+- **Cloudflare Workers**：解压后按包内 README 执行 `npx wrangler deploy`；部署前必须把 `wrangler.toml` 的 `PUBLIC_ORIGINS` 占位域名换成实际地址（或用 `--var` 覆盖）。数据存于 Durable Object 内置 SQLite，备份由平台 PITR 托管。**首次部署务必先限制访问入口**（Cloudflare Access / IP 白名单），完成 `/setup` 后再对外开放，否则任何人可抢先成为管理员。
+  - 部署地址由 `wrangler.toml` 的 `name` + 账号的 workers.dev 子域决定（如 `stockin.<子域>.workers.dev`）；仓库变量 `WORKER_PUBLIC_ORIGINS` 只用于注入应用内的来源白名单，**不会改变部署地址**。要换域名：改名，或设置 `workers_dev = false` 并绑定 Custom Domain（`routes`），再同步更新 `PUBLIC_ORIGINS`。
+  - GitHub Actions 部署用的仓库变量（Applications → Variables）：
+    - `WORKER_PUBLIC_ORIGIN`：**唯一入口**，单值、必须带 scheme（如 `https://stockin.example.com`）。CI 用它作为 `--domain`（Custom Domain）并放在 `PUBLIC_ORIGINS` 首位。
+    - `WORKER_EXTRA_ORIGINS`：可选，逗号分隔的额外可信来源（如过渡期的 `https://stockin.<子域>.workers.dev`），只参与来源校验，不参与 `--domain`。
+    - `WORKER_PUBLIC_ORIGINS`：旧变量，保留兼容；未设 `WORKER_PUBLIC_ORIGIN` 时取首项作为入口，其余并入额外来源。
+    - 三者都为空时，CI 自动解析账号 workers.dev 子域并部署到 `<name>.<子域>.workers.dev`。
+    - 使用 Custom Domain 前，域名必须已接入同一 Cloudflare 账号的 zone；API Token 需具备 Workers Routes / Zone 编辑权限。
 
 ## 配置速查
 

@@ -327,32 +327,75 @@ jobs:
       - name: 安装 wrangler
         run: npm install -g wrangler@4.158.0
 
-      # 可信来源（PUBLIC_ORIGINS）必须在部署时确定，写错等于全站写操作 403。
-      # 优先取仓库变量 WORKER_PUBLIC_ORIGINS（有自定义域名时用它，可逗号分隔多个），
-      # 未设置则按「worker 名 + 账户 workers.dev 子域」自动推导，免手工维护。
-      - name: 解析可信来源
+      # 来源与入口分离：
+      #   WORKER_PUBLIC_ORIGIN（单值）= 唯一入口，同时用于 Custom Domain 与
+      #     PUBLIC_ORIGINS 首项；
+      #   WORKER_EXTRA_ORIGINS（可选逗号列表）= 额外可信来源（如过渡期的
+      #     workers.dev 地址），不参与 --domain；
+      #   WORKER_PUBLIC_ORIGINS（旧变量）= 兼容：未设单值变量时取首项作入口，
+      #     其余并入额外来源。
+      # 三者都为空时按「worker 名 + 账户 workers.dev 子域」自动推导。
+      - name: 解析可信来源与自定义域名
         id: origins
         shell: bash
         run: |
           set -euo pipefail
-          ORIGINS="${{ vars.WORKER_PUBLIC_ORIGINS }}"
-          if [[ -z "${ORIGINS}" ]]; then
+          CANONICAL="${{ vars.WORKER_PUBLIC_ORIGIN }}"
+          EXTRA="${{ vars.WORKER_EXTRA_ORIGINS }}"
+          LEGACY="${{ vars.WORKER_PUBLIC_ORIGINS }}"
+
+          if [[ -z "${CANONICAL}" && -n "${LEGACY}" ]]; then
+            CANONICAL="$(printf '%s' "${LEGACY}" | cut -d, -f1 | xargs)"
+            LEGACY_REST="$(printf '%s' "${LEGACY}" | cut -d, -f2- | sed 's/^,//')"
+            if [[ -n "${LEGACY_REST}" ]]; then
+              EXTRA="${EXTRA:+${EXTRA},}${LEGACY_REST}"
+            fi
+          fi
+
+          if [[ -z "${CANONICAL}" ]]; then
             SUBDOMAIN="$(curl -fsS --max-time 20 \
               -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
               "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain" \
               | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);process.stdout.write(String(r?.result?.subdomain??""))}catch{process.stdout.write("")}})')"
             if [[ -z "${SUBDOMAIN}" ]]; then
-              echo "::error::无法自动解析 workers.dev 子域，请设置仓库变量 WORKER_PUBLIC_ORIGINS"
+              echo "::error::无法自动解析 workers.dev 子域，请设置仓库变量 WORKER_PUBLIC_ORIGIN"
               exit 1
             fi
-            ORIGINS="https://${WORKER_NAME}.${SUBDOMAIN}.workers.dev"
+            CANONICAL="https://${WORKER_NAME}.${SUBDOMAIN}.workers.dev"
           fi
+
+          CANONICAL="${CANONICAL%/}"
+          if [[ ! "${CANONICAL}" =~ ^https?:// ]]; then
+            echo "::error::WORKER_PUBLIC_ORIGIN 必须带 scheme，例如 https://stockin.example.com"
+            exit 1
+          fi
+
+          # 自定义域名：非 workers.dev 才传 --domain（workers.dev 是平台自动分配）。
+          DOMAIN=""
+          if [[ "${CANONICAL}" != *".workers.dev" ]]; then
+            DOMAIN="$(printf '%s' "${CANONICAL}" | sed -E 's#^https?://##; s#/.*$##')"
+          fi
+
+          ORIGINS="${CANONICAL}"
+          IFS=',' read -r -a REST <<< "${EXTRA}"
+          for item in "${REST[@]}"; do
+            item="$(printf '%s' "${item}" | xargs)"
+            [[ -z "${item}" ]] && continue
+            item="${item%/}"
+            [[ "${item}" == "${CANONICAL}" ]] && continue
+            ORIGINS="${ORIGINS},${item}"
+          done
+
           echo "origins=${ORIGINS}" >> "${GITHUB_OUTPUT}"
+          echo "domain=${DOMAIN}" >> "${GITHUB_OUTPUT}"
           {
             echo "### Worker 可信来源"
             echo '```'
             printf '%s\n' "${ORIGINS}"
             echo '```'
+            if [[ -n "${DOMAIN}" ]]; then
+              echo "Custom Domain：\`${DOMAIN}\`"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: 部署
@@ -364,10 +407,13 @@ jobs:
           VERSION="${{ needs.publish.outputs.version }}"
           # 不用 set -e：deploy 失败时也要把 wrangler 的报错原样打出来，
           # 否则命令替换会把失败输出一起吞掉、日志里只剩一行 set -e 退出。
-          OUT="$(wrangler deploy \
-            --name "${WORKER_NAME}" \
-            --tag "${VERSION}" \
-            --var "PUBLIC_ORIGINS:${{ steps.origins.outputs.origins }}" 2>&1)"
+          DOMAIN="${{ steps.origins.outputs.domain }}"
+          ARGS=(deploy --name "${WORKER_NAME}" --tag "${VERSION}"
+            --var "PUBLIC_ORIGINS:${{ steps.origins.outputs.origins }}")
+          if [[ -n "${DOMAIN}" ]]; then
+            ARGS+=(--domain "${DOMAIN}")
+          fi
+          OUT="$(wrangler "${ARGS[@]}" 2>&1)"
           rc=$?
           printf '%s\n' "${OUT}"
           if [[ "${rc}" -ne 0 ]]; then

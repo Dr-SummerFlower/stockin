@@ -60,6 +60,13 @@ ORIGIN_SCHEME = "https"
 #  - 手工部署：换成自己的地址，如 https://stockin.<你的子域>.workers.dev
 #  - GitHub Actions 部署：工作流会用 `--var` 覆盖本项（见
 #    .github/workflows/release.yml 的 workers job），按仓库归属自动推导。
+#
+# 注意：PUBLIC_ORIGINS（以及仓库变量 WORKER_PUBLIC_ORIGINS）**只影响应用内的
+# 来源校验与 Cookie scheme，不会改变部署地址**。workers.dev 地址由上面的
+# `name` + 账号的 workers.dev 子域决定；要换地址请改名或绑定 Custom Domain
+# （`workers_dev = false` + `routes`），再同步更新本变量。
+# CI 部署时优先读新变量 WORKER_PUBLIC_ORIGIN（单值，用作 --domain + 首个来源），
+# WORKER_EXTRA_ORIGINS 仅追加额外来源；详见 README 的 Workers 一节。
 PUBLIC_ORIGINS = "https://stockin.example.workers.dev"
 # 中国大陆访问不到 *.workers.dev（DNS 污染 + 代理 502），
 # 若目标是国内可用，请在此处换成已接入 Cloudflare 的自定义域名。
