@@ -180,9 +180,16 @@ describe('设置与备份', () => {
 });
 
 describe('操作日志', () => {
-  it('记录 setup / 登录 / 记录新增，并支持按 action 过滤与分页', async () => {
+  it('记录 setup / 登录 / 设置变更；日常新增不写审计；支持按 action 过滤与分页', async () => {
     const { h, cookie } = await ready();
+    // 日常新增记录不再写审计（精简口径），只有关键操作留下痕迹。
     await h.json('/api/records', { json: recordPayload('日志用'), cookie });
+    // 设置变更属关键操作，仍写审计。
+    await h.json('/api/settings', {
+      method: 'PUT',
+      json: { expiryThresholdDays: 30, shopName: '日志测试店' },
+      cookie,
+    });
 
     const all = await h.json<{ items: { action: string }[]; total: number }>(
       '/api/operation-logs?limit=50',
@@ -192,14 +199,16 @@ describe('操作日志', () => {
     const actions: string[] = all.body.items.map((item) => item.action);
     expect(actions).toContain('SETUP_COMPLETE');
     expect(actions).toContain('LOGIN');
-    expect(actions).toContain('RECORD_CREATE');
+    expect(actions).toContain('SETTINGS_UPDATE');
+    // 日常新增不产生审计记录。
+    expect(actions).not.toContain('RECORD_CREATE');
 
     const filtered = await h.json<{ items: { action: string }[] }>(
-      '/api/operation-logs?action=RECORD_CREATE',
+      '/api/operation-logs?action=SETTINGS_UPDATE',
       { cookie },
     );
     expect(filtered.body.items.length).toBe(1);
-    expect(filtered.body.items[0]?.action).toBe('RECORD_CREATE');
+    expect(filtered.body.items[0]?.action).toBe('SETTINGS_UPDATE');
 
     const paged = await h.json<{ items: unknown[]; limit: number; offset: number }>(
       '/api/operation-logs?limit=1&offset=1',

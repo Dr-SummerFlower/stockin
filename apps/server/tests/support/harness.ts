@@ -91,6 +91,12 @@ export interface Harness {
 export interface HarnessOptions {
   /** 静态根是否放置真实 index.html（默认放）。 */
   readonly withIndexHtml?: boolean;
+  /** 管理员 OAuth 覆盖（默认未配置；管理员端点测试需注入）。 */
+  readonly admin?: {
+    readonly clientId?: string;
+    readonly clientSecret?: string;
+    readonly logins?: string;
+  };
 }
 
 /** 创建测试台。返回时数据库已迁移、凭据已生成，但 `setup` 尚未完成。 */
@@ -126,6 +132,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       backupDir,
       tmpDir,
       staticRoot,
+      admin: options.admin,
     },
   });
 

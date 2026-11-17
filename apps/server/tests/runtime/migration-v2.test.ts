@@ -24,9 +24,9 @@ function columnNames(harness: Harness, table: string): string[] {
 }
 
 describe('迁移 002：自助引导与账号安全字段', () => {
-  it('user_version 升到 2', async () => {
+  it('完整迁移链到达当前 schema 版本（002 之后还有 003 管理员表）', async () => {
     harness = await createHarness();
-    expect(readUserVersion(harness.deps.db)).toBe(2);
+    expect(readUserVersion(harness.deps.db)).toBe(3);
   });
 
   it('credentials 具备密保三列，settings 具备 shop_name', async () => {

@@ -34,7 +34,7 @@ describe('workerEnvOverrides', () => {
     expect(vars).toEqual({ PORT: '8787', TZ: 'Asia/Shanghai' });
   });
 
-  it('映射出 loadEnv 需要的 7 项，并去掉首尾空白；空串视为未设置', () => {
+  it('映射出 loadEnv 需要的各项，并去掉首尾空白；空串视为未设置', () => {
     const overrides = workerEnvOverrides({
       PORT: ' 8787 ',
       PUBLIC_ORIGINS: 'https://a.example.workers.dev',
@@ -43,6 +43,9 @@ describe('workerEnvOverrides', () => {
       ORIGIN_SCHEME: 'https',
       COOKIE_SECURE: 'true',
       NODE_ENV: 'production',
+      GITHUB_CLIENT_ID: '  cid  ',
+      GITHUB_CLIENT_SECRET: ' csecret ',
+      ADMIN_GITHUB_LOGINS: ' Alice,Bob ',
     });
     expect(overrides).toEqual({
       port: '8787',
@@ -52,6 +55,20 @@ describe('workerEnvOverrides', () => {
       originScheme: 'https',
       cookieSecure: 'true',
       nodeEnv: 'production',
+      admin: {
+        clientId: 'cid',
+        clientSecret: 'csecret',
+        logins: 'Alice,Bob',
+      },
+    });
+  });
+
+  it('管理员三项 OAuth Secret 缺省时映射为 undefined（保持「三项缺一即未启用」）', () => {
+    const overrides = workerEnvOverrides({ PORT: '8787' });
+    expect(overrides.admin).toEqual({
+      clientId: undefined,
+      clientSecret: undefined,
+      logins: undefined,
     });
   });
 
@@ -70,6 +87,7 @@ describe('workerEnvOverrides', () => {
       originScheme: undefined,
       cookieSecure: undefined,
       nodeEnv: undefined,
+      admin: { clientId: undefined, clientSecret: undefined, logins: undefined },
     });
   });
 });
