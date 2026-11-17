@@ -11,7 +11,14 @@
  */
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { COOKIE_POLICY, SESSION_COOKIE_NAME, SESSION_IDLE_DAYS } from '@stockin/shared';
+import {
+  ADMIN_OAUTH_STATE_COOKIE_NAME,
+  ADMIN_OAUTH_STATE_TTL_SECONDS,
+  ADMIN_SESSION_COOKIE_NAME,
+  COOKIE_POLICY,
+  SESSION_COOKIE_NAME,
+  SESSION_IDLE_DAYS,
+} from '@stockin/shared';
 
 /** 当前进程是否给 Cookie 加 Secure；由 bootstrap 按来源 scheme 注入。 */
 let cookieSecure = false;
@@ -67,4 +74,41 @@ export function getSessionCookie(c: Context): string | null {
 /** 清除会话 Cookie（登出 / 会话失效）。 */
 export function clearSessionCookie(c: Context): void {
   deleteCookie(c, SESSION_COOKIE_NAME, baseCookieOptions());
+}
+
+/**
+ * 下发管理员会话 Cookie。
+ *
+ * **刻意不传 `maxAge` / `expires`**：浏览器把它当会话 Cookie，关闭浏览器即丢弃。
+ * 这是 Web 上「关窗口即退出」能做到的最强语义（服务端无法感知标签页关闭），
+ * 另有 30 分钟空闲超时兜底。
+ */
+export function setAdminSessionCookie(c: Context, token: string): void {
+  setCookie(c, ADMIN_SESSION_COOKIE_NAME, token, baseCookieOptions());
+}
+
+export function getAdminSessionCookie(c: Context): string | null {
+  const value: string | undefined = getCookie(c, ADMIN_SESSION_COOKIE_NAME);
+  return value === undefined || value.trim() === '' ? null : value;
+}
+
+export function clearAdminSessionCookie(c: Context): void {
+  deleteCookie(c, ADMIN_SESSION_COOKIE_NAME, baseCookieOptions());
+}
+
+/** OAuth state：HttpOnly、10 分钟过期、一次性消费。 */
+export function setAdminOauthStateCookie(c: Context, state: string): void {
+  setCookie(c, ADMIN_OAUTH_STATE_COOKIE_NAME, state, {
+    ...baseCookieOptions(),
+    maxAge: ADMIN_OAUTH_STATE_TTL_SECONDS,
+  });
+}
+
+export function getAdminOauthStateCookie(c: Context): string | null {
+  const value: string | undefined = getCookie(c, ADMIN_OAUTH_STATE_COOKIE_NAME);
+  return value === undefined || value.trim() === '' ? null : value;
+}
+
+export function clearAdminOauthStateCookie(c: Context): void {
+  deleteCookie(c, ADMIN_OAUTH_STATE_COOKIE_NAME, baseCookieOptions());
 }

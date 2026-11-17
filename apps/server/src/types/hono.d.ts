@@ -11,6 +11,7 @@
  * Variables 承载 requestId / session / actor / clientIp，贯穿中间件、日志与操作日志表。
  */
 import type { SessionIdentity } from '../repositories/session.repository';
+import type { AdminIdentity } from '../repositories/admin-session.repository';
 
 /** Node 原生 HTTP 连接的可选窄化视图（仅 @hono/node-server 会注入）。 */
 export interface NodeIncomingLike {
@@ -33,6 +34,10 @@ export interface AppVariables {
   session: SessionIdentity | null;
   actor: string;
   clientIp: string;
+  /** 管理员身份（独立于店主会话）；未登录为 null。 */
+  adminSession: AdminIdentity | null;
+  /** 审计署名，形如 `admin:<github_login>`。 */
+  adminActor: string;
 }
 
 /** 创建 app 时使用的 Env 泛型。 */
@@ -48,7 +53,9 @@ declare module 'hono' {
     session: SessionIdentity | null;
     actor: string;
     clientIp: string;
+    adminSession: AdminIdentity | null;
+    adminActor: string;
   }
 }
 
-export type { SessionIdentity };
+export type { SessionIdentity, AdminIdentity };

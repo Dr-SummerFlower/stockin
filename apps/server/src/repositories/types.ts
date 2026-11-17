@@ -76,6 +76,28 @@ export interface SessionRow {
   last_seen_at: string;
 }
 
+/** 管理员账户（GitHub 登录名唯一，统一小写）。 */
+export interface AdminAccountRow {
+  id: number;
+  github_login: string;
+  github_user_id: number | null;
+  display_name: string;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+/** 管理员会话：只存 token 的 sha256。 */
+export interface AdminSessionRow {
+  id: string;
+  token_hash: string;
+  admin_id: number;
+  idle_expires_at: string;
+  absolute_expires_at: string;
+  revoked: number;
+  created_at: string;
+  last_seen_at: string;
+}
+
 export interface CredentialRow {
   id: number;
   username: string;

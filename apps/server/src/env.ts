@@ -22,6 +22,15 @@ import {
   TMPFS_BYTES,
 } from '@stockin/shared';
 
+/** 管理员 GitHub OAuth 配置（三项缺一即视为未启用）。 */
+export interface AdminAuthConfig {
+  readonly enabled: boolean;
+  readonly githubClientId: string;
+  readonly githubClientSecret: string;
+  /** 允许登录的 GitHub 登录名，统一小写、去重。 */
+  readonly allowedLogins: readonly string[];
+}
+
 /** 解析后的不可变环境快照。 */
 export interface Env {
   readonly nodeEnv: string;
@@ -36,6 +45,13 @@ export interface Env {
   /** 是否给会话 Cookie 加 `Secure`：由来源 scheme 决定（https 必须加，http 不能加）。 */
   readonly cookieSecure: boolean;
   readonly cookieName: string;
+  /**
+   * 管理员 GitHub OAuth 配置。
+   *
+   * 三项缺一即视为未启用（`enabled=false`）：管理员入口返回 503
+   * `ADMIN_NOT_CONFIGURED`，店主侧功能完全不受影响。
+   */
+  readonly admin: AdminAuthConfig;
   readonly dataDir: string;
   readonly backupDir: string;
   readonly tmpDir: string;
@@ -67,6 +83,12 @@ export interface EnvOverrides {
   readonly backupDir?: string;
   readonly tmpDir?: string;
   readonly staticRoot?: string;
+  /** 管理员 OAuth 覆盖（自测注入；缺省读 process.env.GITHUB_*）。 */
+  readonly admin?: {
+    readonly clientId?: string;
+    readonly clientSecret?: string;
+    readonly logins?: string;
+  };
 }
 
 /**
@@ -268,6 +290,32 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     }
   }
 
+  const rawAdminLogins: string = overrides.admin?.logins ?? process.env.ADMIN_GITHUB_LOGINS ?? '';
+  const allowedLogins: readonly string[] = [
+    ...new Set(
+      rawAdminLogins
+        .split(',')
+        .map((item: string): string => item.trim().toLowerCase())
+        .filter((item: string): boolean => item !== ''),
+    ),
+  ];
+  const githubClientId: string = (
+    overrides.admin?.clientId ??
+    process.env.GITHUB_CLIENT_ID ??
+    ''
+  ).trim();
+  const githubClientSecret: string = (
+    overrides.admin?.clientSecret ??
+    process.env.GITHUB_CLIENT_SECRET ??
+    ''
+  ).trim();
+  const admin: AdminAuthConfig = {
+    enabled: githubClientId !== '' && githubClientSecret !== '' && allowedLogins.length > 0,
+    githubClientId,
+    githubClientSecret,
+    allowedLogins,
+  };
+
   return {
     nodeEnv: overrides.nodeEnv ?? process.env.NODE_ENV ?? 'production',
     port,
@@ -277,6 +325,7 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     tz,
     cookieSecure: derivedSecure,
     cookieName: SESSION_COOKIE_NAME,
+    admin,
     dataDir,
     backupDir,
     tmpDir,

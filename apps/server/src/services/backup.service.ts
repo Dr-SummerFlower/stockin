@@ -107,6 +107,19 @@ export class BackupService {
     };
   }
 
+  /** 备份池形态：`filesystem` 可下载，`pitr` 由平台托管。 */
+  get mode(): 'filesystem' | 'pitr' {
+    return this.deps.port.mode;
+  }
+
+  /**
+   * 读取一份备份（仅管理员下载端点使用）。
+   * 返回 null 表示「当前运行时没有文件」或「文件名不在备份池内」。
+   */
+  download(file: string): { data: Uint8Array; filename: string } | null {
+    return this.deps.port.read?.(file) ?? null;
+  }
+
   /** 供导入前备份复用：不占用信号量（调用方已持有）。 */
   async backupWithoutGate(
     reason: string,

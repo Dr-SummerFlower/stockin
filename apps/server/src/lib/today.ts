@@ -59,6 +59,22 @@ export function utcAfterDaysIso(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toISOString();
 }
 
+/** N 分钟之后的 UTC ISO 8601（管理员会话空闲超时用）。 */
+export function utcAfterMinutesIso(minutes: number): string {
+  if (!Number.isFinite(minutes)) {
+    throw new RangeError('[today] minutes 必须是有限数字');
+  }
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+/** N 小时之后的 UTC ISO 8601（管理员会话绝对上限用）。 */
+export function utcAfterHoursIso(hours: number): string {
+  if (!Number.isFinite(hours)) {
+    throw new RangeError('[today] hours 必须是有限数字');
+  }
+  return new Date(Date.now() + hours * 3_600_000).toISOString();
+}
+
 /** 当前 Unix 秒（仅用于限流窗口等应用层计算，不进 SQL 日期函数）。 */
 export function epochSeconds(): number {
   return Math.floor(Date.now() / 1_000);

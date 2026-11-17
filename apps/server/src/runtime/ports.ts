@@ -76,6 +76,12 @@ export interface BackupPort {
   create(db: Db, options: BackupCreateOptions): Promise<BackupResult>;
   /** 列出备份池元数据（PITR 下为空数组）。 */
   list(): BackupMeta[];
+  /**
+   * 读取一份备份文件的字节（**仅管理员下载端点使用**）。
+   * PITR 没有文件系统，不实现该方法；调用方据此返回「平台托管」而不是假成功。
+   * 文件名必须已与 `list()` 的元数据逐字比对，禁止把入参直接拼进路径。
+   */
+  read?(file: string): { data: Uint8Array; filename: string } | null;
 }
 
 /** 备份入参；`backupDir` 由各实现从自身配置取，调用方不传。 */

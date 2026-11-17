@@ -27,12 +27,15 @@ import { createCsrfMiddleware } from './middleware/csrf';
 import { createBodyLimitMiddleware } from './middleware/body-limit';
 import { createRateLimitMiddleware } from './middleware/rate-limit';
 import { createSessionMiddleware } from './middleware/session';
+import { createAdminGuard, createAdminSessionMiddleware } from './middleware/admin-session';
 import { createAuthGuard } from './middleware/auth-guard';
 import { createInitGuard } from './middleware/init-guard';
 import { createCacheControlMiddleware } from './middleware/cache-control';
 import type { HealthService } from './services/health.service';
 import type { HeavyTaskGate } from './services/heavy-task';
 import type { AuthService } from './services/auth.service';
+import type { AdminAuthService } from './services/admin-auth.service';
+import type { AdminService } from './services/admin.service';
 import type { RecordService } from './services/record.service';
 import type { DashboardService } from './services/dashboard.service';
 import type { ExcelService } from './services/excel.service';
@@ -54,6 +57,10 @@ export interface AppDeps {
   readonly env: Env;
   readonly repositories: BootstrapRepositories;
   readonly auth: AuthService;
+  /** 管理员 GitHub OAuth 认证。 */
+  readonly adminAuth: AdminAuthService;
+  /** 管理员维护能力（备份 / 导出 / 重置店主凭据）。 */
+  readonly admin: AdminService;
   readonly records: RecordService;
   readonly dashboard: DashboardService;
   readonly excel: ExcelService;
@@ -96,6 +103,15 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }),
   );
   app.use('*', createAuthGuard());
+  // 管理员链路只挂 /api/admin/*：独立 Cookie、独立守卫，店主会话不参与判定。
+  app.use(
+    '/api/admin/*',
+    createAdminSessionMiddleware({
+      sessions: deps.repositories.adminSessions,
+      accounts: deps.repositories.adminAccounts,
+    }),
+  );
+  app.use('/api/admin/*', createAdminGuard());
   app.use('*', createInitGuard(deps.repositories.meta));
   // A1：把 index.html 的内容 ETag 传入缓存中间件，保证 `/`、`/index.html`、
   // SPA fallback（如 `/records`）三者 ETag 一致。

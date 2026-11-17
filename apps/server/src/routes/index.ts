@@ -15,6 +15,7 @@ import { registerLogRoutes } from './log.routes';
 import { registerDashboardRoutes } from './dashboard.routes';
 import { registerExcelRoutes } from './excel.routes';
 import { registerSettingsRoutes } from './settings.routes';
+import { registerAdminRoutes } from './admin.routes';
 
 /** 构造 `/api` 路由集合（挂载到顶层 app 前）。 */
 export function createApiRouter(deps: AppDeps): Hono<AppEnv> {
@@ -26,5 +27,11 @@ export function createApiRouter(deps: AppDeps): Hono<AppEnv> {
   registerDashboardRoutes(api, deps);
   registerExcelRoutes(api, deps);
   registerSettingsRoutes(api, deps);
+  registerAdminRoutes(api, {
+    adminAuth: deps.adminAuth,
+    admin: deps.admin,
+    adminSessions: deps.repositories.adminSessions,
+    backup: deps.backup,
+  });
   return api;
 }

@@ -14,6 +14,7 @@
  */
 import initSql from '../../repositories/migrations/001_init.sql?raw';
 import setupSecuritySql from '../../repositories/migrations/002_setup_and_security.sql?raw';
+import adminAccessSql from '../../repositories/migrations/003_admin_access.sql?raw';
 import { MIGRATION_FILE_PATTERN, SCHEMA_EXPECTED } from '../../repositories/schema';
 import type { MigrationFile } from '../../repositories/migrations/runner';
 import type { MigrationSource } from '../ports';
@@ -25,6 +26,7 @@ import type { MigrationSource } from '../ports';
 const INLINE_SCRIPTS: Readonly<Record<string, string>> = {
   '001_init.sql': initSql,
   '002_setup_and_security.sql': setupSecuritySql,
+  '003_admin_access.sql': adminAccessSql,
 };
 
 /** 去掉 DO 不允许的 `PRAGMA user_version` 赋值行；其余内容逐字节保留。 */

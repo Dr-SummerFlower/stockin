@@ -5,6 +5,8 @@
  * 语义零改动：备份目录、保留份数、空间检查全部来自注入的 `env`。
  */
 import type { Db } from '../../repositories/db';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   createBackup,
   listBackups,
@@ -41,6 +43,21 @@ export function createFilesystemBackupPort(options: FilesystemBackupOptions): Ba
 
     list(): BackupMeta[] {
       return listBackups(options.backupDir);
+    },
+
+    read(file: string): { data: Uint8Array; filename: string } | null {
+      // 文件名必须与备份池元数据逐字一致，杜绝 `../` 路径穿越。
+      const meta: BackupMeta | undefined = listBackups(options.backupDir).find(
+        (item) => item.file === file,
+      );
+      if (meta === undefined) {
+        return null;
+      }
+      const fullPath: string = path.join(options.backupDir, meta.gzipFile);
+      if (!fs.existsSync(fullPath)) {
+        return null;
+      }
+      return { data: fs.readFileSync(fullPath), filename: meta.gzipFile };
     },
   };
 }

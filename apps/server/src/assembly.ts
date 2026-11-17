@@ -16,6 +16,8 @@ import type { BootstrapRepositories, ResolvedPorts } from './bootstrap';
 import type { PlatformProfile } from './runtime/platform';
 import { logger } from './lib/logger';
 import { AuthService } from './services/auth.service';
+import { AdminAuthService } from './services/admin-auth.service';
+import { AdminService } from './services/admin.service';
 import { BackupService } from './services/backup.service';
 import { BackupScheduler } from './services/backup-scheduler';
 import { DashboardService } from './services/dashboard.service';
@@ -68,6 +70,24 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     logs: repositories.logs,
     backup: ports.backup,
   });
+  const adminAuth = new AdminAuthService({
+    env,
+    accounts: repositories.adminAccounts,
+    sessions: repositories.adminSessions,
+    logs: repositories.logs,
+  });
+  const admin = new AdminService({
+    db,
+    env,
+    runtimeTarget: platform.target,
+    credentials: repositories.credentials,
+    sessions: repositories.sessions,
+    adminSessions: repositories.adminSessions,
+    adminAccounts: repositories.adminAccounts,
+    meta: repositories.meta,
+    logs: repositories.logs,
+    backup,
+  });
   const records = new RecordService({
     db,
     records: repositories.records,
@@ -96,6 +116,8 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     env,
     repositories,
     auth,
+    adminAuth,
+    admin,
     records,
     dashboard,
     excel,

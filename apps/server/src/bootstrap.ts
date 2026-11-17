@@ -30,6 +30,8 @@ import { RecordRepository } from './repositories/record.repository';
 import { SessionRepository } from './repositories/session.repository';
 import { SettingsRepository } from './repositories/settings.repository';
 import { OperationLogRepository } from './repositories/operation-log.repository';
+import { AdminAccountRepository } from './repositories/admin-account.repository';
+import { AdminSessionRepository } from './repositories/admin-session.repository';
 import type {
   BackupPort,
   MigrationSource,
@@ -123,6 +125,9 @@ export interface BootstrapRepositories {
   readonly meta: MetaRepository;
   readonly settings: SettingsRepository;
   readonly logs: OperationLogRepository;
+  /** 管理员（系统维护）侧：独立身份与会话，与店主互不影响。 */
+  readonly adminAccounts: AdminAccountRepository;
+  readonly adminSessions: AdminSessionRepository;
 }
 
 /** 装配期解析出的端口实例，交给 `assemble()` 复用，避免重复构造。 */
@@ -229,6 +234,8 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
       meta,
       settings: new SettingsRepository(db),
       logs: new OperationLogRepository(db),
+      adminAccounts: new AdminAccountRepository(db),
+      adminSessions: new AdminSessionRepository(db),
     };
     const ports: ResolvedPorts = {
       versionStore,
