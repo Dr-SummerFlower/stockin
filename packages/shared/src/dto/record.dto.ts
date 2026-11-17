@@ -142,3 +142,21 @@ export interface IdempotentWrite {
 export interface BatchIdsRequest {
   ids: number[];
 }
+
+/** 输入建议字段：商品名称或规格。 */
+export type RecordSuggestionField = 'name' | 'spec';
+
+/**
+ * 单条输入建议。
+ * `value` 用于补全；名称建议额外带该商品最近一次的规格与单价（定点整数 ×1e4）。
+ */
+export interface RecordSuggestion {
+  value: string;
+  spec: string | null;
+  /** 单价（×1e4 定点整数）；规格建议或历史无值时按 0 处理由前端决定是否填充。 */
+  unitPrice: number | null;
+}
+
+export interface RecordSuggestionResponse {
+  items: RecordSuggestion[];
+}

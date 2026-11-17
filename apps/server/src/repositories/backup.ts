@@ -5,7 +5,7 @@
  * `db.backupTo()` 在线一致性快照；校验链 integrity_check → user_version →
  * 魔数 → sha256 → gzip → gzip -t → 入池 → GC（GC 前断言至少留 1 份 integrity=ok）；
  * 保留最近 7 份；空间不足跳过本次但不阻断启动；
- * baseline 基线快照 + init_state 元数据，避免「恢复后要求引导但初始密码已清」死锁。
+ * baseline 基线快照 + init_state 元数据，避免「恢复后状态与凭据不一致」的死锁。
  *
  * 说明：Windows/Git Bash 未必带外部 `gzip` 可执行文件，故 `gzip -t` 环节用
  * Node 内置 zlib 的 gzipSync + gunzipSync 往返比对实现等价完整性校验。

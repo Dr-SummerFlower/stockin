@@ -3,7 +3,10 @@
  *
  * 依据：设计文档 v1.1 §7.4 —— 重置前快照 → 生成新正式密码打印 →
  * `auth_epoch` 递增吊销全部会话 → `init_state` 保持 1、引导页仍不可重入；
- * 无 HTTP 改密端点、无修改密码页。
+ * 密保问题一并清空（旧答案不得再能重置新密码）。
+ *
+ * 说明：Web 侧已有「修改密码 / 忘记密码」，本 CLI 是 Node 自托管实例在
+ * 无法登录、密保也失效时的本机兜底；Workers 运行时没有这个入口。
  *
  * 凭据更新 + auth_epoch + 吊销全部会话 + 操作日志四者在同一个
  * `BEGIN IMMEDIATE` 事务内完成（文档 §4.5 事务口径）。
@@ -94,6 +97,8 @@ export async function resetCredentials(
         0,
         now,
       );
+      // 密保也一并清空：否则旧密保答案仍能重置刚下发的新密码。
+      credentials.clearSecurity(now);
       const epoch: number = meta.increment('auth_epoch');
       new SessionRepository(db).revokeAll('credentials-reset', now, epoch);
       new OperationLogRepository(db).append({

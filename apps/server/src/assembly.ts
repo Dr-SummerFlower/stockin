@@ -64,6 +64,7 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     credentials: repositories.credentials,
     sessions: repositories.sessions,
     meta: repositories.meta,
+    settings: repositories.settings,
     logs: repositories.logs,
     backup: ports.backup,
   });

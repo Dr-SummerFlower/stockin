@@ -11,6 +11,7 @@ import {
   batchDeleteSchema,
   recordFilterSchema,
   recordSaveSchema,
+  recordSuggestionQuerySchema,
   type RecordFilter,
 } from '@stockin/shared';
 import { errorResponse } from '../lib/response';
@@ -68,6 +69,26 @@ export function registerRecordRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
       ? c.json(result.data, 200)
       : errorResponse(result.code, c.get('requestId') ?? '', result.details);
   });
+
+  // 必须注册在 `/:id` 之前，否则会被当成 id 解析。
+  api.get(
+    '/api/records/suggestions',
+    zValidator('query', recordSuggestionQuerySchema, (result, c) => {
+      if (!result.success) {
+        return errorResponse(ErrorCode.VALID_FAILED, String(c.get('requestId') ?? ''), {
+          issues: result.error.issues,
+        });
+      }
+      return;
+    }),
+    (c) => {
+      const input = c.req.valid('query');
+      const result = deps.records.suggest(input.field, input.q ?? '', input.limit ?? 10);
+      return result.ok
+        ? c.json(result.data, 200)
+        : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+    },
+  );
 
   api.get('/api/records/:id', (c) => {
     const id: number | null = parseIdParam(c);

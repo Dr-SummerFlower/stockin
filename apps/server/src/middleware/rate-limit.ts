@@ -6,7 +6,7 @@
  * `lib/today.ts` 的 `epochSeconds()`，本模块不直接调用 Date.now()。
  */
 import type { Context, MiddlewareHandler } from 'hono';
-import { ErrorCode, LOGIN_RATE_LIMIT } from '@stockin/shared';
+import { ErrorCode, LOGIN_RATE_LIMIT, SECURITY_RATE_LIMIT } from '@stockin/shared';
 import { epochSeconds } from '../lib/today';
 import { errorResponse } from '../lib/response';
 import { TtlMap } from '../lib/ttl-map';
@@ -29,6 +29,13 @@ const MAX_ATTEMPTS: number = LOGIN_RATE_LIMIT.maxAttempts;
  */
 const byIp = new TtlMap<Bucket>();
 const byIpUser = new TtlMap<Bucket>();
+
+/** 密保答案试错桶：与登录桶隔离，避免两类失败互相顶掉额度。 */
+const securityByIp = new TtlMap<Bucket>();
+const securityByIpUser = new TtlMap<Bucket>();
+
+const SECURITY_WINDOW_SECONDS: number = SECURITY_RATE_LIMIT.windowMinutes * 60;
+const SECURITY_MAX_ATTEMPTS: number = SECURITY_RATE_LIMIT.maxAttempts;
 
 /**
  * 供其它中间件复用的客户端 IP 提取。
@@ -60,14 +67,23 @@ function pairKey(ip: string, username: string): string {
   return `${ip}\u0000${username}`;
 }
 
-function windowBucket(map: TtlMap<Bucket>, key: string, now: number): Bucket {
+function windowBucketWith(
+  map: TtlMap<Bucket>,
+  key: string,
+  now: number,
+  windowSeconds: number,
+): Bucket {
   const existing: Bucket | undefined = map.get(key, now);
   if (existing !== undefined) {
     return existing;
   }
-  const fresh: Bucket = { count: 0, resetAt: now + WINDOW_SECONDS };
+  const fresh: Bucket = { count: 0, resetAt: now + windowSeconds };
   map.set(key, fresh, fresh.resetAt, now);
   return fresh;
+}
+
+function windowBucket(map: TtlMap<Bucket>, key: string, now: number): Bucket {
+  return windowBucketWith(map, key, now, WINDOW_SECONDS);
 }
 
 /** 记录一次登录失败；两个维度同时累加。 */
@@ -120,6 +136,52 @@ export function loginBlockState(
   return { blocked, retryAfterSeconds: Math.max(1, retryAfterSeconds) };
 }
 
+/** 记录一次密保答案错误；两个维度同时累加。 */
+export function recordSecurityFailure(ip: string, username: string): void {
+  const now: number = epochSeconds();
+  windowBucketWith(securityByIp, ip, now, SECURITY_WINDOW_SECONDS).count += 1;
+  windowBucketWith(securityByIpUser, pairKey(ip, username), now, SECURITY_WINDOW_SECONDS).count +=
+    1;
+}
+
+/** 密保重置成功后清空该 IP / 用户的失败记录。 */
+export function clearSecurityFailures(ip: string, username: string): void {
+  securityByIp.delete(ip);
+  securityByIpUser.delete(pairKey(ip, username));
+}
+
+/** 清空密保限流状态（测试用；桶同样是模块级单例）。 */
+export function resetSecurityRateLimit(): void {
+  securityByIp.clear();
+  securityByIpUser.clear();
+}
+
+/** 当前密保限流状态；retryAfterSeconds 为剩余窗口秒数。 */
+export function securityBlockState(
+  ip: string,
+  username: string,
+): { blocked: boolean; retryAfterSeconds: number } {
+  const now: number = epochSeconds();
+  const candidates: Bucket[] = [];
+  const ipBucket: Bucket | undefined = securityByIp.get(ip, now);
+  if (ipBucket !== undefined) {
+    candidates.push(ipBucket);
+  }
+  const pairBucket: Bucket | undefined = securityByIpUser.get(pairKey(ip, username), now);
+  if (pairBucket !== undefined) {
+    candidates.push(pairBucket);
+  }
+  let retryAfterSeconds = 0;
+  let blocked = false;
+  for (const bucket of candidates) {
+    if (bucket.count >= SECURITY_MAX_ATTEMPTS) {
+      blocked = true;
+      retryAfterSeconds = Math.max(retryAfterSeconds, bucket.resetAt - now);
+    }
+  }
+  return { blocked, retryAfterSeconds: Math.max(1, retryAfterSeconds) };
+}
+
 /**
  * 构造限流中间件：登录请求在预检阶段按 IP 维度拦截（用户名尚未解析），
  * 并按 Retry-After 返回 429；失败计数由 auth.service 调用 recordLoginFailure。
@@ -131,6 +193,18 @@ export function createRateLimitMiddleware(): MiddlewareHandler<AppEnv> {
       if (state.blocked) {
         const response: Response = errorResponse(
           ErrorCode.AUTH_RATE_LIMITED,
+          c.get('requestId') ?? '',
+        );
+        response.headers.set('retry-after', String(state.retryAfterSeconds));
+        return response;
+      }
+    }
+    // 密保答案熵低，忘记密码接口按 IP 维度预检；用户名维度由 Service 内计数。
+    if (c.req.path === '/api/auth/forgot-password' && c.req.method === 'POST') {
+      const state = securityBlockState(clientIpOf(c), '');
+      if (state.blocked) {
+        const response: Response = errorResponse(
+          ErrorCode.AUTH_SECURITY_RATE_LIMITED,
           c.get('requestId') ?? '',
         );
         response.headers.set('retry-after', String(state.retryAfterSeconds));

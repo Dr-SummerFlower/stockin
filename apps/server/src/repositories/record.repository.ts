@@ -342,6 +342,52 @@ export class RecordRepository {
     return this.scalar('SELECT COUNT(*) AS c FROM records WHERE deleted_at IS NULL');
   }
 
+  /**
+   * 商品名称建议：按 `name_norm` 前缀匹配，每个名称只取**最近一次**记录，
+   * 附带该次的规格与单价，供前端选择后联动带出。
+   *
+   * 用相关子查询取 `MAX(purchase_date), MAX(id)`，避免同一名称多次进货时
+   * 返回重复行；`name_norm` 上有部分索引，单用户数据量下足够。
+   */
+  suggestNames(
+    prefixNorm: string,
+    limit: number,
+  ): { name: string; spec: string | null; unit_price: number }[] {
+    return this.db
+      .prepare(
+        `SELECT r.name AS name, r.spec AS spec, r.unit_price AS unit_price
+           FROM records r
+          WHERE r.deleted_at IS NULL
+            AND r.name_norm LIKE ?
+            AND r.id = (
+              SELECT r2.id FROM records r2
+               WHERE r2.deleted_at IS NULL AND r2.name_norm = r.name_norm
+               ORDER BY r2.purchase_date DESC, r2.id DESC
+               LIMIT 1
+            )
+          ORDER BY r.purchase_date DESC, r.id DESC
+          LIMIT ?`,
+      )
+      .all(`${prefixNorm}%`, limit) as { name: string; spec: string | null; unit_price: number }[];
+  }
+
+  /** 规格建议：按出现频次降序，空规格不参与。 */
+  suggestSpecs(prefixNorm: string, limit: number): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT spec, COUNT(*) AS c
+           FROM records
+          WHERE deleted_at IS NULL
+            AND spec IS NOT NULL AND spec <> ''
+            AND spec_norm LIKE ?
+          GROUP BY spec_norm
+          ORDER BY c DESC, spec ASC
+          LIMIT ?`,
+      )
+      .all(`${prefixNorm}%`, limit) as { spec: string }[];
+    return rows.map((row) => row.spec);
+  }
+
   countTrash(): number {
     return this.scalar('SELECT COUNT(*) AS c FROM records WHERE deleted_at IS NOT NULL');
   }

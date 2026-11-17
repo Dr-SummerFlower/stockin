@@ -23,7 +23,7 @@ import type { AppDeps } from '../../src/app';
 import type { AppEnv } from '../../src/types/hono';
 import { nodeRuntime } from '../../src/runtime/node';
 import { createFilesystemMigrationSource } from '../../src/runtime/node/migration-source.filesystem';
-import { resetLoginRateLimit } from '../../src/middleware/rate-limit';
+import { resetLoginRateLimit, resetSecurityRateLimit } from '../../src/middleware/rate-limit';
 import { resetIdempotencyStore } from '../../src/services/record.service';
 
 /** 测试台固定端口：`env.ts` 要求 http 来源的端口与 PORT 相同。 */
@@ -68,6 +68,10 @@ export interface HarnessResponse<T = unknown> {
   readonly setCookie: readonly string[];
 }
 
+/** 自助引导测试用的固定密保问题与答案（各用例共享，便于忘记密码用例）。 */
+export const HARNESS_SECURITY_QUESTION = '你小学的名称是？';
+export const HARNESS_SECURITY_ANSWER = 'test-school';
+
 export interface Harness {
   readonly app: Hono<AppEnv>;
   readonly runtime: AssembledRuntime;
@@ -75,13 +79,11 @@ export interface Harness {
   readonly env: Env;
   readonly dir: string;
   readonly backupDir: string;
-  /** 首启生成的初始密码（未初始化时才非 null）。 */
-  readonly initialPassword: string;
   request(pathname: string, init?: HarnessRequestInit): Promise<Response>;
   json<T = unknown>(pathname: string, init?: HarnessRequestInit): Promise<HarnessResponse<T>>;
   /** 登录并返回可直接放入 Cookie 头的 `sid=...`。 */
   login(password: string, username?: string): Promise<string>;
-  /** 完成 /setup 并返回新的 `sid=...`（setup 本身不签会话，需再登录一次）。 */
+  /** 完成自助引导并返回新的 `sid=...`（setup 本身不签会话，需再登录一次）。 */
   completeSetup(username: string, password: string): Promise<string>;
   close(): void;
 }
@@ -125,7 +127,6 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       tmpDir,
       staticRoot,
     },
-    suppressCredentialPrint: true,
   });
 
   const runtime: AssembledRuntime = assemble({
@@ -139,6 +140,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
   // 限流桶与幂等键是模块级单例，跨用例会互相污染，每个测试台重置一次。
   resetLoginRateLimit();
+  resetSecurityRateLimit();
   resetIdempotencyStore();
 
   const request = async (pathname: string, init: HarnessRequestInit = {}): Promise<Response> => {
@@ -209,13 +211,19 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     env: result.env,
     dir,
     backupDir,
-    initialPassword: result.initialPassword ?? '',
     request,
     json,
     login,
     async completeSetup(username: string, password: string): Promise<string> {
       const setup = await json('/api/auth/setup', {
-        json: { currentPassword: result.initialPassword ?? '', username, password },
+        json: {
+          username,
+          password,
+          securityQuestion: HARNESS_SECURITY_QUESTION,
+          securityAnswer: HARNESS_SECURITY_ANSWER,
+          shopName: '测试店铺',
+          expiryThresholdDays: 30,
+        },
       });
       if (setup.status !== 200) {
         throw new Error(`setup 失败：${setup.status} ${JSON.stringify(setup.body)}`);

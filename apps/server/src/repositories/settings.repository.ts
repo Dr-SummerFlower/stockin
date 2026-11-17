@@ -42,4 +42,15 @@ export class SettingsRepository {
         .changes > 0
     );
   }
+
+  getShopName(): string {
+    return this.getRow().shop_name ?? '';
+  }
+
+  /** 店铺名称纯展示，不做业务校验，仅裁掉首尾空白。 */
+  setShopName(name: string): boolean {
+    return (
+      this.db.prepare('UPDATE settings SET shop_name = ? WHERE id = 1').run(name.trim()).changes > 0
+    );
+  }
 }

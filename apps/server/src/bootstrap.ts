@@ -3,8 +3,8 @@
  *
  * 依据：设计文档 v1.1 §3.6 / §7.2 / §7.4 ——
  * 启动自检（卷可写 / 磁盘余量 / integrity_check / 版本等值）失败 fail-fast；
- * 首启生成 `admin` + 随机初始密码并打印 `[BOOTSTRAP]`；
- * **卷保留时不重生成、不重打印**；`meta.setup_completed` 单向 0→1。
+ * **首启不再生成随机初始密码**，改由首次访问自助引导（`/setup`）设置正式
+ * 账密与密保；`meta.setup_completed` 单向 0→1。
  *
  * 2026-11-15：四处平台相关动作改为读 `PlatformProfile` 而不是无条件执行 ——
  * Workers 上「卷可写 / 磁盘余量 / integrity_check / Node 版本断言」既无意义
@@ -21,12 +21,6 @@ import { NODE_VERSION_EXPECTED } from '@stockin/shared';
 import { loadEnv, type Env, type EnvOverrides } from './env';
 import { logger } from './lib/logger';
 import { configureCookiePolicy } from './lib/cookie';
-import {
-  derivePasswordHash,
-  generateReadablePassword,
-  generateSaltHex,
-  serializeScryptParams,
-} from './lib/crypto';
 import { configureServerTimeZone, utcNowIso } from './lib/today';
 import { assertIntegrity, closeDatabase, tableExists, type Db } from './repositories/db';
 import { runMigrations, type MigrationResult } from './repositories/migrations/runner';
@@ -48,7 +42,7 @@ import type {
 /** 启动自检失败 sentinel 文件名（落在 data 卷；仅持久文件系统运行时使用）。 */
 export const SELFCHECK_FAILED_FILE = '.selfcheck_failed';
 
-/** 首启默认账号（文档 §7.4 `[BOOTSTRAP] admin + 随机初始密码`）。 */
+/** CLI 凭据重置使用的固定账号名（自助引导不再预置账号）。 */
 export const BOOTSTRAP_USERNAME = 'admin';
 
 export class BootstrapError extends Error {
@@ -120,8 +114,6 @@ export interface BootstrapOptions {
   /** 运行时端口集合；决定用哪套驱动、迁移来源、备份方式。 */
   readonly bundle: RuntimeBundle;
   readonly overrides?: EnvOverrides;
-  /** 关闭 [BOOTSTRAP] 明文打印（仅供内联自测使用，生产必须开启）。 */
-  readonly suppressCredentialPrint?: boolean;
 }
 
 export interface BootstrapRepositories {
@@ -145,9 +137,6 @@ export interface ResolvedPorts {
 export interface BootstrapResult {
   readonly db: Db;
   readonly env: Env;
-  readonly initializedNow: boolean;
-  /** 仅首启时非 null；卷保留重启恒为 null。 */
-  readonly initialPassword: string | null;
   readonly migration: MigrationResult;
   readonly repositories: BootstrapRepositories;
   readonly ports: ResolvedPorts;
@@ -222,31 +211,15 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
     // meta 必须在迁移成功后才构造（其查询依赖已建表）。
     const meta = new MetaRepository(db);
 
-    // 首启凭据：卷保留（credentials 行已存在 / setup 已完成）时绝不重生成、不重打印。
+    // 自助引导：首启不再生成随机初始密码、也不打印任何凭据。
+    //
+    // 首次访问直接进入 `/setup` 设置正式账密、密保问题与店铺配置。这样
+    // Workers 上「初始密码只打印一次、日志里又读不到」的问题从根上消失。
+    // 代价是 setup 完成前任何能访问到该实例的人都能成为管理员（抢注风险），
+    // 由部署侧在 setup 前限制入口访问承担，README 已写明。
     const credentials = new CredentialRepository(db);
-    let initializedNow = false;
-    let initialPassword: string | null = null;
-    if (credentials.find() === null && !meta.setupCompleted()) {
-      const password: string = generateReadablePassword();
-      const salt: string = generateSaltHex();
-      const hash: string = derivePasswordHash(password, salt);
-      const now: string = utcNowIso();
-      credentials.create({
-        username: BOOTSTRAP_USERNAME,
-        passwordHash: hash,
-        salt,
-        scryptParams: serializeScryptParams(),
-        isInitial: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
-      // 首启只经 stdout 打印 [BOOTSTRAP]，不写 operation_logs：
-      // 此时 setup 尚未完成，写 SETUP_COMPLETE 会污染审计语义（文档 §7.4 要求收尾清理首启日志）。
-      initializedNow = true;
-      initialPassword = password;
-      if (options.suppressCredentialPrint !== true) {
-        process.stdout.write(`[BOOTSTRAP] username=${BOOTSTRAP_USERNAME} password=${password}\n`);
-      }
+    if (!meta.setupCompleted()) {
+      logger.info('[BOOTSTRAP] 尚未完成初始化，首次访问将进入自助引导');
     }
 
     const repositories: BootstrapRepositories = {
@@ -264,7 +237,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
       staticPort: await bundle.staticPort(env),
       workbookReader: bundle.workbookReader(env),
     };
-    return { db, env, initializedNow, initialPassword, migration, repositories, ports };
+    return { db, env, migration, repositories, ports };
   } catch (error) {
     closeDatabase(db);
     throw error;

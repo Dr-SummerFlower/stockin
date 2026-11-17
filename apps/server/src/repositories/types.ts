@@ -83,6 +83,10 @@ export interface CredentialRow {
   salt: string;
   scrypt_params: string;
   is_initial: number;
+  /** 密保问题文本；空串表示未设置。 */
+  security_question: string;
+  security_answer_salt: string;
+  security_answer_hash: string;
   created_at: string;
   updated_at: string;
 }
@@ -90,6 +94,7 @@ export interface CredentialRow {
 export interface SettingsRow {
   id: number;
   expiry_threshold_days: number;
+  shop_name: string;
 }
 
 export interface MetaRow {

@@ -8,9 +8,12 @@ import {
   EXPIRY_THRESHOLD_MIN,
   EXPIRY_THRESHOLD_MAX,
 } from '../constants';
+import { SHOP_NAME_MAX_LENGTH } from '../security';
 
 export const settingsSchema = z.object({
   expiryThresholdDays: z.number().int().min(EXPIRY_THRESHOLD_MIN).max(EXPIRY_THRESHOLD_MAX),
+  /** 店铺名称可选：不传则保持原值，传空串表示清空。 */
+  shopName: z.string().max(SHOP_NAME_MAX_LENGTH).optional(),
 });
 export type SettingsInput = z.infer<typeof settingsSchema>;
 

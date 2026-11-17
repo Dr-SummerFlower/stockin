@@ -1,10 +1,10 @@
 /**
- * Node 组合根：启动自检 → 装配 → 迁移 → 首启凭据 → 监听 → 优雅停机。
+ * Node 组合根：启动自检 → 装配 → 迁移 → 监听 → 优雅停机。
  *
  * 依据：设计文档 v1.1 §3.6 / §7.4 / §7.5 ——
  * 启动自检（Node 版本断言 / 卷可写 / 磁盘余量 / integrity_check / 版本等值）
- * 失败 fail-fast 并写 `.selfcheck_failed` sentinel；监听前完成首启
- * `[BOOTSTRAP]` 打印；SIGINT/SIGTERM 停调度器、`server.close()`、
+ * 失败 fail-fast 并写 `.selfcheck_failed` sentinel；首启不打印任何凭据
+ * （首次访问走 `/setup` 自助引导）；SIGINT/SIGTERM 停调度器、`server.close()`、
  * checkpoint + closeDatabase。
  *
  * 2026-11-15 双运行时改造后，本文件只负责 **Node 特有**的部分：

@@ -49,6 +49,15 @@ export const LOGIN_RATE_LIMIT = {
   windowMinutes: 15,
 } as const;
 
+/**
+ * 密保答案试错限流：与登录同档（5 次 / 15 分钟），IP 与 IP+用户名双维度。
+ * 密保答案熵低，必须限流，否则可离线式逐条猜解。
+ */
+export const SECURITY_RATE_LIMIT = {
+  maxAttempts: 5,
+  windowMinutes: 15,
+} as const;
+
 /** 幂等键快照保留 24 小时。文档 §5.2。 */
 export const IDEMPOTENCY_TTL_HOURS = 24;
 

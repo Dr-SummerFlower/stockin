@@ -37,6 +37,10 @@ const PROTECTED_PREFIXES: readonly string[] = [
   '/api/settings',
   '/api/backup',
   '/api/backups',
+  // 账号安全：改密与改密保必须登录；`security-question` / `forgot-password`
+  // 是未登录可达的找回流程，刻意不列入。
+  '/api/auth/change-password',
+  '/api/auth/security',
 ];
 
 export function isKnownApiPath(path: string): boolean {

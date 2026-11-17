@@ -15,7 +15,13 @@ import type { AppDeps } from '../app';
 /** 注册设置与备份端点。 */
 export function registerSettingsRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   api.get('/api/settings', (c) => {
-    return c.json({ expiryThresholdDays: deps.repositories.settings.getThresholdDays() }, 200);
+    return c.json(
+      {
+        expiryThresholdDays: deps.repositories.settings.getThresholdDays(),
+        shopName: deps.repositories.settings.getShopName(),
+      },
+      200,
+    );
   });
 
   api.put(
@@ -35,17 +41,29 @@ export function registerSettingsRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
       const actor: string = c.get('actor') ?? 'user';
       immediateTransaction(deps.db, () => {
         deps.repositories.settings.setThresholdDays(input.expiryThresholdDays);
+        if (input.shopName !== undefined) {
+          deps.repositories.settings.setShopName(input.shopName);
+        }
         deps.repositories.logs.append({
           action: Action.SETTINGS_UPDATE,
           targetType: TARGET_TYPE.SETTINGS,
           targetId: null,
-          detail: { expiryThresholdDays: input.expiryThresholdDays },
+          detail:
+            input.shopName === undefined
+              ? { expiryThresholdDays: input.expiryThresholdDays }
+              : { expiryThresholdDays: input.expiryThresholdDays, shopName: input.shopName },
           requestId,
           actor,
           occurredAt: nowUtc,
         });
       });
-      return c.json({ expiryThresholdDays: input.expiryThresholdDays }, 200);
+      return c.json(
+        {
+          expiryThresholdDays: input.expiryThresholdDays,
+          shopName: deps.repositories.settings.getShopName(),
+        },
+        200,
+      );
     },
   );
 

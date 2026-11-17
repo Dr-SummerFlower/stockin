@@ -176,12 +176,14 @@ describe('静态资源与 SPA 回退', () => {
 describe('限流中间件对非登录路径的影响', () => {
   it('非登录端点的失败请求不消耗登录限流额度', async () => {
     harness = await createHarness();
+    // 自助引导后才有凭据；setup 本身不计入登录失败。
+    await harness.completeSetup('owner', 'Temp-Pass-2026-11-x9');
     for (let i = 0; i < 6; i += 1) {
       const denied = await harness.json('/api/records');
       expect(denied.status).toBe(401);
     }
     // 仍然可以正常登录（限流只认 /api/auth/login 的失败计数）。
-    const cookie: string = await harness.login(harness.initialPassword);
+    const cookie: string = await harness.login('Temp-Pass-2026-11-x9', 'owner');
     expect(cookie).toMatch(/^sid=/);
   });
 });

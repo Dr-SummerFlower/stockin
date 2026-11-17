@@ -61,8 +61,12 @@ describe('discoverInlineMigrations', () => {
   });
 
   it('不匹配命名规则的文件被忽略', () => {
-    const files = discoverInlineMigrations({ '001_a.sql': 'SELECT 1;', 'README.md': '# x' });
-    expect(files).toHaveLength(1);
+    const files = discoverInlineMigrations({
+      '001_a.sql': 'SELECT 1;',
+      '002_b.sql': 'SELECT 1;',
+      'README.md': '# x',
+    });
+    expect(files).toHaveLength(2);
   });
 });
 
@@ -70,10 +74,11 @@ describe('createInlineMigrationSource', () => {
   it('kind 标识为 inline，read 返回剥离后的脚本', () => {
     const source = createInlineMigrationSource({
       '001_a.sql': 'CREATE TABLE a (id INTEGER);\nPRAGMA user_version = 1;\n',
+      '002_b.sql': "ALTER TABLE a ADD COLUMN x TEXT NOT NULL DEFAULT '';\n",
     });
     expect(source.kind).toBe('inline');
     const files = source.discover();
-    expect(files).toHaveLength(1);
+    expect(files).toHaveLength(2);
     const first = files[0];
     expect(first).toBeDefined();
     const sql: string = source.read(first!);

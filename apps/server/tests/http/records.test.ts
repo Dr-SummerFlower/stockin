@@ -8,6 +8,8 @@
  * 因此 12000 / 2000 = 1.2 × 2 = 2.4 元 = 240 分。
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { derivePasswordHash, generateSaltHex, serializeScryptParams } from '../../src/lib/crypto';
+import { utcNowIso } from '../../src/lib/today';
 import { createHarness, type Harness } from '../support/harness';
 
 let harness: Harness | null = null;
@@ -71,9 +73,25 @@ describe('守卫链', () => {
     expect(unknown.headers.get('content-type')).toContain('application/json');
   });
 
-  it('已登录但未完成 /setup 时业务端点返回 403（init guard 先于业务）', async () => {
+  it('有凭据但未完成 /setup 时业务端点返回 403（init guard 先于业务）', async () => {
     harness = await createHarness();
-    const cookie: string = await harness.login(harness.initialPassword);
+    // 模拟从 1.0.0 就地升级的老实例：凭据行已存在（is_initial=1），
+    // 但 setup_completed 仍为 0。自助引导后新实例不会出现这种中间态。
+    const salt: string = generateSaltHex();
+    const now: string = utcNowIso();
+    harness.deps.repositories.credentials.create({
+      username: 'admin',
+      passwordHash: derivePasswordHash('legacy-pass-1', salt),
+      salt,
+      scryptParams: serializeScryptParams(),
+      isInitial: 1,
+      securityQuestion: '',
+      securityAnswerSalt: '',
+      securityAnswerHash: '',
+      createdAt: now,
+      updatedAt: now,
+    });
+    const cookie: string = await harness.login('legacy-pass-1');
     const blocked = await harness.json<{ code: string }>('/api/records', { cookie });
     expect(blocked.status).toBe(403);
     expect(blocked.body.code).toBe('AUTH_INIT_REQUIRED');
@@ -271,5 +289,65 @@ describe('批量操作', () => {
     });
     expect(bad.status).toBe(422);
     expect(bad.body.code).toBe('VALID_FAILED');
+  });
+});
+
+describe('GET /api/records/suggestions', () => {
+  it('名称建议按前缀去重，并带出最近一次的规格与单价', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/records', {
+      json: payload({
+        purchaseDate: '2026-11-01',
+        spec: '500ml',
+        unitPrice: 10_000,
+        amountCents: 200,
+      }),
+      cookie,
+    });
+    await h.json('/api/records', {
+      json: payload({
+        purchaseDate: '2026-11-12',
+        spec: '330ml',
+        unitPrice: 12_500,
+        amountCents: 250,
+      }),
+      cookie,
+    });
+
+    const response = await h.json<{
+      items: { value: string; spec: string | null; unitPrice: number | null }[];
+    }>('/api/records/suggestions?field=name&q=工人', { cookie });
+    expect(response.status).toBe(200);
+    expect(response.body.items).toHaveLength(1);
+    expect(response.body.items[0]).toEqual({
+      value: '工人牌啤酒',
+      spec: '330ml',
+      unitPrice: 12_500,
+    });
+  });
+
+  it('规格建议去重且不返回空规格；缺 field 返回 422', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/records', { json: payload({ spec: '500ml' }), cookie });
+    await h.json('/api/records', { json: payload({ name: '另一种', spec: '500ml' }), cookie });
+    await h.json('/api/records', { json: payload({ name: '无规格', spec: null }), cookie });
+
+    const response = await h.json<{ items: { value: string }[] }>(
+      '/api/records/suggestions?field=spec&q=5',
+      { cookie },
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.items.map((item) => item.value)).toEqual(['500ml']);
+
+    const bad = await h.json<{ code: string }>('/api/records/suggestions', { cookie });
+    expect(bad.status).toBe(422);
+    expect(bad.body.code).toBe('VALID_FAILED');
+  });
+
+  it('未登录返回 401（建议接口不绕过守卫）', async () => {
+    harness = await createHarness();
+    const response = await harness.json<{ code: string }>('/api/records/suggestions?field=name');
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('AUTH_REQUIRED');
   });
 });

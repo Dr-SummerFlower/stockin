@@ -100,3 +100,11 @@ export const importRowSchema = z.object({
   remark: z.string(),
 });
 export type ImportRowInput = z.infer<typeof importRowSchema>;
+
+/** 输入建议查询：field 必选，q 为前缀，limit 默认 10（最多 20）。 */
+export const recordSuggestionQuerySchema = z.object({
+  field: z.enum(['name', 'spec']),
+  q: z.string().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(20).optional(),
+});
+export type RecordSuggestionQuery = z.infer<typeof recordSuggestionQuerySchema>;

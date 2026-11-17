@@ -19,9 +19,10 @@ import {
   type RecordFilter,
   type RecordSaveInput,
   type RecordSources,
+  type RecordSuggestionResponse,
   type RecordView,
 } from '@stockin/shared';
-import { fixedMul, isValidISODate } from '@stockin/domain';
+import { fixedMul, isValidISODate, normalizeName, normalizeSpec } from '@stockin/domain';
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
 import type { RecordRepository } from '../repositories/record.repository';
@@ -149,6 +150,31 @@ export class RecordService {
    *
    * `_requestId` 同 `get()`：保持服务方法参数位置一致，本方法自身不落日志。
    */
+  suggest(
+    field: 'name' | 'spec',
+    q: string,
+    limit: number = 10,
+  ): ServiceResult<RecordSuggestionResponse> {
+    if (field === 'name') {
+      const rows = this.deps.records.suggestNames(normalizeName(q), limit);
+      return {
+        ok: true,
+        data: {
+          items: rows.map((row) => ({
+            value: row.name,
+            spec: row.spec,
+            unitPrice: row.unit_price,
+          })),
+        },
+      };
+    }
+    const specs: string[] = this.deps.records.suggestSpecs(normalizeSpec(q), limit);
+    return {
+      ok: true,
+      data: { items: specs.map((spec) => ({ value: spec, spec: null, unitPrice: null })) },
+    };
+  }
+
   list(filter: RecordFilter, _requestId: string): ServiceResult<PageResult<RecordView>> {
     const page = this.deps.records.listActive(
       filter,
