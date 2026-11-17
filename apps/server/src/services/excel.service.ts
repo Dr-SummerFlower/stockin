@@ -193,7 +193,7 @@ export class ExcelService {
   /** GET /api/excel/template：只有表头，不含示例行。 */
   createTemplateResponse(c: Context, ctx: ExcelContext): Response | Promise<Response> {
     // 契约清理：模板恒不含示例行，不再下发无效的 withSample 字段。
-    this.appendLog(Action.EXCEL_TEMPLATE, ctx, {});
+    // 模板下载不写审计：非业务写、高频，属「只留关键操作」移除范围。
     this.setDownloadHeaders(c, 'stockin-template.xlsx');
 
     if (this.deps.excelWrite === 'buffer') {
@@ -225,7 +225,7 @@ export class ExcelService {
   ): Response | Promise<Response> {
     const thresholdDays: number = this.deps.settings.getThresholdDays();
     const today: string = serverToday();
-    this.appendLog(Action.EXCEL_EXPORT, ctx, { filter });
+    // 数据导出不写审计：只读、非状态变更，属「只留关键操作」移除范围。
     this.setDownloadHeaders(c, 'stockin-export.xlsx');
 
     if (this.deps.excelWrite === 'buffer') {
@@ -498,18 +498,5 @@ export class ExcelService {
     } finally {
       this.deps.gate.release();
     }
-  }
-
-  /** 模板/导出日志（非业务写，单独一条 append）。 */
-  private appendLog(action: Action, ctx: ExcelContext, detail: unknown): void {
-    this.deps.logs.append({
-      action,
-      targetType: TARGET_TYPE.NONE,
-      targetId: null,
-      detail,
-      requestId: ctx.requestId,
-      actor: ctx.actor,
-      occurredAt: utcNowIso(),
-    });
   }
 }

@@ -210,21 +210,17 @@ export class AuthService {
     return { ok: true, data: { token, initState: this.deps.meta.initState() } };
   }
 
-  /** POST /api/auth/logout：幂等，吊销当前会话并写日志。 */
-  logout(token: string | null, ctx: AuthContext): ServiceResult<LogoutResponse> {
+  /** POST /api/auth/logout：幂等，吊销当前会话。
+   *
+   * 退出登录不写审计：它既不是身份鉴别失败，也不改变任何系统状态，
+   * 属本轮「只留关键操作」明确移除的高频噪音（登录本身仍完整记录）。
+   */
+  logout(token: string | null, _ctx: AuthContext): ServiceResult<LogoutResponse> {
     const row = token === null ? null : this.deps.sessions.findByTokenHash(hashSessionToken(token));
     if (row !== null) {
       const nowUtc: string = utcNowIso();
       immediateTransaction(this.deps.db, () => {
         this.deps.sessions.revoke(row.id, 'logout', nowUtc);
-        this.deps.logs.append({
-          action: Action.LOGOUT,
-          targetType: TARGET_TYPE.SESSION,
-          targetId: null,
-          requestId: ctx.requestId,
-          actor: 'user',
-          occurredAt: nowUtc,
-        });
       });
     }
     return { ok: true, data: { ok: true } };

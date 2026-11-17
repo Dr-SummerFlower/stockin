@@ -217,17 +217,9 @@ export class RecordService {
         return { ok: false, code: ErrorCode.RECORD_DUPLICATE };
       }
       const ctx: WriteContext = ctxOf(requestId, actor);
+      // 日常新增不写审计：记录行自身带 created_at/来源位，属「只留关键操作」移除的高频噪音。
       const createdId: number = immediateTransaction(this.deps.db, () => {
-        const id: number = this.deps.records.create(fields, input.sources as RecordSources, ctx);
-        this.deps.logs.append({
-          action: Action.RECORD_CREATE,
-          targetType: TARGET_TYPE.RECORD,
-          targetId: id,
-          requestId,
-          actor,
-          occurredAt: ctx.occurredAt,
-        });
-        return id;
+        return this.deps.records.create(fields, input.sources as RecordSources, ctx);
       });
       return this.get(createdId, requestId);
     });
@@ -254,25 +246,15 @@ export class RecordService {
         return { ok: false, code: ErrorCode.RECORD_VERSION_CONFLICT };
       }
       const ctx: WriteContext = ctxOf(requestId, actor);
+      // 日常修改不写审计：见 create() 的口径说明。
       const updated: boolean = immediateTransaction(this.deps.db, () => {
-        const changed: boolean = this.deps.records.update(
+        return this.deps.records.update(
           id,
           fields,
           input.sources as RecordSources,
           input.version as number,
           ctx,
         );
-        if (changed) {
-          this.deps.logs.append({
-            action: Action.RECORD_UPDATE,
-            targetType: TARGET_TYPE.RECORD,
-            targetId: id,
-            requestId,
-            actor,
-            occurredAt: ctx.occurredAt,
-          });
-        }
-        return changed;
       });
       if (!updated) {
         return { ok: false, code: ErrorCode.RECORD_VERSION_CONFLICT };
@@ -288,16 +270,9 @@ export class RecordService {
       return { ok: false, code: ErrorCode.RECORD_NOT_FOUND };
     }
     const ctx: WriteContext = ctxOf(requestId, actor);
+    // 单条软删不写审计；批量删除/恢复/清除仍完整记录（不可逆或批量操作）。
     immediateTransaction(this.deps.db, () => {
       this.deps.records.softDelete([id], ctx);
-      this.deps.logs.append({
-        action: Action.RECORD_DELETE,
-        targetType: TARGET_TYPE.RECORD,
-        targetId: id,
-        requestId,
-        actor,
-        occurredAt: ctx.occurredAt,
-      });
     });
     return { ok: true, data: { id } };
   }
