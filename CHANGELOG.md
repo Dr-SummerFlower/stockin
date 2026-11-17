@@ -4,6 +4,11 @@
 
 ### 修复
 
+- **ci**：自定义域部署不再强依赖 workers.dev 地址 ([6a83358](https://github.com/Dr-SummerFlower/stockin/commit/6a833580c7dd117e0d5bd2826bc5f977c4bf62d8))
+## [1.1.1] - 2026-11-17
+
+### 修复
+
 - **ci**：兼容将 Worker 入口域名存放在 Secret ([42ea686](https://github.com/Dr-SummerFlower/stockin/commit/42ea686a571b97f7aa8fa72eb7a0bfd2db1dd5ac))
 ## [1.1.0] - 2026-11-17
 
