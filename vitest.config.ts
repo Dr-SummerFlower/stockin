@@ -25,6 +25,10 @@ export default defineConfig({
     root: rootDir,
     include: ['packages/*/tests/**/*.test.ts', 'apps/server/tests/**/*.test.ts'],
     reporters: ['default'],
+    // HTTP 集成用例每个都要真跑 bootstrap + scrypt，覆盖率模式下会明显变慢；
+    // 默认 5s 在慢机上会偶发超时（非断言失败），统一放宽到 15s。
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
     // 用例必须可重复：同一份输入任何顺序都应通过。
     sequence: { shuffle: false },
     coverage: {

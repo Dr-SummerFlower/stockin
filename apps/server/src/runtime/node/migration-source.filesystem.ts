@@ -13,37 +13,42 @@ import type { MigrationSource } from '../ports';
 /**
  * 解析迁移脚本目录（QA 修复 A3：**完全不依赖 process.cwd()**）。
  *
- * tsc 只编译 `.ts`，不会把 `001_init.sql` 拷进 dist；QA 实测
- * `apps/server/dist/repositories/migrations/` 里只有 `runner.js`。
- * 因此每个候选都以「目录内存在 001_init.sql」判定，避免选中空目录。
+ * tsc 只编译 `.ts`，不会把 `NNN_*.sql` 拷进 dist；因此每个候选都以
+ * 「目录内存在 001_init.sql」判定，避免选中空目录。
  *
- * 优先级：
- *  ① `explicit` / `MIGRATIONS_DIR` 显式覆盖；
- *  ② 编译产物内 migrations 目录（`<dist>/repositories/migrations`）——
- *     构建插件会把 `001_init.sql` 一并写进 dist；
- *  ③ 从 `__filename` 反推的源码目录（`<root>/src/repositories/migrations`）——
- *     本机 / tsx 开发形态；
- *  ④ 兼容 `rootDir=src` 时 `<root>/dist/src/*.js` 的编译形态。
+ * 三种实际形态的 `__filename` 位置不同，不能只按固定层级反推：
+ *  - `tsx watch src/index.ts`（dev）：`src/runtime/node/migration-source.filesystem.ts`
+ *    → 需要向上两级到 `src/`；
+ *  - 单文件打包（`dist/index.js`）：`dist/` → 同级的 `dist/repositories/migrations`；
+ *  - tsc 未打包：`dist/runtime/node/*.js` → 向上两级到 `dist/`。
  *
- * `node dist/index.js` 在任意 cwd 下都能命中 ②（容器）或 ③（本机）。
+ * 故实现为**从当前文件位置逐级向上**查找 `repositories/migrations` 与
+ * `src/repositories/migrations`，最多回溯 4 层；仍保留 `explicit` /
+ * `MIGRATIONS_DIR` 的最高优先级。
  */
 export function resolveMigrationsDir(explicit?: string): string {
   const here: string = path.dirname(__filename);
   const marker = '001_init.sql';
-  const candidates: string[] = [
-    explicit ?? '',
-    process.env.MIGRATIONS_DIR ?? '',
-    path.join(here, 'repositories', 'migrations'),
-    path.join(here, '..', 'src', 'repositories', 'migrations'),
-    path.join(here, '..', '..', 'src', 'repositories', 'migrations'),
-  ].filter((item) => item !== '');
-  for (const candidate of candidates) {
+  const fixed: string[] = [explicit ?? '', process.env.MIGRATIONS_DIR ?? ''].filter(
+    (item) => item !== '',
+  );
+
+  const candidates: string[] = [...fixed];
+  for (let depth = 0; depth <= 4; depth += 1) {
+    const base: string =
+      depth === 0 ? here : path.resolve(here, ...Array<string>(depth).fill('..'));
+    candidates.push(path.join(base, 'repositories', 'migrations'));
+    candidates.push(path.join(base, 'src', 'repositories', 'migrations'));
+  }
+
+  const tried: string[] = [...new Set(candidates)];
+  for (const candidate of tried) {
     if (fs.existsSync(path.join(candidate, marker))) {
       return candidate;
     }
   }
   throw new Error(
-    `[migration] 找不到 ${marker}，已尝试: ${candidates.join(' | ')}。` +
+    `[migration] 找不到 ${marker}，已尝试: ${tried.join(' | ')}。` +
       'runtime 镜像必须把 migrations/*.sql 一并拷入 dist（或设置 MIGRATIONS_DIR）。',
   );
 }
