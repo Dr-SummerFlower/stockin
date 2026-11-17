@@ -85,8 +85,25 @@ cp .env.example .env          # 编辑 .env：确认镜像标签与来源白名�
 | `DATA_DIR` / `BACKUP_DIR` / `TMP_DIR` | `./data` / `./backups` / `./tmp` | 仅 Node 裸跑；三者不得落在前端静态根之下 |
 | `NODE_ENV` / `LOG_LEVEL` | `production` / `info` | 日志级别输出到 stdout |
 | `IMAGE_REPO` / `IMAGE_TAG` | 见 `.env` | 仅 Docker 编排层；镜像仓库与版本 |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 空 | GitHub OAuth App 凭据；仅管理员登录使用，三者缺一即禁用管理员入口 |
+| `ADMIN_GITHUB_LOGINS` | 空 | 允许登录的 GitHub 账号名，逗号分隔（大小写不敏感） |
 
-`RUNTIME_TARGET` 及 11 项平台覆盖项用于 Node / Workers 双运行时切换，正常部署只需设 `RUNTIME_TARGET=workers`（Workers 预设里已设），其余走预设。应用没有密钥型环境变量：账密哈希、salt、会话都在 SQLite，CI 凭据是 GitHub secrets。
+`RUNTIME_TARGET` 及 11 项平台覆盖项用于 Node / Workers 双运行时切换，正常部署只需设 `RUNTIME_TARGET=workers`（Workers 预设里已设），其余走预设。除上述管理员 OAuth 三项（Workers 上以 Secret 形式配置）外，应用没有密钥型环境变量：账密哈希、salt、会话都在 SQLite，CI 凭据是 GitHub secrets。
+
+### 管理员入口与 GitHub OAuth
+
+店主账号负责日常经营，管理员是**独立的系统维护身份**，权限互不交叉。管理员只做备份、数据导出、审计导出、店主凭据重置与系统概览，**不读写任何业务记录**。
+
+- **开启方式**：创建一个 GitHub OAuth App（Homepage URL 填应用入口，Authorization callback URL 填 `<入口>/api/admin/auth/github/callback`），把 `GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET` 配成 Secret，`ADMIN_GITHUB_LOGINS` 填白名单账号名（如 `alice,bob`）。三个变量在 Workers 上以 **Secret（加密）** 形式添加；Node 侧写入进程环境即可。三项缺一，管理员入口返回「未配置」，店主侧完全不受影响。
+- **登录入口**：`/admin/login` → 点击用 GitHub 账号登录 → 回调成功后进入 `/admin`。白名单外的 GitHub 账号一律拒绝，并写失败审计。
+- **会话语义**：管理员 Cookie 是**窗口级**（不设过期时间），关闭浏览器即丢弃；服务端另有 30 分钟空闲 / 12 小时绝对双过期兜底。与店主会话（`sid`）使用不同的 Cookie 名和独立数据表，互不识别。
+- **安全审计**：管理员的全部维护动作，以及店主的登录、批量删除/恢复/清除、设置/凭据变更等关键操作，都写入 append-only 的 `operation_logs`，可通过管理台导出 CSV。
+
+### 合规与日志留存
+
+- **应用访问日志**（每条 Web 请求的 method/path/耗时）只输出到 stdout，由 Docker `json-file` 驱动或平台日志系统滚动收集，**不写入数据库**。
+- **安全审计日志**（`operation_logs`）append-only，保留期按**网络安全法第 21 条**与等保 2.0 安全审计要求执行：身份鉴别、访问控制、不可逆/批量操作与系统维护事件需可追溯，留存不少于 6 个月。备份 GC 与清理逻辑不会删除仍在该窗口内的审计行。日常记录增删改、模板下载、数据导出与退出登录不写审计（记录行自身带时间戳与来源位，足以追溯），以降低噪音。
+- 关于「公安部 176 号令」：该办法是**监督检查规定**，本身不直接规定日志留存期限；「6 个月」的实际法源是网络安全法与等保的审计要求。此处按其口径就高执行。
 
 ## 开发指南
 

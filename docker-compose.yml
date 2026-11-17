@@ -59,6 +59,11 @@ services:
       TMP_DIR: /app/tmp
       WEB_DIST_DIR: /app/apps/web/dist
       NODE_OPTIONS: "--max-old-space-size=512"
+      # 【管理员入口 · 可选】三项缺一即禁用管理员（店主侧不受影响）。
+      # 值来自 .env；GitHub OAuth App 的回调地址填 <入口>/api/admin/auth/github/callback。
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      ADMIN_GITHUB_LOGINS: ${ADMIN_GITHUB_LOGINS:-}
     volumes:
       - stockin-data:/app/data
       - stockin-backups:/app/backups
