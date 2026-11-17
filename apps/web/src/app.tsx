@@ -224,7 +224,10 @@ async function authGuard(pathname: string): Promise<void> {
     pathname === '/login' ||
     pathname === '/forgot-password' ||
     pathname === '/setup' ||
-    pathname === '/404'
+    pathname === '/404' ||
+    // 管理员是独立身份，走自己的会话判定，不受店主守卫约束。
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/')
   ) {
     return;
   }

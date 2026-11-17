@@ -18,6 +18,9 @@ export const ROUTES = {
   trash: '/trash',
   logs: '/logs',
   notFound: '/404',
+  /** 管理员（系统维护）独立入口，不继承店主导航布局。 */
+  admin: '/admin',
+  adminLogin: '/admin/login',
 } as const;
 
 export interface NavItem {
@@ -59,6 +62,13 @@ export const ACTION_LABELS: Readonly<Record<string, string>> = {
   PASSWORD_CHANGE: '修改密码',
   SECURITY_UPDATE: '修改密保',
   PASSWORD_RESET: '忘记密码重置',
+  // 管理员（系统维护）侧的鉴别与维护事件。前几项是历史动作，仍在库内可查。
+  ADMIN_LOGIN: '管理员登录',
+  ADMIN_LOGIN_FAILED: '管理员登录失败',
+  ADMIN_BACKUP_DOWNLOAD: '管理员下载备份',
+  ADMIN_DATA_EXPORT: '管理员导出数据',
+  ADMIN_AUDIT_EXPORT: '管理员导出审计日志',
+  ADMIN_OWNER_RESET: '管理员重置店主凭据',
 };
 
 /** target_type 中文文案。 */
@@ -68,6 +78,7 @@ export const TARGET_TYPE_LABELS: Readonly<Record<string, string>> = {
   settings: '系统设置',
   session: '会话',
   backup: '备份',
+  admin: '管理员',
   none: '—',
 };
 

@@ -109,6 +109,9 @@ export default defineConfig({
     { path: '/login', component: 'login' },
     { path: '/forgot-password', component: 'forgot-password' },
     { path: '/setup', component: 'setup' },
+    // 管理员（系统维护）独立入口：顶层路由，不继承店主导航布局。
+    { path: '/admin/login', component: 'admin/login' },
+    { path: '/admin', component: 'admin/index' },
     {
       // 布局文件刻意放在 src/layouts/MainLayout.tsx 而非 src/layouts/index.tsx：
       // 后者是 Umi 4 的「全局布局约定」路径，会被自动包裹到 ALL 路由（含 /login、

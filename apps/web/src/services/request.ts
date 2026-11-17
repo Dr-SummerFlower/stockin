@@ -88,6 +88,14 @@ export interface RequestOptions {
   readonly silent?: boolean;
 }
 
+/**
+ * 管理员端点独立判定：其 401 由管理台页面自行处理（跳 /admin/login），
+ * 不能触发店主侧的「跳 /login」动作，否则两套身份会被串到一起。
+ */
+function isAdminPath(path: string): boolean {
+  return path === '/api/admin' || path.startsWith('/api/admin/');
+}
+
 const AUTH_PATH_PREFIXES: readonly string[] = [
   '/api/auth/login',
   '/api/auth/setup',
@@ -176,10 +184,11 @@ async function toApiError(response: Response, options: RequestOptions, path: str
   switch (response.status) {
     case 401: {
       // 认证端点自身的 401（账密错误 / 未登录探测）不跳转，交调用方内联渲染。
-      if (!isAuthPath(path) && !isOnPath('/login')) {
+      // 管理员端点同理，由管理台页面处理，绝不跳到店主 /login。
+      if (!isAuthPath(path) && !isAdminPath(path) && !isOnPath('/login')) {
         navigate('/login');
       }
-      if (!options.silent && !isAuthPath(path)) {
+      if (!options.silent && !isAuthPath(path) && !isAdminPath(path)) {
         notify('warning', '登录状态已失效，重新登录');
       }
       break;
