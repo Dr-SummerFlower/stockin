@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **ci**：兼容将 Worker 入口域名存放在 Secret ([42ea686](https://github.com/Dr-SummerFlower/stockin/commit/42ea686a571b97f7aa8fa72eb7a0bfd2db1dd5ac))
+## [1.1.0] - 2026-11-17
+
 ### 新增
 
 - **auth**：自助引导、账号安全与录入建议接口 ([c8b2097](https://github.com/Dr-SummerFlower/stockin/commit/c8b2097f8467d58a5471151c7550765f225c494b))
