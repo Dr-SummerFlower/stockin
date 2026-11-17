@@ -446,32 +446,54 @@ jobs:
           if [[ -n "${WORKERS_URL}" && "${WORKERS_URL}" != "${CANONICAL}" ]]; then
             TARGETS+=("${WORKERS_URL}")
           fi
+          # 回滚判定只看第一个入口（canonical = 真实用户入口）：
+          #   200        → 健康
+          #   403 / 404  → Cloudflare 边缘层拦截（人机验证 / WAF），不能证明应用有故障
+          #   000 / 5xx  → 连接失败或应用侧错误，真实故障
+          # 其它入口只用于「任一 200 即通过」，不参与回滚判定，避免已禁用的
+          # workers.dev 返回 000 掩盖 canonical 的边缘拦截。
+          primary_code=000
           ok=0
-          code=000
-          for TARGET in "${TARGETS[@]}"; do
+          for i in "${!TARGETS[@]}"; do
+            TARGET="${TARGETS[$i]}"
+            code=000
             for _ in $(seq 1 12); do
               code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${TARGET}/api/health" || echo 000)"
               [[ "${code}" == "200" ]] && break
               sleep 5
             done
             echo "GET ${TARGET}/api/health -> ${code}"
+            if [[ "${i}" == "0" ]]; then
+              primary_code="${code}"
+            fi
             if [[ "${code}" == "200" ]]; then
               ok=1
               break
             fi
           done
-          if [[ "${ok}" != "1" ]]; then
-            echo "::error::Worker 健康检查未通过（已尝试 ${#TARGETS[@]} 个入口）"
+          if [[ "${ok}" == "1" ]]; then
+            echo "rollback=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [[ "${primary_code}" == "403" || "${primary_code}" == "404" ]]; then
+            # 边缘层拦截：让 job 失败以暴露问题，但不回滚——没有证据表明应用故障。
+            echo "rollback=false" >> "${GITHUB_OUTPUT}"
+            echo "::error::健康检查被 Cloudflare 边缘层拦截（HTTP ${primary_code}），未回滚；请确认已对 /api/health 跳过人机验证"
+            echo "- 健康检查被 Cloudflare 边缘层拦截（HTTP ${primary_code}），未回滚；请确认已对 /api/health 跳过人机验证" >> "${GITHUB_STEP_SUMMARY}"
             exit 1
           fi
+          echo "rollback=true" >> "${GITHUB_OUTPUT}"
+          echo "::error::Worker 健康检查未通过（应用侧 HTTP ${primary_code}，已尝试 ${#TARGETS[@]} 个入口）"
+          exit 1
 
-      # 只有失败时才回滚，避免把成功部署回退掉；失败可能是 deploy 本身，也可能是冒烟。
+      # 只有「应用侧真实故障」或 deploy 本身失败才回滚，避免把健康部署回退掉。
+      # smoke 把边缘层 403/404 判为 rollback=false：job 仍失败告警，但跳过回滚。
       # 回滚只换代码版本，**不回滚 Durable Object 数据**：schema 已升级时旧版本会自检失败。
       - name: 失败则回滚
-        if: failure()
+        if: ${{ failure() && steps.smoke.outputs.rollback != 'false' }}
         shell: bash
         run: |
           set -euo pipefail
-          wrangler rollback --name "${WORKER_NAME}" --yes -m "冒烟失败自动回滚 ${GITHUB_SHA}" || true
+          wrangler rollback --name "${WORKER_NAME}" --yes -m "CI 校验失败自动回滚 ${GITHUB_SHA}" || true
           echo "::warning::已尝试回滚到上一个 Worker 版本，数据库不随代码回滚" >> "${GITHUB_STEP_SUMMARY}"
 
