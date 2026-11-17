@@ -423,7 +423,10 @@ jobs:
           fi
           # 绑自定义域后 workers.dev 默认关闭，输出里可能没有 `*.workers.dev`；
           # 这里必须容忍无匹配，否则 GitHub 默认的 `-e` 会让整个步骤误报失败。
-          URL="$(printf '%s\n' "${OUT}" | grep -oiE 'https://[a-z0-9._-]+\.workers\.dev' | head -1 || true)"
+          # 关键：wrangler 会在「远端配置与本地不一致」的 WARNING 里原样回显远端
+          # PUBLIC_ORIGINS 的旧值（例如 stockin.example.workers.dev 这类占位域名）。
+          # 必须排除 PUBLIC_ORIGINS 行，否则 grep 会把警告文本里的假域名当成部署地址。
+          URL="$(printf '%s\n' "${OUT}" | grep -vi 'PUBLIC_ORIGINS' | grep -oiE 'https://[a-z0-9._-]+\.workers\.dev' | head -1 || true)"
           echo "url=${URL}" >> "${GITHUB_OUTPUT}"
           echo "### Worker 已部署 ${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
           printf '%s\n' "${URL}" >> "${GITHUB_STEP_SUMMARY}"
