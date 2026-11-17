@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **shared**：管理员体系契约与审计动作精简 ([6841473](https://github.com/Dr-SummerFlower/stockin/commit/6841473f37340465dc1d6497b4ee25614d3729a4))
+- **server**：管理员 GitHub OAuth 体系与系统维护端点 ([ef5f760](https://github.com/Dr-SummerFlower/stockin/commit/ef5f7603a8a711e8a3f9cf13d5453b57f7ad0f76))
+- **web**：管理员登录页与系统维护台 ([95fad49](https://github.com/Dr-SummerFlower/stockin/commit/95fad4988edd405c2cf2480e7d6538801b34d026))
+
+### 修复
+
+- **dev**：后端 dev 加载本地 .env 并改用原生 watch 热重载 ([1a0daeb](https://github.com/Dr-SummerFlower/stockin/commit/1a0daeb713fe93f88842058c167fa4661d9afe63))
+
+### 重构
+
+- **server**：精简操作日志，仅保留关键操作 ([ffe7fa2](https://github.com/Dr-SummerFlower/stockin/commit/ffe7fa28e460af4558fccb9a6055c0253f48a904))
+
+### 测试
+
+- 管理员端点集成测试与迁移断言更新 ([bedc256](https://github.com/Dr-SummerFlower/stockin/commit/bedc256e5cc9c6fab5dc49aeeec1c92866c52753))
+
+### 文档
+
+- 管理员 OAuth 配置与合规日志留存说明 ([432760f](https://github.com/Dr-SummerFlower/stockin/commit/432760f186c1b0a20a6fd517ce68ad47e8396916))
+## [1.1.2] - 2026-11-17
+
 ### 修复
 
 - **ci**：自定义域部署不再强依赖 workers.dev 地址 ([6a83358](https://github.com/Dr-SummerFlower/stockin/commit/6a833580c7dd117e0d5bd2826bc5f977c4bf62d8))
