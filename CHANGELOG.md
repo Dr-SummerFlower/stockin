@@ -1,6 +1,11 @@
 # 变更记录
 
-## [Unreleased]
+## [1.2.2] - 2026-11-17
+
+### 修复
+
+- **ci**：区分边缘层拦截与应用故障，收紧自动回滚条件 ([a762b1e](https://github.com/Dr-SummerFlower/stockin/commit/a762b1eefc74934eddabb233ac7152f89111da93))
+## [1.2.1] - 2026-11-17
 
 ### 修复
 
