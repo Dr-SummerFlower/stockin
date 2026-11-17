@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **ci**：冒烟探测同时覆盖自定义域与 workers.dev ([33ec781](https://github.com/Dr-SummerFlower/stockin/commit/33ec781366f6a143e6ce176c0bdaa19008e065f5))
+- **ci**：部署 URL 提取排除 wrangler 配置警告中的假域名 ([11b56fa](https://github.com/Dr-SummerFlower/stockin/commit/11b56faaa884a71e7c871540d43e0f71e3444d94))
+## [1.2.0] - 2026-11-17
+
 ### 新增
 
 - **shared**：管理员体系契约与审计动作精简 ([6841473](https://github.com/Dr-SummerFlower/stockin/commit/6841473f37340465dc1d6497b4ee25614d3729a4))
