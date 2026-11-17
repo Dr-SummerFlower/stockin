@@ -4,6 +4,20 @@
 
 ### 新增
 
+- **auth**：自助引导、账号安全与录入建议接口 ([c8b2097](https://github.com/Dr-SummerFlower/stockin/commit/c8b2097f8467d58a5471151c7550765f225c494b))
+- **web**：账号安全页、输入建议与首次漫游 ([b8520fc](https://github.com/Dr-SummerFlower/stockin/commit/b8520fc89e28fc12f7d4241baecd50473a9a97aa))
+
+### 修复
+
+- **server**：修正 dev 模式迁移目录解析 ([102834c](https://github.com/Dr-SummerFlower/stockin/commit/102834ce0d986aa7fdf8fabb8554ce09ee2b5b47))
+
+### 持续集成
+
+- **workers**：单入口域名变量与 Custom Domain 注入 ([38e6867](https://github.com/Dr-SummerFlower/stockin/commit/38e68677a7c6cbcee41cad663174323c0d825777))
+## [1.0.0] - 2026-11-16
+
+### 新增
+
 - **domain**：实现 shared 契约层与 domain 纯函数层 ([40f54b5](https://github.com/Dr-SummerFlower/stockin/commit/40f54b5fffc21c88947cd6a615b8032f71efd2e4))
 - **server**：实现数据层、迁移、备份与启动基础设施 ([ef52c1d](https://github.com/Dr-SummerFlower/stockin/commit/ef52c1d3709e2aac33c82b2a5306a1fec5446ae6))
 - **server**：实现中间件链、业务服务与全部 API 端点 ([8b08141](https://github.com/Dr-SummerFlower/stockin/commit/8b081419494c40db51b6de12ecea8f87e874f455))
