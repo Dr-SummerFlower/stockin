@@ -329,7 +329,7 @@ jobs:
 
       # 来源与入口分离：
       #   WORKER_PUBLIC_ORIGIN（单值）= 唯一入口，同时用于 Custom Domain 与
-      #     PUBLIC_ORIGINS 首项；
+      #     PUBLIC_ORIGINS 首项；优先读 Actions Variable，缺失时兼容 Secret。
       #   WORKER_EXTRA_ORIGINS（可选逗号列表）= 额外可信来源（如过渡期的
       #     workers.dev 地址），不参与 --domain；
       #   WORKER_PUBLIC_ORIGINS（旧变量）= 兼容：未设单值变量时取首项作入口，
@@ -340,9 +340,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CANONICAL="${{ vars.WORKER_PUBLIC_ORIGIN }}"
-          EXTRA="${{ vars.WORKER_EXTRA_ORIGINS }}"
-          LEGACY="${{ vars.WORKER_PUBLIC_ORIGINS }}"
+          # 变量优先，兼容早期误存为 Secret 的情况（Secret 无法读取，只能引用）。
+          CANONICAL="${{ vars.WORKER_PUBLIC_ORIGIN || secrets.WORKER_PUBLIC_ORIGIN }}"
+          EXTRA="${{ vars.WORKER_EXTRA_ORIGINS || secrets.WORKER_EXTRA_ORIGINS }}"
+          LEGACY="${{ vars.WORKER_PUBLIC_ORIGINS || secrets.WORKER_PUBLIC_ORIGINS }}"
 
           if [[ -z "${CANONICAL}" && -n "${LEGACY}" ]]; then
             CANONICAL="$(printf '%s' "${LEGACY}" | cut -d, -f1 | xargs)"
