@@ -2,10 +2,12 @@ name: 构建与发布
 
 # 发布通道（版本号全自动，无需人工指定）：
 #  - 默认分支 push → decide job 按 conventional commit 自动算版本；有实质变更则
-#    回写版本、打 v* tag 并 push，由 tag 触发正式发布；无实质变更则自动跳过。
+#    回写版本、生成并提交 CHANGELOG、打 v* tag 并 push，由 tag 触发正式发布；
+#    无实质变更则自动跳过。
 #  - tag v*（如 v1.2.3）→ 正式发布：Release `v1.2.3`、GHCR `1.2.3` + `sha-<sha7>`。
 #  - workflow_dispatch → 手动指定通道（pre 演练 / stable 补发）。
-#  bump commit 带 `[skip ci]`，push 回默认分支不会再触发 workflow，切断自动发版循环。
+#  release/changelog 提交不带 [skip ci]，否则 tag push 也会被跳过；分支 push 由
+#  verify job 按提交信息跳过，tag push 正常触发发布。
 #
 # 所有 `uses:` 均锁定到完整 commit SHA（对应 lightweight tag）：
 #   actions/checkout v6.1.0 / actions/setup-node v6.5.0
@@ -43,6 +45,14 @@ concurrency:
 jobs:
   verify:
     name: 质量门禁
+    # 本地 release 会先把 release/changelog 提交推到 main，再推 tag。
+    # 这两类分支提交跳过，避免 decide 并发重复发版；tag push 不受影响。
+    if: >-
+      github.event_name != 'push' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.ref != format('refs/heads/{0}', github.event.repository.default_branch) ||
+      (!startsWith(github.event.head_commit.message, 'chore(release): 发布版本 ') &&
+       !startsWith(github.event.head_commit.message, 'chore(changelog): 归档 '))
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -80,12 +90,12 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
   # 版本号全自动：默认分支每次 push 都按 commit 算版本。有实质变更（feat/fix/
-  # perf/refactor/breaking）就回写版本、打 v* tag 并 push，并把版本输出给下游
-  # publish/workers 在**同一 run 内**完成正式发布；无实质变更则整体跳过。
+  # perf/refactor/breaking）就回写版本、生成 CHANGELOG、打 v* tag 并 push，并把版本
+  # 输出给下游 publish/workers 在**同一 run 内**完成正式发布；无实质变更则整体跳过。
   #
-  # 为什么不靠 tag 触发下游：GitHub 对 GITHUB_TOKEN 产生的 push/tag 事件不启动新
-  # workflow（防递归），所以 tag 虽会落地，但不会触发 on.push.tags。发布必须在同一
-  # run 内用 needs 串起来。bump commit 带 [skip ci]，push 回默认分支也不再触发 run。
+  # CI 自动发版仍在本 run 内用 needs 串起 publish/workers：GITHUB_TOKEN 推的 tag
+  # 不会触发新的 workflow（防递归）。release/changelog 提交不带 [skip ci]，否则外部
+  # tag push 也会被跳过；这两类分支 push 由 verify job 按提交信息跳过。
   decide:
     name: 自动版本决策
     needs: verify
@@ -112,6 +122,12 @@ jobs:
         with:
           node-version-file: .node-version
 
+      - name: 安装 pnpm
+        run: npm install -g pnpm@12.15.0 && pnpm --version
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
       - name: 配置 git 提交身份
         run: |
           git config user.name "github-actions[bot]"
@@ -134,32 +150,11 @@ jobs:
             echo "将自动发布 v${CUR}" >> "${GITHUB_STEP_SUMMARY}"
           fi
 
-      # 仅当确实要发版时执行：回写版本、commit、打 tag、push main + tag。
+      # 仅当确实要发版时执行：回写版本、生成并提交 CHANGELOG、打 tag、push main + tag。
       # release.mjs 内部会再算一次版本并与最近 tag 比对（防御性），结果一致。
-      - name: 回写版本、打 tag 并推送
+      - name: 回写版本、生成 CHANGELOG、打 tag 并推送
         if: steps.decide.outputs.should_release == 'true'
         run: node scripts/release.mjs --ci
-
-      # CHANGELOG 归档也在本 run 完成：GITHUB_TOKEN 推的 tag 不会触发 changelog.yml
-      # 的 on.push.tags，若只靠它会永远停在 [Unreleased]。这里在 tag 落地后现场生成，
-      # 以 bot 身份提交回 main（[skip ci] 防循环）。独立 changelog.yml 已停用自动触发。
-      - name: 打 tag 后归档 CHANGELOG
-        if: steps.decide.outputs.should_release == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install -g pnpm@12.15.0
-          pnpm install --frozen-lockfile
-          # release.mjs 已把 bump commit push 到 main，本地 HEAD 落后，先对齐。
-          git pull --rebase origin "${{ github.event.repository.default_branch }}"
-          pnpm changelog
-          if git diff --quiet -- CHANGELOG.md; then
-            echo "CHANGELOG.md 无变化，跳过提交"
-            exit 0
-          fi
-          git add CHANGELOG.md
-          git commit -m "chore(changelog): 归档 v${{ steps.decide.outputs.version }} [skip ci]"
-          git push origin HEAD:"${{ github.event.repository.default_branch }}"
 
   publish:
     name: 制品与镜像发布
@@ -194,6 +189,9 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
+          # main push 自动发版时，decide 已创建新 tag；检出该 tag 才能把版本号与
+          # CHANGELOG 一起带进构建产物。tag push / dispatch 仍用触发 ref。
+          ref: ${{ needs.decide.outputs.tag || github.ref }}
 
       - name: 安装 Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
@@ -349,8 +347,8 @@ jobs:
 
           # 发布正文直接内嵌本次版本的变更记录，读者不必跳到 CHANGELOG.md。
           # 变更内容仍以仓库 CHANGELOG.md 为单一真源：这里用 git-cliff 现场按 tag
-          # 生成同一版本段，避免「CHANGELOG 还没归档、Release 已先发出」的错位。
-          CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/CHANGELOG.md"
+          # 生成同一版本段，避免 Release 正文与仓库 CHANGELOG 不一致。
+          CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/$(git rev-parse HEAD)/CHANGELOG.md"
           SEGMENT=""
           if [[ "${CHANNEL}" == "stable" ]]; then
             # 正式版 tag 为 v*，git-cliff 能精确取出该版本段；--strip all 去掉

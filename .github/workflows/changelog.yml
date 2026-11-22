@@ -3,11 +3,9 @@ name: 更新变更记录
 # 用 git-cliff 从 Conventional Commits 重新生成 CHANGELOG.md；有变化则以
 # github-actions[bot] 身份提交回去。
 #
-# 自动触发已停用（2026-11-18）：正常发版时 CHANGELOG 由 release.yml 的 decide job
-# 在打完 tag 后现场归档（同一 run 内完成）。原因：GitHub 对 GITHUB_TOKEN 推的
-# tag 不会触发 on.push.tags（防递归），单靠本工作流监听 tag 会导致 CHANGELOG
-# 永远停在 [Unreleased]；而监听分支 push 又会与 release 流程并发写 main。
-# 因此这里只保留 workflow_dispatch，作为需要时手动重建 CHANGELOG 的后备工具。
+# 自动触发已停用（2026-11-23）：正常发版由 scripts/release.mjs 在打 tag 前
+# 本地生成 CHANGELOG，并随版本提交一起推送；release.yml 不再在发布后写回。
+# 这里只保留 workflow_dispatch，作为需要时手动重建 CHANGELOG 的后备工具。
 #
 # 防循环：bot 提交信息含 `[skip ci]`，不会触发新的 workflow run。生成用的提交
 # 也被 cliff.toml 的 `^chore\(changelog\)` 规则跳过，不出现在 CHANGELOG 内容里。

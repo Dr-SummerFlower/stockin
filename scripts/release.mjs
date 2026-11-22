@@ -13,7 +13,7 @@
  *
  * 固定流程（顺序不可调换）：
  *   前置检查 → fetch → rebase origin/main → [verify] → 算版本 → 写版本并提交
- *   → tag → push main → push tag
+ *   → 生成并提交 CHANGELOG → tag → push main → push tag
  *
  * 为什么 push main 必须早于 push tag：
  *   tag 指向的 commit 若不在默认分支历史里，GITHUB_TOKEN 无法用它创建 Release，
@@ -22,8 +22,8 @@
  *   main 已就位，手动补推 tag 也不会再触发该 403。
  *
  * CI 自动发版触发方式：push main → release.yml 的 decide job 调本脚本 --ci。
- *   bump commit 带 `[skip ci]`，push 回 main 不会再触发 workflow（切断循环）；
- *   push tag 触发已有的 stable 发布流程与 CHANGELOG 归档。
+ *   脚本在本地完成版本与 CHANGELOG 提交，再打 tag；release.yml 对这类
+ *   release/changelog 分支提交跳过，tag push 触发正式构建与 Worker 部署。
  *
  * 退出码：0 = 成功或「无需发版」；非 0 = 任一步失败，脚本明确指出停在哪一步与恢复办法。
  */
@@ -138,7 +138,7 @@ const branch = gitCapture(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
 if (branch !== BRANCH) fail(`当前在 ${branch} 分支，发版必须在 ${BRANCH} 分支进行`);
 
 // ---------------------------------------------------------------- 固定流程
-const totalSteps = 8;
+const totalSteps = 9;
 let seq = 0;
 const next = () => `${++seq}/${totalSteps}`;
 
@@ -178,7 +178,7 @@ try {
 }
 const version = versions.root;
 const tag = `v${version}`;
-const message = `release: ${version}`;
+const message = `发布版本 ${tag}`;
 
 // 与最近 tag 比较：无实质变更则跳过（CI 循环切断点）。
 const lastTag = gitCapture(['tag', '--list', 'v*', '--sort=version:refname'])
@@ -222,13 +222,34 @@ if (verWrite.status !== 0) fail('版本写入失败，未打 tag、未 push');
 const verChanged = gitCapture(['status', '--porcelain', '--', 'package.json', 'apps', 'packages']);
 if (verChanged.stdout.trim()) {
   gitRun(['add', '-A', 'package.json', 'apps', 'packages']);
-  // `[skip ci]` 让 bump commit push 回 main 时不再触发 workflow——切断 CI 自动发版的循环。
+  // 不带 [skip ci]：tag 指向此后的提交，必须允许 tag push 触发正式发布；
+  // 分支 push 由 release.yml 按 release/changelog 提交信息跳过。
   gitRun(
-    ['commit', '-m', `chore(release): 发布版本 v${version} [skip ci]`],
+    ['commit', '-m', `chore(release): 发布版本 ${tag}`],
     '版本 bump 提交失败，未打 tag、未 push',
   );
 } else {
   process.stdout.write('[release] 版本文件无变化，跳过 bump 提交\n');
+}
+
+// ---------------------------------------------------------------- CHANGELOG
+step(`${next()} 生成并提交 CHANGELOG`);
+const changelog = spawnSync(
+  'pnpm',
+  ['exec', 'git-cliff', '--config', 'cliff.toml', '--tag', tag, '--output', 'CHANGELOG.md'],
+  { cwd: root, stdio: 'inherit' },
+);
+if (changelog.status !== 0) fail('CHANGELOG 生成失败，未打 tag、未 push');
+
+const changelogChanged = gitCapture(['status', '--porcelain', '--', 'CHANGELOG.md']);
+if (changelogChanged.stdout.trim()) {
+  gitRun(['add', 'CHANGELOG.md']);
+  gitRun(
+    ['commit', '-m', `chore(changelog): 归档 ${tag}`],
+    'CHANGELOG 提交失败，未打 tag、未 push',
+  );
+} else {
+  process.stdout.write('[release] CHANGELOG 无变化，跳过提交\n');
 }
 
 // ---------------------------------------------------------------- tag + push
