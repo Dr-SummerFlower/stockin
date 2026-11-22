@@ -1,5 +1,21 @@
 # 变更记录
 
+## [1.3.1] - 2026-11-22
+
+### 修复
+
+- **release**：本地归档 CHANGELOG 并恢复 tag 触发发布 ([20049c0](https://github.com/Dr-SummerFlower/stockin/commit/20049c0ac886b2c2d0a742935f3e12a4a3021c6b))
+## [1.3.0] - 2026-11-22
+
+### 新增
+
+- **ci**：按提交自动计算版本并完成发版 ([6f5522d](https://github.com/Dr-SummerFlower/stockin/commit/6f5522d5c214b2f7b40889984abf70c076d745c9))
+
+### 修复
+
+- **web**：修复输入法合成中间态污染输入值 ([86d5a91](https://github.com/Dr-SummerFlower/stockin/commit/86d5a914de81e5f045cacd4567f253bea2adefe2))
+- **server**：修复商品搜索不支持包含匹配 ([08cfda9](https://github.com/Dr-SummerFlower/stockin/commit/08cfda91bac9de8650d66fef68c87331aab62621))
+- **release**：复用本机 gh 凭据访问加速远端 ([066e872](https://github.com/Dr-SummerFlower/stockin/commit/066e87272bba08247ecb474030cdf12571b534fe))
 ## [1.2.2] - 2026-11-17
 
 ### 修复
