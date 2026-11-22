@@ -1,25 +1,25 @@
 name: 更新变更记录
 
-# 每次 push 到任意分支后，用 git-cliff 从 Conventional Commits 重新生成
-# CHANGELOG.md；若有变化则以 github-actions[bot] 身份提交回同一分支。
+# 用 git-cliff 从 Conventional Commits 重新生成 CHANGELOG.md；有变化则以
+# github-actions[bot] 身份提交回去。
 #
-# 防循环：bot 提交信息含 `[skip ci]`，GitHub Actions 对 commit message 含
-# `[skip ci]` 的推送不会触发新的 workflow run（原生机制，无需额外判断）。
-# 生成用的提交本身也被 cliff.toml 的 `^chore\(changelog\)` 规则跳过，
-# 因此不会出现在 CHANGELOG 内容里（自指噪声）。
+# 自动触发已停用（2026-11-18）：正常发版时 CHANGELOG 由 release.yml 的 decide job
+# 在打完 tag 后现场归档（同一 run 内完成）。原因：GitHub 对 GITHUB_TOKEN 推的
+# tag 不会触发 on.push.tags（防递归），单靠本工作流监听 tag 会导致 CHANGELOG
+# 永远停在 [Unreleased]；而监听分支 push 又会与 release 流程并发写 main。
+# 因此这里只保留 workflow_dispatch，作为需要时手动重建 CHANGELOG 的后备工具。
 #
-# 本工作流只写 CHANGELOG.md，不改版本号、不打 tag、不触发发布；
-# 发布流程在 release.yml，两者职责分离。
+# 防循环：bot 提交信息含 `[skip ci]`，不会触发新的 workflow run。生成用的提交
+# 也被 cliff.toml 的 `^chore\(changelog\)` 规则跳过，不出现在 CHANGELOG 内容里。
 
 on:
-  push:
-    branches: ['**']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: changelog-${{ github.ref }}
+  group: changelog-manual
   cancel-in-progress: false
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: 安装 Node.js（版本取自 .node-version）
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
@@ -47,7 +47,9 @@ jobs:
       - name: 生成 CHANGELOG.md
         run: pnpm changelog
 
-      - name: 有变化则提交回本分支
+      - name: 有变化则提交回默认分支
+        env:
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -57,5 +59,5 @@ jobs:
             exit 0
           fi
           git add CHANGELOG.md
-          git commit -m "chore(changelog): 自动更新变更记录 [skip ci]"
-          git push origin HEAD:"${GITHUB_REF_NAME}"
+          git commit -m "chore(changelog): 手动重建变更记录 [skip ci]"
+          git push origin HEAD:"${TARGET_BRANCH}"
