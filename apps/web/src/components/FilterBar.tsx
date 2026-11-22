@@ -84,7 +84,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
             <SuggestionInput
               field="name"
               value={filter.name ?? ''}
-              ariaLabel="按商品名称前缀筛选"
+              ariaLabel="按商品名称筛选"
               placeholder="请输入商品名称"
               onChange={(value: string): void =>
                 onChange({ name: value === '' ? undefined : value })
@@ -149,7 +149,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 <SuggestionInput
                   field="spec"
                   value={filter.spec ?? ''}
-                  ariaLabel="按规格前缀筛选"
+                  ariaLabel="按规格筛选"
                   onChange={(value: string): void =>
                     onChange({ spec: value === '' ? undefined : value })
                   }

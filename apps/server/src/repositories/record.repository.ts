@@ -55,9 +55,43 @@ function clampPage(raw: number | undefined): number {
   return raw !== undefined && Number.isInteger(raw) && raw >= 1 ? raw : 1;
 }
 
+/** LIKE 通配符转义；用户输入中的 `%` / `_` 按普通字符处理。 */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
+
+/**
+ * 把用户输入拆成包含匹配模式：空白分隔的多个词按 AND 连接，
+ * 每个词都必须在目标列中任意位置出现。空输入返回空数组。
+ */
+function containsPatterns(
+  raw: string,
+  normalize: (value: string | null | undefined) => string,
+): string[] {
+  return raw
+    .trim()
+    .split(/\s+/)
+    .map((token) => normalize(token))
+    .filter((token) => token !== '')
+    .map((token) => `%${escapeLike(token)}%`);
+}
+
+function pushContains(
+  clauses: string[],
+  params: unknown[],
+  column: string,
+  raw: string,
+  normalize: (value: string | null | undefined) => string,
+): void {
+  for (const pattern of containsPatterns(raw, normalize)) {
+    clauses.push(`${column} LIKE ? ESCAPE '\\'`);
+    params.push(pattern);
+  }
+}
+
 /**
  * 组装筛选条件。**SQL 内不对列做函数运算**，所有边界是应用层传入的常量；
- * 常规查询恒带 `deleted_at IS NULL`。
+ * 常规查询恒带 `deleted_at IS NULL`。名称 / 规格支持任意位置包含匹配。
  */
 function buildFilter(
   filter: RecordFilter,
@@ -68,12 +102,10 @@ function buildFilter(
   const params: unknown[] = [];
 
   if (filter.name !== undefined && filter.name.trim() !== '') {
-    clauses.push('name_norm LIKE ?');
-    params.push(`${normalizeName(filter.name)}%`);
+    pushContains(clauses, params, 'name_norm', filter.name, normalizeName);
   }
   if (filter.spec !== undefined && filter.spec.trim() !== '') {
-    clauses.push('spec_norm LIKE ?');
-    params.push(`${normalizeSpec(filter.spec)}%`);
+    pushContains(clauses, params, 'spec_norm', filter.spec, normalizeSpec);
   }
   if (filter.purchaseDateFrom !== undefined && filter.purchaseDateFrom !== '') {
     clauses.push('purchase_date >= ?');
@@ -343,22 +375,27 @@ export class RecordRepository {
   }
 
   /**
-   * 商品名称建议：按 `name_norm` 前缀匹配，每个名称只取**最近一次**记录，
-   * 附带该次的规格与单价，供前端选择后联动带出。
+   * 商品名称建议：按 `name_norm` 任意位置包含匹配，每个名称只取**最近一次**记录，
+   * 附带该次的规格与单价，供前端选择后联动带出。空白分隔的多个词按 AND 连接。
    *
    * 用相关子查询取 `MAX(purchase_date), MAX(id)`，避免同一名称多次进货时
-   * 返回重复行；`name_norm` 上有部分索引，单用户数据量下足够。
+   * 返回重复行；单用户数据量下全表扫描可接受。
    */
   suggestNames(
-    prefixNorm: string,
+    query: string,
     limit: number,
   ): { name: string; spec: string | null; unit_price: number }[] {
+    const patterns: string[] = containsPatterns(query, normalizeName);
+    const searchClauses: string =
+      patterns.length > 0
+        ? `AND ${patterns.map(() => "r.name_norm LIKE ? ESCAPE '\\'").join(' AND ')}`
+        : '';
     return this.db
       .prepare(
         `SELECT r.name AS name, r.spec AS spec, r.unit_price AS unit_price
            FROM records r
           WHERE r.deleted_at IS NULL
-            AND r.name_norm LIKE ?
+            ${searchClauses}
             AND r.id = (
               SELECT r2.id FROM records r2
                WHERE r2.deleted_at IS NULL AND r2.name_norm = r.name_norm
@@ -368,23 +405,28 @@ export class RecordRepository {
           ORDER BY r.purchase_date DESC, r.id DESC
           LIMIT ?`,
       )
-      .all(`${prefixNorm}%`, limit) as { name: string; spec: string | null; unit_price: number }[];
+      .all(...patterns, limit) as { name: string; spec: string | null; unit_price: number }[];
   }
 
-  /** 规格建议：按出现频次降序，空规格不参与。 */
-  suggestSpecs(prefixNorm: string, limit: number): string[] {
+  /** 规格建议：按出现频次降序，空规格不参与；支持任意位置包含匹配。 */
+  suggestSpecs(query: string, limit: number): string[] {
+    const patterns: string[] = containsPatterns(query, normalizeSpec);
+    const searchClauses: string =
+      patterns.length > 0
+        ? `AND ${patterns.map(() => "spec_norm LIKE ? ESCAPE '\\'").join(' AND ')}`
+        : '';
     const rows = this.db
       .prepare(
         `SELECT spec, COUNT(*) AS c
            FROM records
           WHERE deleted_at IS NULL
             AND spec IS NOT NULL AND spec <> ''
-            AND spec_norm LIKE ?
+            ${searchClauses}
           GROUP BY spec_norm
           ORDER BY c DESC, spec ASC
           LIMIT ?`,
       )
-      .all(`${prefixNorm}%`, limit) as { spec: string }[];
+      .all(...patterns, limit) as { spec: string }[];
     return rows.map((row) => row.spec);
   }
 

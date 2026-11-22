@@ -101,7 +101,7 @@ export const importRowSchema = z.object({
 });
 export type ImportRowInput = z.infer<typeof importRowSchema>;
 
-/** 输入建议查询：field 必选，q 为前缀，limit 默认 10（最多 20）。 */
+/** 输入建议查询：field 必选，q 支持任意位置包含匹配，limit 默认 10（最多 20）。 */
 export const recordSuggestionQuerySchema = z.object({
   field: z.enum(['name', 'spec']),
   q: z.string().max(200).optional(),

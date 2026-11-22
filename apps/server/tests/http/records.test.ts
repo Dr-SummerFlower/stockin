@@ -225,6 +225,7 @@ describe('记录增删改查', () => {
     await h.json('/api/records', { json: payload({ name: '啤酒-A' }), cookie });
     await h.json('/api/records', { json: payload({ name: '啤酒-B', amountCents: 240 }), cookie });
     await h.json('/api/records', { json: payload({ name: '花卷', amountCents: 240 }), cookie });
+    await h.json('/api/records', { json: payload({ name: '鲜猪五花肉' }), cookie });
 
     const filtered = await h.json<{ total: number; items: RecordView[] }>(
       '/api/records?name=啤酒&page=1&pageSize=1',
@@ -242,6 +243,14 @@ describe('记录增删改查', () => {
     );
     expect(page2.body.items).toHaveLength(1);
     expect(page2.body.items[0]?.id).not.toBe(filtered.body.items[0]?.id);
+
+    const bySuffix = await h.json<{ total: number; items: RecordView[] }>(
+      '/api/records?name=五花',
+      { cookie },
+    );
+    expect(bySuffix.status).toBe(200);
+    expect(bySuffix.body.total).toBe(1);
+    expect(bySuffix.body.items[0]?.name).toBe('鲜猪五花肉');
   });
 });
 
@@ -293,7 +302,7 @@ describe('批量操作', () => {
 });
 
 describe('GET /api/records/suggestions', () => {
-  it('名称建议按前缀去重，并带出最近一次的规格与单价', async () => {
+  it('名称建议按包含去重，并带出最近一次的规格与单价', async () => {
     const { h, cookie } = await ready();
     await h.json('/api/records', {
       json: payload({
@@ -326,6 +335,32 @@ describe('GET /api/records/suggestions', () => {
     });
   });
 
+  it('名称建议支持任意位置包含，多词按 AND 匹配', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/records', {
+      json: payload({
+        name: '鲜猪五花肉',
+        spec: '500g',
+        unitPrice: 10_000,
+        amountCents: 200,
+      }),
+      cookie,
+    });
+
+    const bySuffix = await h.json<{
+      items: { value: string; spec: string | null; unitPrice: number | null }[];
+    }>('/api/records/suggestions?field=name&q=五花', { cookie });
+    expect(bySuffix.status).toBe(200);
+    expect(bySuffix.body.items).toEqual([{ value: '鲜猪五花肉', spec: '500g', unitPrice: 10_000 }]);
+
+    const byTokens = await h.json<{ items: { value: string }[] }>(
+      `/api/records/suggestions?field=name&q=${encodeURIComponent('鲜猪 五花')}`,
+      { cookie },
+    );
+    expect(byTokens.status).toBe(200);
+    expect(byTokens.body.items.map((item) => item.value)).toEqual(['鲜猪五花肉']);
+  });
+
   it('规格建议去重且不返回空规格；缺 field 返回 422', async () => {
     const { h, cookie } = await ready();
     await h.json('/api/records', { json: payload({ spec: '500ml' }), cookie });
@@ -333,7 +368,7 @@ describe('GET /api/records/suggestions', () => {
     await h.json('/api/records', { json: payload({ name: '无规格', spec: null }), cookie });
 
     const response = await h.json<{ items: { value: string }[] }>(
-      '/api/records/suggestions?field=spec&q=5',
+      '/api/records/suggestions?field=spec&q=ml',
       { cookie },
     );
     expect(response.status).toBe(200);

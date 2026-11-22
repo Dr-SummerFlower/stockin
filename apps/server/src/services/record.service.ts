@@ -22,7 +22,7 @@ import {
   type RecordSuggestionResponse,
   type RecordView,
 } from '@stockin/shared';
-import { fixedMul, isValidISODate, normalizeName, normalizeSpec } from '@stockin/domain';
+import { fixedMul, isValidISODate } from '@stockin/domain';
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
 import type { RecordRepository } from '../repositories/record.repository';
@@ -156,7 +156,7 @@ export class RecordService {
     limit: number = 10,
   ): ServiceResult<RecordSuggestionResponse> {
     if (field === 'name') {
-      const rows = this.deps.records.suggestNames(normalizeName(q), limit);
+      const rows = this.deps.records.suggestNames(q, limit);
       return {
         ok: true,
         data: {
@@ -168,7 +168,7 @@ export class RecordService {
         },
       };
     }
-    const specs: string[] = this.deps.records.suggestSpecs(normalizeSpec(q), limit);
+    const specs: string[] = this.deps.records.suggestSpecs(q, limit);
     return {
       ok: true,
       data: { items: specs.map((spec) => ({ value: spec, spec: null, unitPrice: null })) },
