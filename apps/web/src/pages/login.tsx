@@ -8,7 +8,8 @@
  * 已初始化时提供「忘记密码」入口（密保问题一步式重置）。
  */
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Input } from 'antd';
+import { Alert, Button } from 'antd';
+import { ImeInput as Input } from '@/components/ImeInput';
 import { useModel, useNavigate } from 'umi';
 import { getInitStatus, login } from '@/services/api/auth';
 import { errorMessage } from '@/services/request';

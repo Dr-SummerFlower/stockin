@@ -14,7 +14,6 @@ import {
   Button,
   Card,
   Descriptions,
-  Input,
   Modal,
   Space,
   Table,
@@ -22,6 +21,7 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { ImeInput as Input } from '@/components/ImeInput';
 import type {
   AdminBackupItem,
   AdminMeResponse,

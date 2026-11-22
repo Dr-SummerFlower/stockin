@@ -6,7 +6,7 @@
  * 触控目标最小尺寸统一取 `TOUCH_TARGET_MIN_PX`，不再硬编码 44。
  */
 import React from 'react';
-import { Input } from 'antd';
+import { ImeInput as Input } from '@/components/ImeInput';
 import { parseFixed } from '@stockin/domain';
 import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 

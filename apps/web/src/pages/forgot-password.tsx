@@ -6,7 +6,8 @@
  * 重置成功会吊销全部会话，因此直接跳登录页。
  */
 import React, { useState } from 'react';
-import { Alert, App as AntdApp, Button, Input } from 'antd';
+import { Alert, App as AntdApp, Button } from 'antd';
+import { ImeInput as Input } from '@/components/ImeInput';
 import { useNavigate } from 'umi';
 import { forgotPassword, lookupSecurityQuestion } from '@/services/api/auth';
 import { errorMessage } from '@/services/request';

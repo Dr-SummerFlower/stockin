@@ -7,7 +7,8 @@
  * 工程黑话、问句或劝导语。后端契约不变。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Input, Select } from 'antd';
+import { Button, Select } from 'antd';
+import { ImeInput as Input } from '@/components/ImeInput';
 import { useModel } from 'umi';
 import {
   getLogTechnicalFields,

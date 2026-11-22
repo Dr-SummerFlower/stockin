@@ -7,8 +7,9 @@
  * 服务端内部标记一律映射为中文，未知值回落中性文案。文案保持中性书面语。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, App as AntdApp, Button, Input, Select, Table, Tag } from 'antd';
+import { Alert, App as AntdApp, Button, Select, Table, Tag } from 'antd';
 import type { TableProps } from 'antd';
+import { ImeInput as Input } from '@/components/ImeInput';
 import {
   EXPIRY_THRESHOLD_MAX,
   EXPIRY_THRESHOLD_MIN,

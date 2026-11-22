@@ -19,7 +19,8 @@
  * 后端契约不变，三天字段的联动全部由 `@stockin/domain` 负责。
  */
 import React, { useState } from 'react';
-import { Alert, Button, Input, Select } from 'antd';
+import { Alert, Button, Select } from 'antd';
+import { ImeInput as Input } from '@/components/ImeInput';
 import {
   SCALE,
   SHELF_LIFE_UNITS,

@@ -8,7 +8,8 @@
  * 抢注风险的部署提醒只写在 README，不在页面内提示。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, App as AntdApp, Button, Input, Select, Steps } from 'antd';
+import { Alert, App as AntdApp, Button, Select, Steps } from 'antd';
+import { ImeInput as Input } from '@/components/ImeInput';
 import { useModel, useNavigate } from 'umi';
 import {
   EXPIRY_THRESHOLD_MAX,
