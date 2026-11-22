@@ -83,7 +83,7 @@ export const DEFAULT_PORT = 8_080;
  * 应用版本（管理员系统概览与导出的 `appVersion` 字段）。
  * 发布时与五处 package.json 同步修改，避免运行时读不到 package.json。
  */
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.3.1';
 export const DEFAULT_TZ = 'Asia/Shanghai';
 export const NODE_VERSION_EXPECTED = '26.13.0';
 export const PNPM_MAJOR_VERSION = 12;
