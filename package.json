@@ -17,8 +17,6 @@
     "format": "oxfmt apps/server/src packages/domain/src packages/shared/src packages/domain/tests packages/shared/tests apps/server/tests",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "changelog": "git-cliff --config cliff.toml --output CHANGELOG.md",
-    "changelog:check": "node scripts/check-changelog.mjs",
     "version:check": "node scripts/version.mjs",
     "release": "node scripts/release.mjs",
     "verify": "node scripts/verify.mjs",

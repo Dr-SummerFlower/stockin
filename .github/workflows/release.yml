@@ -1,13 +1,11 @@
 name: 构建与发布
 
-# 发布通道（版本号全自动，无需人工指定）：
-#  - 默认分支 push → decide job 按 conventional commit 自动算版本；有实质变更则
-#    回写版本、生成并提交 CHANGELOG、打 v* tag 并 push，由 tag 触发正式发布；
-#    无实质变更则自动跳过。
-#  - tag v*（如 v1.2.3）→ 正式发布：Release `v1.2.3`、GHCR `1.2.3` + `sha-<sha7>`。
-#  - workflow_dispatch → 手动指定通道（pre 演练 / stable 补发）。
-#  release/changelog 提交不带 [skip ci]，否则 tag push 也会被跳过；分支 push 由
-#  verify job 按提交信息跳过，tag push 正常触发发布。
+# 发布流程：
+#  - 本地 `pnpm release` 完成版本号 + CHANGELOG 提交、打 v* tag、push main / tag；
+#  - tag push：verify → 构建 / Release / GHCR → Worker 生产部署。
+#  - workflow_dispatch：预发布（滚动 tag `pre`），只构建预发布资产与 workers.zip，
+#    不部署生产 Worker；用 `wrangler dev` 验证 Workers 实际运行情况。
+#  - 不再监听 main push，也不在 Actions 内计算版本或生成 CHANGELOG。
 #
 # 所有 `uses:` 均锁定到完整 commit SHA（对应 lightweight tag）：
 #   actions/checkout v6.1.0 / actions/setup-node v6.5.0
@@ -17,22 +15,8 @@ name: 构建与发布
 
 on:
   push:
-    branches: ['**']
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      channel:
-        description: 发布通道
-        required: true
-        default: pre
-        type: choice
-        options:
-          - pre
-          - stable
-      version:
-        description: 正式版本号（channel=stable 时必填，如 1.0）
-        required: false
-        type: string
 
 # 权限按 job 收敛（发布审查 P3）：只有 publish 需要写 contents / packages，
 # verify 只读源码、workers 只下载制品，都不该拿到写权限。
@@ -45,14 +29,6 @@ concurrency:
 jobs:
   verify:
     name: 质量门禁
-    # 本地 release 会先把 release/changelog 提交推到 main，再推 tag。
-    # 这两类分支提交跳过，避免 decide 并发重复发版；tag push 不受影响。
-    if: >-
-      github.event_name != 'push' ||
-      startsWith(github.ref, 'refs/tags/v') ||
-      github.ref != format('refs/heads/{0}', github.event.repository.default_branch) ||
-      (!startsWith(github.event.head_commit.message, 'chore(release): 发布版本 ') &&
-       !startsWith(github.event.head_commit.message, 'chore(changelog): 归档 '))
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -89,109 +65,24 @@ jobs:
             echo '- 阈值 70/70/70/65 是对上述**整体**范围生效，不是某个子集'
           } >> "${GITHUB_STEP_SUMMARY}"
 
-  # 版本号全自动：默认分支每次 push 都按 commit 算版本。有实质变更（feat/fix/
-  # perf/refactor/breaking）就回写版本、生成 CHANGELOG、打 v* tag 并 push，并把版本
-  # 输出给下游 publish/workers 在**同一 run 内**完成正式发布；无实质变更则整体跳过。
-  #
-  # CI 自动发版仍在本 run 内用 needs 串起 publish/workers：GITHUB_TOKEN 推的 tag
-  # 不会触发新的 workflow（防递归）。release/changelog 提交不带 [skip ci]，否则外部
-  # tag push 也会被跳过；这两类分支 push 由 verify job 按提交信息跳过。
-  decide:
-    name: 自动版本决策
+  publish:
+    name: 制品与镜像发布
     needs: verify
     permissions:
       contents: write
-    if: >-
-      github.event_name == 'push' &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
-    outputs:
-      should_release: ${{ steps.decide.outputs.should_release }}
-      version: ${{ steps.decide.outputs.version }}
-      tag: ${{ steps.decide.outputs.tag }}
-    steps:
-      - name: 检出源码（完整历史 + 写凭据，供打 tag/push）
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-          ref: ${{ github.event.repository.default_branch }}
-
-      - name: 安装 Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version-file: .node-version
-
-      - name: 安装 pnpm
-        run: npm install -g pnpm@12.15.0 && pnpm --version
-
-      - name: 安装依赖
-        run: pnpm install --frozen-lockfile
-
-      - name: 配置 git 提交身份
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: 算版本并与最近 tag 比较
-        id: decide
-        shell: bash
-        run: |
-          set -euo pipefail
-          CUR="$(node scripts/version.mjs --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).root))')"
-          LAST="$(git tag --list 'v*' --sort=version:refname | tail -1 | sed 's/^v//')"
-          if [[ "${LAST:-}" == "${CUR}" ]]; then
-            echo "should_release=false" >> "${GITHUB_OUTPUT}"
-            echo "v${CUR} 已是当前版本，无实质变更，跳过自动发版" >> "${GITHUB_STEP_SUMMARY}"
-          else
-            echo "should_release=true" >> "${GITHUB_OUTPUT}"
-            echo "version=${CUR}" >> "${GITHUB_OUTPUT}"
-            echo "tag=v${CUR}" >> "${GITHUB_OUTPUT}"
-            echo "将自动发布 v${CUR}" >> "${GITHUB_STEP_SUMMARY}"
-          fi
-
-      # 仅当确实要发版时执行：回写版本、生成并提交 CHANGELOG、打 tag、push main + tag。
-      # release.mjs 内部会再算一次版本并与最近 tag 比对（防御性），结果一致。
-      - name: 回写版本、生成 CHANGELOG、打 tag 并推送
-        if: steps.decide.outputs.should_release == 'true'
-        run: node scripts/release.mjs --ci
-
-  publish:
-    name: 制品与镜像发布
-    needs: [verify, decide]
-    permissions:
-      contents: write
       packages: write
-    # 三种触发源：
-    #   1) main push：decide 判定要发版才走（should_release=true）；无实质变更则跳过。
-    #   2) workflow_dispatch：手动演练（pre / stable 均可）。
-    #   3) tag push：手动打 tag 的补发场景（GITHUB_TOKEN 之外的外部 push 才会触发）。
-    # 注意 decide 在无实质变更/非 main push 时 should_release 为空，用 always 条件
-    # 区分：dispatch 和 tag 场景不依赖 decide，直接放行。
-    if: >-
-      always() && needs.verify.result == 'success' && (
-        github.event_name == 'workflow_dispatch' ||
-        startsWith(github.ref, 'refs/tags/v') ||
-        (github.event_name == 'push' && needs.decide.outputs.should_release == 'true')
-      )
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
       channel: ${{ steps.meta.outputs.channel }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # main push 自动发版时，版本来自 decide；其它触发源在 meta 里按各自规则算。
-      AUTO_VERSION: ${{ needs.decide.outputs.version }}
-      AUTO_TAG: ${{ needs.decide.outputs.tag }}
     steps:
       # Release 正文要用 git-cliff 现场生成该版本变更段，需要完整 tag 与提交历史。
       - name: 检出源码（完整历史）
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
-          # main push 自动发版时，decide 已创建新 tag；检出该 tag 才能把版本号与
-          # CHANGELOG 一起带进构建产物。tag push / dispatch 仍用触发 ref。
-          ref: ${{ needs.decide.outputs.tag || github.ref }}
 
       - name: 安装 Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
@@ -220,36 +111,17 @@ jobs:
           OWNER_LC="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           IMAGE_BASE="ghcr.io/${OWNER_LC}/stockin"
 
-          if [[ -n "${AUTO_VERSION:-}" ]]; then
-            # main push 自动发版：版本由 decide job 算出并输出（同一 run 内消费）。
-            CHANNEL="stable"
-            VERSION="${AUTO_VERSION}"
-            RELEASE_TAG="v${VERSION}"
-            ASSET_PREFIX="stockin-${VERSION}"
-            IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:sha-${SHA7}"
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             CHANNEL="stable"
             VERSION="${GITHUB_REF_NAME#v}"
             RELEASE_TAG="${GITHUB_REF_NAME}"
-            ASSET_PREFIX="stockin-${VERSION}"
-            IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:sha-${SHA7}"
-          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${{ inputs.channel }}" == "stable" ]]; then
-            VERSION="${{ inputs.version }}"
-            if [[ -z "${VERSION}" ]]; then
-              echo "::error::channel=stable 时必须填写 version"
-              exit 1
-            fi
-            CHANNEL="stable"
-            RELEASE_TAG="v${VERSION}"
             ASSET_PREFIX="stockin-${VERSION}"
             IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:sha-${SHA7}"
           else
             CHANNEL="pre"
             VERSION="pre-${SHA7}"
             RELEASE_TAG="pre"
-            # 预发布资产名**固定**（不含 sha）：`pre` 是滚动 Release，
-            # 名字里带 sha 会让每次 push 都新增一套文件、旧文件永远留着
-            # （发布审查 P2-6）。固定名 + `--clobber` 才是真正的覆盖。
+            # 预发布资产名固定，pre Release 是滚动覆盖，不随 commit 无限累积。
             ASSET_PREFIX="stockin-pre"
             IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:pre"
           fi
@@ -346,24 +218,15 @@ jobs:
           done
 
           # 发布正文直接内嵌本次版本的变更记录，读者不必跳到 CHANGELOG.md。
-          # 变更内容仍以仓库 CHANGELOG.md 为单一真源：这里用 git-cliff 现场按 tag
-          # 生成同一版本段，避免 Release 正文与仓库 CHANGELOG 不一致。
+          # 变更内容仍以仓库 CHANGELOG.md 为单一真源。
           CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/$(git rev-parse HEAD)/CHANGELOG.md"
-          SEGMENT=""
           if [[ "${CHANNEL}" == "stable" ]]; then
-            # 正式版 tag 为 v*，git-cliff 能精确取出该版本段；--strip all 去掉
-            # 顶层 header/footer，只留 ## [x.y.z] 分组正文。
             SEGMENT="$(pnpm exec git-cliff --config cliff.toml --tag "${RELEASE_TAG}" --latest --strip all 2>/dev/null || true)"
-          fi
-          if [[ -z "${SEGMENT}" ]]; then
-            # 预发布（tag=pre，被 cliff 的 tag_pattern 忽略）取尚未归档的变更，
-            # 并把孤立的 "## [Unreleased]" 标题换成 "## [pre-<sha7>]"，
-            # 让预发布正文也带上一眼可辨的版本号。
+          else
+            # pre 是滚动 Release，取尚未归档的提交；标题替换为 pre-<sha7>。
             SEGMENT="$(pnpm exec git-cliff --config cliff.toml --unreleased --strip all 2>/dev/null || true)"
             SEGMENT="$(printf '%s' "${SEGMENT}" | sed "s/^## \[Unreleased\]/## [${VERSION}]/")"
           fi
-          # --unreleased 在无新提交时仍会吐出孤立的 "## [Unreleased]" 标题，
-          # 没有 ### 分组或 - 条目；此时判为无实质内容，回退到链接。
           if ! printf '%s' "${SEGMENT}" | grep -qE '^(### |[-*] )'; then
             SEGMENT=""
           fi
@@ -374,21 +237,11 @@ jobs:
           fi
 
           if [[ "${CHANNEL}" == "stable" ]]; then
-            # tag 由 decide job 的 release.mjs 提前创建并 push（annotated tag，
-            # 指向含版本号更新的 bump commit）。这里用 --verify-tag 复用它，
-            # 不能传 --target（tag 已存在，且 --target 会试图改打位置导致失败）。
-            # workflow_dispatch 手动 stable 场景：若 tag 尚不存在，先就地创建。
-            if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
-              echo "::warning::tag ${RELEASE_TAG} 在本地不存在（可能 fetch 未含新 tag），尝试从远端核验"
-              git fetch --tags --force
-            fi
             gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
               --verify-tag \
               --title "进货统计 v${VERSION}" \
               --notes "${NOTES}"
           elif gh release view pre >/dev/null 2>&1; then
-            # 清理历史遗留的「带 sha 资产名」（旧命名 stockin-pre-<sha7>-*）：
-            # 现在资产名固定，旧文件不会被 --clobber 覆盖，只能显式删。
             STALE="$(gh release view pre --json assets --jq '.assets[].name' \
               | grep -E '^stockin-pre-[0-9a-f]{7}-' || true)"
             if [[ -n "${STALE}" ]]; then
@@ -409,17 +262,21 @@ jobs:
           fi
 
           echo "### Release ${RELEASE_TAG} 已发布" >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${CHANNEL}" == "pre" ]]; then
+            echo '- 预发布不部署生产 Worker；下载 `stockin-pre-workers.zip` 后本地执行 `npx wrangler dev` 验证。' >> "${GITHUB_STEP_SUMMARY}"
+          fi
 
   # Worker 部署放在境外 runner 上执行：中国大陆访问不到 *.workers.dev
   # （DNS 污染 + 代理 502），本地无法完成部署后的冒烟验证。
+  # 只有稳定版 tag 部署生产 Worker；预发布只产出 workers.zip，供本地 wrangler dev 使用。
   workers:
     name: Worker 部署
     needs: [verify, publish]
     permissions:
       contents: read
-    if: needs.publish.result == 'success'
+    if: needs.publish.result == 'success' && needs.publish.outputs.channel == 'stable'
     runs-on: ubuntu-latest
-    # 同一账户下同一时刻只允许一次 Worker 发布，避免两个分支互相覆盖版本。
+    # 同一账户下同一时刻只允许一次 Worker 发布，避免并发覆盖版本。
     concurrency:
       group: worker-deploy
       cancel-in-progress: false
