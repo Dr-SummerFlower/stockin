@@ -56,6 +56,74 @@ function gitRun(args, hint) {
   return r;
 }
 
+/**
+ * 部分机器用 git 的 `url.*.insteadOf` 把 github.com 重写成加速地址。
+ * 加速地址不是 GitHub 主机，系统凭据管理器会另开登录窗；这里把远端主机
+ * 的凭据请求映射回 github.com，复用本机 `gh` 已登录的 GitHub 凭据。
+ */
+function parseGitUrl(raw) {
+  try {
+    return new URL(raw.trim());
+  } catch {
+    return null;
+  }
+}
+
+function resolveNetworkCredentialArgs() {
+  const configured = gitCapture(['config', '--get', `remote.${REMOTE}.url`]);
+  const effective = gitCapture(['remote', 'get-url', REMOTE]);
+  if (configured.status !== 0 || effective.status !== 0) {
+    return [];
+  }
+  const canonical = parseGitUrl(configured.stdout);
+  const actual = parseGitUrl(effective.stdout);
+  if (canonical === null || actual === null || canonical.host === actual.host) {
+    return [];
+  }
+  if (actual.protocol !== 'https:' || canonical.host !== 'github.com') {
+    return [];
+  }
+  const gh = spawnSync('gh', ['auth', 'status'], { cwd: root, stdio: 'ignore' });
+  if (gh.status !== 0) {
+    process.stderr.write(
+      '[release] ⚠ 远端使用加速地址，但 gh 未登录；为避免弹出凭据窗口，网络操作将直接失败。\n' +
+        '           可先执行 gh auth login，或改用 SSH 远端。\n',
+    );
+    return [];
+  }
+  const key = `credential.${actual.protocol}//${actual.host}.helper`;
+  const helper =
+    `!f() { test "$1" = get || exit 0; ` +
+    `sed "s/^host=.*/host=${canonical.host}/" | gh auth git-credential get; }; f`;
+  // 先清空该主机的 helper，避免全局 GCM 继续弹窗；再挂上复用 GitHub 凭据的 helper。
+  return ['-c', `${key}=`, '-c', `${key}=${helper}`];
+}
+
+const networkCredentialArgs = resolveNetworkCredentialArgs();
+const networkEnv = {
+  ...process.env,
+  GIT_TERMINAL_PROMPT: '0',
+  GCM_INTERACTIVE: 'never',
+};
+
+function gitNetworkCapture(args) {
+  return spawnSync('git', [...networkCredentialArgs, ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    env: networkEnv,
+  });
+}
+
+function gitNetworkRun(args, hint) {
+  const r = spawnSync('git', [...networkCredentialArgs, ...args], {
+    cwd: root,
+    stdio: 'inherit',
+    env: networkEnv,
+  });
+  if (r.status !== 0) fail(hint || `git ${args.join(' ')} 失败（退出码 ${r.status}）`);
+  return r;
+}
+
 // ---------------------------------------------------------------- 前置检查
 step('前置检查：分支 / 工作区');
 
@@ -75,7 +143,7 @@ let seq = 0;
 const next = () => `${++seq}/${totalSteps}`;
 
 step(`${next()} 拉取远端更新`);
-gitRun(['fetch', REMOTE], 'git fetch 失败，请检查网络与远端权限');
+gitNetworkRun(['fetch', REMOTE], 'git fetch 失败，请检查网络与远端权限');
 
 step(`${next()} rebase 到 ${REMOTE}/${BRANCH}`);
 const rebase = spawnSync('git', ['rebase', `${REMOTE}/${BRANCH}`], { cwd: root, stdio: 'inherit' });
@@ -129,7 +197,13 @@ if (gitCapture(['rev-parse', '-q', '--verify', `refs/tags/${tag}`]).status === 0
   fail(`本地 tag ${tag} 已存在，请检查版本计算或先删除本地 tag`);
 }
 // git ls-remote --exit-code: 0 = 找到；2 = 无匹配（正常）；其它 = 真错误。
-const remoteTag = gitCapture(['ls-remote', '--exit-code', '--tags', REMOTE, `refs/tags/${tag}`]);
+const remoteTag = gitNetworkCapture([
+  'ls-remote',
+  '--exit-code',
+  '--tags',
+  REMOTE,
+  `refs/tags/${tag}`,
+]);
 if (remoteTag.status === 0) fail(`远端 tag ${tag} 已存在，请检查版本计算`);
 if (remoteTag.status !== 2) {
   fail(`无法检查远端 tag（git ls-remote 退出码 ${remoteTag.status}），请检查网络与远端权限`);
@@ -150,7 +224,7 @@ if (verChanged.stdout.trim()) {
   gitRun(['add', '-A', 'package.json', 'apps', 'packages']);
   // `[skip ci]` 让 bump commit push 回 main 时不再触发 workflow——切断 CI 自动发版的循环。
   gitRun(
-    ['commit', '-m', `chore(release): 版本号统一为 ${version} [skip ci]`],
+    ['commit', '-m', `chore(release): 发布版本 v${version} [skip ci]`],
     '版本 bump 提交失败，未打 tag、未 push',
   );
 } else {
@@ -162,13 +236,13 @@ step(`${next()} 打 annotated tag ${tag}`);
 gitRun(['tag', '-a', tag, '-m', message]);
 
 step(`${next()} push ${BRANCH}（必须先于 tag，保证 tag commit 落在默认分支历史内）`);
-gitRun(['push', REMOTE, BRANCH], `git push ${BRANCH} 失败，tag 尚未推送，可修复后重跑`);
+gitNetworkRun(['push', REMOTE, BRANCH], `git push ${BRANCH} 失败，tag 尚未推送，可修复后重跑`);
 
 step(`${next()} push tag ${tag}`);
-const pushTag = spawnSync('git', ['push', REMOTE, tag], { cwd: root, stdio: 'inherit' });
-if (pushTag.status !== 0) {
-  fail(`${BRANCH} 已推送成功，但 tag 推送失败。可单独补推：git push ${REMOTE} ${tag}`);
-}
+gitNetworkRun(
+  ['push', REMOTE, tag],
+  `${BRANCH} 已推送成功，但 tag 推送失败。可单独补推：git push ${REMOTE} ${tag}`,
+);
 
 step('发版命令执行完毕');
 process.stdout.write(
