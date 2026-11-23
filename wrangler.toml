@@ -72,6 +72,21 @@ PUBLIC_ORIGINS = "https://stockin.example.workers.dev"
 # 若目标是国内可用，请在此处换成已接入 Cloudflare 的自定义域名。
 TZ = "Asia/Shanghai"
 
+# Preview 覆盖项：preview 使用独立 DO/SQLite。
+# PUBLIC_ORIGINS 与预览自定义域名由 release.yml 从仓库 WORKER_PUBLIC_ORIGIN 派生后注入，
+# 不在仓库里写死具体域名。
+[previews.vars]
+ORIGIN_SCHEME = "https"
+RUNTIME_TARGET = "workers"
+TZ = "Asia/Shanghai"
+
+# 代码使用 env.STOCKIN_DO；Preview 必须声明同一个 binding 才能注入。
+# Durable Object 的 namespace 与 storage 由 Cloudflare 按 Preview 自动隔离，
+# 这份 binding 不会指向生产 namespace。
+[[previews.durable_objects.bindings]]
+name = "STOCKIN_DO"
+class_name = "StockinDurableObject"
+
 # -------------------------------------------------------------- 定时备份 ----
 # 每日 19:00 UTC = 次日 03:00 CST；对应 Node 侧的每日定时备份。
 [triggers]

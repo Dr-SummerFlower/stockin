@@ -141,6 +141,41 @@ jobs:
           echo "### 发布 ${CHANNEL} / ${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
           printf '资产前缀：%s\n镜像标签：\n%s\n' "${ASSET_PREFIX}" "${IMAGE_TAGS}" >> "${GITHUB_STEP_SUMMARY}"
 
+      # 预发布只创建 Worker Preview，不切生产流量；预览使用独立 DO/SQLite。
+      # dev 域名从仓库 WORKER_PUBLIC_ORIGIN 派生，不在 wrangler.toml 写死。
+      - name: 部署 Worker Preview（dev）
+        if: steps.meta.outputs.channel == 'pre'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER_ORIGIN: ${{ vars.WORKER_PUBLIC_ORIGIN || secrets.WORKER_PUBLIC_ORIGIN }}
+        run: |
+          set -euo pipefail
+          RAW="${WORKER_ORIGIN#https://}"
+          RAW="${RAW#http://}"
+          BASE="${RAW%%/*}"
+          BASE="${BASE%/}"
+          if [[ -z "${BASE}" ]]; then
+            echo "::error::缺少 WORKER_PUBLIC_ORIGIN，无法推导 Preview 域名"
+            exit 1
+          fi
+          PREVIEW_HOST="dev.${BASE}"
+          PREVIEW_ORIGIN="https://${PREVIEW_HOST}"
+          trap 'rm -f .wrangler.preview.toml' EXIT
+          {
+            cat wrangler.toml
+            printf '\n[[routes]]\n'
+            printf 'pattern = "%s"\n' "${BASE}"
+            printf 'custom_domain = true\n'
+            printf 'previews_enabled = true\n'
+            printf 'enabled = false\n'
+          } > .wrangler.preview.toml
+          wrangler preview --config .wrangler.preview.toml --name dev --var "PUBLIC_ORIGINS:${PREVIEW_ORIGIN}"
+          {
+            echo "### Worker Preview"
+            echo "${PREVIEW_ORIGIN}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: 生成多平台部署包
         run: >-
           node scripts/package-artifacts.mjs

@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "version:check": "node scripts/version.mjs",
+    "pre": "node scripts/pre.mjs",
     "release": "node scripts/release.mjs",
     "verify": "node scripts/verify.mjs",
     "clean": "pnpm -r clean"
