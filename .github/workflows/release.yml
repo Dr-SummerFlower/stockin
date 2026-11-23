@@ -2,10 +2,9 @@ name: 构建与发布
 
 # 发布流程：
 #  - 本地 `pnpm release` 完成版本号 + CHANGELOG 提交、打 v* tag、push main / tag；
-#  - tag push：verify → 构建 / Release / GHCR → Worker 生产部署。
-#  - workflow_dispatch：预发布（滚动 tag `pre`），只构建预发布资产与 workers.zip，
-#    不部署生产 Worker；用 `wrangler dev` 验证 Workers 实际运行情况。
-#  - 不再监听 main push，也不在 Actions 内计算版本或生成 CHANGELOG。
+#  - 本地 `pnpm pre` 打并推送 `pre-<sha7>` tag；
+#  - tag push：verify → 构建 / Release / GHCR；pre-* 只部署 Worker Preview，
+#    v* 才部署生产 Worker。Actions 内不计算版本、不生成 CHANGELOG、不调用 gh CLI 触发。
 #
 # 所有 `uses:` 均锁定到完整 commit SHA（对应 lightweight tag）：
 #   actions/checkout v6.1.0 / actions/setup-node v6.5.0
@@ -15,8 +14,7 @@ name: 构建与发布
 
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch:
+    tags: ['v*', 'pre-*']
 
 # 权限按 job 收敛（发布审查 P3）：只有 publish 需要写 contents / packages，
 # verify 只读源码、workers 只下载制品，都不该拿到写权限。
@@ -111,19 +109,19 @@ jobs:
           OWNER_LC="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           IMAGE_BASE="ghcr.io/${OWNER_LC}/stockin"
 
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+          if [[ "${GITHUB_REF_NAME}" == pre-* ]]; then
+            CHANNEL="pre"
+            VERSION="${GITHUB_REF_NAME}"
+            RELEASE_TAG="pre"
+            # 预发布资产名固定，pre Release 是滚动覆盖，不随 commit 无限累积。
+            ASSET_PREFIX="stockin-pre"
+            IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:pre"
+          else
             CHANNEL="stable"
             VERSION="${GITHUB_REF_NAME#v}"
             RELEASE_TAG="${GITHUB_REF_NAME}"
             ASSET_PREFIX="stockin-${VERSION}"
             IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:sha-${SHA7}"
-          else
-            CHANNEL="pre"
-            VERSION="pre-${SHA7}"
-            RELEASE_TAG="pre"
-            # 预发布资产名固定，pre Release 是滚动覆盖，不随 commit 无限累积。
-            ASSET_PREFIX="stockin-pre"
-            IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:pre"
           fi
 
           {
