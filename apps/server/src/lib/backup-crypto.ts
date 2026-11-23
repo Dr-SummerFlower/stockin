@@ -33,7 +33,7 @@ export interface EncryptedChunk {
 
 const subtle = globalThis.crypto.subtle;
 
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
@@ -42,7 +42,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function base64ToBytes(value: string): Uint8Array {
+export function base64ToBytes(value: string): Uint8Array {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
@@ -251,4 +251,65 @@ export async function decryptBackupChunk(
 
 export async function hashBackupBytes(bytes: Uint8Array): Promise<string> {
   return sha256(bytes);
+}
+
+/* ------------------------------------------------------------------ *
+ * 恢复票据：ECDSA P-256 + SHA-256
+ *
+ * 与备份封装共用同一把 P-256 密钥对。DER 编码本身不绑定算法用途，
+ * 因此同一份私钥 DER 可导入为 ECDH（解封数据密钥）或 ECDSA（签票据），
+ * 公钥 DER 同理。私钥始终只在本地脚本中出现，服务端只有公钥。
+ * ------------------------------------------------------------------ */
+
+async function importSigningPrivateKey(privateKeyBase64: string): Promise<CryptoKey> {
+  return subtle.importKey(
+    'pkcs8',
+    toArrayBuffer(base64ToBytes(privateKeyBase64)),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign'],
+  );
+}
+
+async function importVerifyingPublicKey(publicKeyBase64: string): Promise<CryptoKey> {
+  return subtle.importKey(
+    'spki',
+    toArrayBuffer(base64ToBytes(publicKeyBase64)),
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify'],
+  );
+}
+
+/** 本地：用私钥对票据字节签名，返回 base64（P1363 定长 128 字节）。 */
+export async function signRestoreTicket(
+  privateKeyBase64: string,
+  payload: Uint8Array,
+): Promise<string> {
+  const key: CryptoKey = await importSigningPrivateKey(privateKeyBase64);
+  const signature: ArrayBuffer = await subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    toArrayBuffer(payload),
+  );
+  return bytesToBase64(new Uint8Array(signature));
+}
+
+/** 服务端：用公钥验签；任何异常（含格式错误）都归为 false，不抛给上层。 */
+export async function verifyRestoreTicket(
+  publicKeyBase64: string,
+  payload: Uint8Array,
+  signatureBase64: string,
+): Promise<boolean> {
+  try {
+    const key: CryptoKey = await importVerifyingPublicKey(publicKeyBase64);
+    return await subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      key,
+      toArrayBuffer(base64ToBytes(signatureBase64)),
+      toArrayBuffer(payload),
+    );
+  } catch {
+    return false;
+  }
 }

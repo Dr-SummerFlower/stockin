@@ -72,6 +72,12 @@ function singleStub(env: WorkerEnv): DurableObjectStubLike {
 export class StockinDurableObject extends DurableObject<WorkerEnv> {
   private runtime: Promise<AssembledRuntime> | null = null;
 
+  /** DO alarm 回调：驱动逻辑备份 / 恢复的异步状态机。 */
+  async alarm(): Promise<void> {
+    const runtime: AssembledRuntime = await this.ensureRuntime();
+    await runtime.runBackgroundTick();
+  }
+
   async fetch(request: Request): Promise<Response> {
     const runtime: AssembledRuntime = await this.ensureRuntime();
     const path: string = new URL(request.url).pathname;

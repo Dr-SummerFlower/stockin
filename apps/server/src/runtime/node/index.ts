@@ -14,6 +14,8 @@ import { createFilesystemMigrationSource } from './migration-source.filesystem';
 import { createFilesystemBackupPort } from './backup.filesystem';
 import { createFilesystemStaticPort, defaultStaticRoot } from './static.filesystem';
 import { createTempfileWorkbookReader } from './workbook.tempfile';
+import { createNodeScheduler } from './scheduler.interval';
+import { createFilesystemRestoreStaging } from './restore-staging.filesystem';
 
 /** 静态根优先级 = `WEB_DIST_DIR`（env.staticRoot）> 从产物反推的 apps/web/dist。 */
 function resolveStaticRoot(env: Env): string {
@@ -58,6 +60,14 @@ export function nodeRuntime(
 
     workbookReader(env: Env) {
       return createTempfileWorkbookReader({ tmpDir: env.tmpDir });
+    },
+
+    backgroundScheduler(_env: Env) {
+      return createNodeScheduler();
+    },
+
+    restoreStaging(env: Env) {
+      return createFilesystemRestoreStaging({ tmpDir: env.tmpDir });
     },
   };
 }

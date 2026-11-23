@@ -15,6 +15,9 @@ import type { Db } from './repositories/db';
 import type { BootstrapRepositories, ResolvedPorts } from './bootstrap';
 import type { PlatformProfile } from './runtime/platform';
 import { logger } from './lib/logger';
+import { LogicalBackupRepository } from './repositories/logical-backup.repository';
+import { LogicalBackupService } from './services/logical-backup.service';
+import { RestoreService } from './services/restore.service';
 import { AuthService } from './services/auth.service';
 import { AdminAuthService } from './services/admin-auth.service';
 import { AdminService } from './services/admin.service';
@@ -44,6 +47,8 @@ export interface AssembledRuntime {
   stop(): void;
   /** 执行一次"每日备份"动作；Worker 的 `scheduled` 处理器调用它。 */
   runScheduledBackup(): Promise<void>;
+  /** 推进一次后台逻辑备份分块；Node 定时器 / Workers alarm 调用。 */
+  runBackgroundTick(): Promise<boolean>;
 }
 
 /** 构造应用与后台任务。 */
@@ -60,6 +65,27 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     gate,
     port: ports.backup,
   });
+  const logicalBackup = new LogicalBackupService({
+    db,
+    env,
+    repo: new LogicalBackupRepository(db),
+    settings: repositories.settings,
+    meta: repositories.meta,
+    logs: repositories.logs,
+    scheduler: ports.backgroundScheduler,
+    physicalBackup: backup,
+  });
+  const restore = new RestoreService({
+    db,
+    env,
+    staging: ports.restoreStaging,
+    meta: repositories.meta,
+    logs: repositories.logs,
+    physicalBackup: backup,
+  });
+  // 调度器的 tick 回调在 Service 构造好后注入（bootstrap 阶段 Service 还不存在）。
+  ports.backgroundScheduler.setTick(() => logicalBackup.tick());
+
   const auth = new AuthService({
     db,
     env,
@@ -122,23 +148,37 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     dashboard,
     excel,
     backup,
+    logicalBackup,
+    restore,
     health,
     gate,
     staticPort: ports.staticPort,
   };
   const app = createApp(deps);
 
+  // 定时动作统一入口：物理快照（Node 文件 / Workers PITR）与加密逻辑备份
+  // 各自按间隔判断。Node interval 与 Workers cron 都走这里，避免两套分支漂移。
+  const runScheduledBackup = async (): Promise<void> => {
+    const physical = await backup.trigger('scheduled-daily');
+    if (!physical.ok) {
+      logger.warn({ code: physical.code }, '[backup-scheduler] 本次定时物理备份跳过');
+    }
+    try {
+      await logicalBackup.triggerScheduled();
+    } catch (error) {
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        '[backup-scheduler] 定时逻辑备份入队失败',
+      );
+    }
+  };
+
   // 定时备份：`interval` 由进程内定时器驱动（Node），`cron` 由平台调度器驱动
   // （Workers 的 Cron Trigger 打 `scheduled()`，最终调用 runScheduledBackup）。
   const scheduler: BackupScheduler | null =
-    input.platform.scheduler === 'interval' ? new BackupScheduler(backup) : null;
+    input.platform.scheduler === 'interval' ? new BackupScheduler(runScheduledBackup) : null;
 
-  const runScheduledBackup = async (): Promise<void> => {
-    const result = await backup.trigger('scheduled-daily');
-    if (!result.ok) {
-      logger.warn({ code: result.code }, '[backup-scheduler] 本次定时备份跳过');
-    }
-  };
+  const runBackgroundTick = async (): Promise<boolean> => logicalBackup.tick();
 
   return {
     app,
@@ -150,7 +190,9 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     stop(): void {
       health.markNotReady();
       scheduler?.stop();
+      ports.backgroundScheduler.stop?.();
     },
     runScheduledBackup,
+    runBackgroundTick,
   };
 }

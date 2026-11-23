@@ -31,6 +31,14 @@ declare module 'cloudflare:workers' {
   interface DurableObjectStorage {
     readonly sql: DurableObjectSqlStorage;
     transactionSync<T>(callback: () => T): T;
+    /** KV：恢复分块暂存（值可为 ArrayBuffer / Uint8Array / string）。 */
+    get<T = unknown>(key: string): Promise<T | undefined>;
+    put(key: string, value: ArrayBuffer | ArrayBufferView | string): Promise<void>;
+    delete(key: string): Promise<boolean>;
+    list(options?: { prefix?: string }): Promise<Map<string, unknown>>;
+    /** DO alarm：驱动异步备份/恢复 tick。 */
+    setAlarm(time: number | Date): Promise<void>;
+    deleteAlarm(): Promise<void>;
   }
 
   /** DO 运行时上下文（仅声明本项目用到的部分）。 */

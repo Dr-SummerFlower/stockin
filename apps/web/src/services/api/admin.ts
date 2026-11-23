@@ -11,6 +11,13 @@ import type {
   AdminBackupListResponse,
   AdminMeResponse,
   AdminSystemResponse,
+  BackupSettingsRequest,
+  BackupSettingsResponse,
+  LogicalBackupListResponse,
+  LogicalBackupTriggerResponse,
+  RestoreBeginResponse,
+  RestoreCommitRequest,
+  RestoreCommitResponse,
 } from '@stockin/shared';
 import { download, request, type BlobResult } from '../request';
 
@@ -45,6 +52,66 @@ export function triggerAdminBackup(): Promise<AdminBackupTriggerView> {
 /** `GET /api/admin/backups/:file/download`：下载 .db.gz（仅 filesystem 运行时）。 */
 export function downloadAdminBackup(file: string): Promise<BlobResult> {
   return download(`/api/admin/backups/${encodeURIComponent(file)}/download`);
+}
+
+/* ------------------------- 加密逻辑备份（管理员） ------------------------- */
+
+/** `GET /api/admin/logical-backups`：逻辑备份记录与任务状态。 */
+export function listAdminLogicalBackups(): Promise<LogicalBackupListResponse> {
+  return request<LogicalBackupListResponse>('/api/admin/logical-backups', { silent: true });
+}
+
+/** `POST /api/admin/logical-backups`：入队一次手动逻辑备份。 */
+export function triggerAdminLogicalBackup(): Promise<LogicalBackupTriggerResponse> {
+  return request<LogicalBackupTriggerResponse>('/api/admin/logical-backups', {
+    method: 'POST',
+    silent: true,
+  });
+}
+
+/** `GET /api/admin/logical-backups/:id/download`：下载加密 NDJSON（全平台可用）。 */
+export function downloadAdminLogicalBackup(id: string): Promise<BlobResult> {
+  return download(`/api/admin/logical-backups/${encodeURIComponent(id)}/download`);
+}
+
+/** `GET /api/admin/backup-settings`：逻辑 / 物理备份间隔。 */
+export function getBackupSettings(): Promise<BackupSettingsResponse> {
+  return request<BackupSettingsResponse>('/api/admin/backup-settings', { silent: true });
+}
+
+/** `PUT /api/admin/backup-settings`：更新至少一项间隔（1～365 天）。 */
+export function updateBackupSettings(input: BackupSettingsRequest): Promise<BackupSettingsResponse> {
+  return request<BackupSettingsResponse>('/api/admin/backup-settings', {
+    method: 'PUT',
+    json: input,
+    silent: true,
+  });
+}
+
+/** `POST /api/admin/restore/begin`：开启一次性恢复批次。 */
+export function beginRestore(): Promise<RestoreBeginResponse> {
+  return request<RestoreBeginResponse>('/api/admin/restore/begin', {
+    method: 'POST',
+    silent: true,
+  });
+}
+
+/** `PUT /api/admin/restore/:batchId/chunk/:seq`：上传恢复包分块。 */
+export function putRestoreChunk(batchId: string, seq: number, bytes: Uint8Array): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/admin/restore/${encodeURIComponent(batchId)}/chunk/${seq}`, {
+    method: 'PUT',
+    bytes,
+    silent: true,
+  });
+}
+
+/** `POST /api/admin/restore/commit`：验签并提交全量恢复。 */
+export function commitRestore(input: RestoreCommitRequest): Promise<RestoreCommitResponse> {
+  return request<RestoreCommitResponse>('/api/admin/restore/commit', {
+    method: 'POST',
+    json: input,
+    silent: true,
+  });
 }
 
 /** `GET /api/admin/export`：逻辑导出 JSON（脱敏，不含凭据）。 */

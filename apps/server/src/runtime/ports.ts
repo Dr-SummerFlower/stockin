@@ -91,8 +91,15 @@ export interface BackupPort {
  * 不认识任何平台 API。
  */
 export interface BackgroundTaskScheduler {
+  /**
+   * 注册 tick 回调。由 assemble 在构造好 Service 后注入 —— 调度器在 bootstrap
+   * 阶段就要创建（组合根需要它），但能执行的逻辑此时还不存在，故用 setter 解耦。
+   */
+  setTick(fn: () => Promise<boolean>): void;
   /** 请求在 `delayMs` 后执行一次后台 tick；重复调用由实现合并。 */
   schedule(delayMs?: number): void;
+  /** 停止调度（优雅停机 / DO 关闭）。 */
+  stop?(): void;
 }
 
 /**
@@ -166,4 +173,8 @@ export interface RuntimeBundle {
    */
   staticPort(env: import('../env').Env): Promise<StaticPort>;
   workbookReader(env: import('../env').Env): WorkbookReader;
+  /** 后台任务调度器：Node 定时器 / Workers DO alarm。 */
+  backgroundScheduler(env: import('../env').Env): BackgroundTaskScheduler;
+  /** 恢复暂存：Node 临时目录 / Workers DO KV。 */
+  restoreStaging(env: import('../env').Env): RestoreStagingPort;
 }

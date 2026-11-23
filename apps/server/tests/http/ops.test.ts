@@ -6,7 +6,6 @@
  * 不开写事务」的核心约束，用记录条数不变来断言）。
  */
 import ExcelJS from 'exceljs';
-import { readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { EXCEL_HEADER_TEXTS } from '@stockin/shared';
 import { createHarness, type Harness } from '../support/harness';
@@ -157,25 +156,36 @@ describe('设置与备份', () => {
     expect(outOfRange.body.code).toBe('VALID_FAILED');
   });
 
-  it('手动备份产出快照文件并在列表里可见', async () => {
+  it('手动触发逻辑备份：返回 jobId，异步完成后列表可见（用户端无下载）', async () => {
     const { h, cookie } = await ready();
-    const triggered = await h.json<{ status: string; meta: { file: string } | null }>(
-      '/api/backup',
-      { method: 'POST', cookie },
-    );
-    expect(triggered.status).toBe(200);
-    expect(triggered.body.status).toBe('ok');
-    expect(triggered.body.meta?.file).toMatch(/\.db$/);
-
-    const onDisk: string[] = readdirSync(h.backupDir);
-    expect(onDisk.some((name) => name.endsWith('.db'))).toBe(true);
-    expect(onDisk.some((name) => name.endsWith('.meta.json'))).toBe(true);
-
-    const list = await h.json<{ items: { file: string }[]; keepCount: number }>('/api/backups', {
+    const triggered = await h.json<{ jobId: string }>('/api/backup', {
+      method: 'POST',
       cookie,
     });
-    expect(list.body.keepCount).toBe(7);
+    expect(triggered.status).toBe(200);
+    expect(triggered.body.jobId).toMatch(/^job-/);
+
+    // 驱动后台分块直到完成（真实调度器的定时器在测试里不可靠，直接推进）。
+    for (let i = 0; i < 200; i += 1) {
+      const more = await h.deps.logicalBackup.tick(4);
+      if (!more) {
+        break;
+      }
+    }
+
+    const list = await h.json<{
+      items: { id: string; chunkCount: number; manifestSha256: string | null }[];
+      keepCount: number;
+      enabled: boolean;
+      activeJob: unknown;
+    }>('/api/backups', { cookie });
+    expect(list.body.enabled).toBe(true);
+    expect(list.body.keepCount).toBe(5);
+    expect(list.body.activeJob).toBeNull();
     expect(list.body.items.length).toBeGreaterThan(0);
+    expect(list.body.items[0]?.manifestSha256).toBeTruthy();
+    // 用户端响应不含文件名 / 下载字段。
+    expect(JSON.stringify(list.body)).not.toContain('gzipFile');
   });
 });
 

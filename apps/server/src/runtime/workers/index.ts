@@ -14,6 +14,8 @@ import { createInlineMigrationSource } from './migration-source.inline';
 import { createPitrBackupPort } from './backup.pitr';
 import { createAssetsStaticPort, type AssetsBinding } from './static.assets';
 import { createMemoryWorkbookReader } from './workbook.memory';
+import { createAlarmScheduler } from './scheduler.alarm';
+import { createKvRestoreStaging } from './restore-staging.kv';
 import { stringVars } from './env';
 import type { DoStorageLike } from '../../repositories/adapters/do-sqlite.adapter';
 
@@ -58,6 +60,14 @@ export function workersRuntime(input: WorkersRuntimeInput): RuntimeBundle {
 
     workbookReader() {
       return createMemoryWorkbookReader();
+    },
+
+    backgroundScheduler() {
+      return createAlarmScheduler({ storage: input.storage });
+    },
+
+    restoreStaging() {
+      return createKvRestoreStaging({ storage: input.storage });
     },
   };
 }

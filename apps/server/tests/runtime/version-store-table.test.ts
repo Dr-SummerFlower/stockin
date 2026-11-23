@@ -65,6 +65,18 @@ function createDoStorageFake(file: string): {
           throw error;
         }
       },
+      async get<T>(_key: string): Promise<T | undefined> {
+        return undefined;
+      },
+      async put(_key: string, _value: ArrayBuffer | ArrayBufferView | string): Promise<void> {},
+      async delete(_key: string): Promise<boolean> {
+        return false;
+      },
+      async list(): Promise<Map<string, unknown>> {
+        return new Map();
+      },
+      async setAlarm(_time: number | Date): Promise<void> {},
+      async deleteAlarm(): Promise<void> {},
     } as DoStorageLike,
     close: (): void => {
       raw.close();

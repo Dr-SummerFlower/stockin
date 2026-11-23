@@ -40,6 +40,8 @@ import type { RecordService } from './services/record.service';
 import type { DashboardService } from './services/dashboard.service';
 import type { ExcelService } from './services/excel.service';
 import type { BackupService } from './services/backup.service';
+import type { LogicalBackupService } from './services/logical-backup.service';
+import type { RestoreService } from './services/restore.service';
 import { createApiRouter } from './routes';
 import { createSpaFallback } from './static';
 
@@ -65,6 +67,10 @@ export interface AppDeps {
   readonly dashboard: DashboardService;
   readonly excel: ExcelService;
   readonly backup: BackupService;
+  /** 加密逻辑备份（异步分块、管理员下载 / 恢复来源）。 */
+  readonly logicalBackup: LogicalBackupService;
+  /** 一次性恢复（管理员）：验签票据 + 全量恢复 + 清空会话。 */
+  readonly restore: RestoreService;
   readonly health: HealthService;
   readonly gate: HeavyTaskGate;
   /**

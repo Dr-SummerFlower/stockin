@@ -67,15 +67,16 @@ export function registerSettingsRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
     },
   );
 
+  // 用户端只显示加密逻辑备份记录 + 立即触发，不提供下载 / 恢复。
   api.post('/api/backup', async (c) => {
-    const result = await deps.backup.trigger('manual', c.get('requestId') ?? '');
+    const result = await deps.logicalBackup.enqueue('manual', c.get('requestId') ?? '');
     return result.ok
       ? c.json(result.data, 200)
       : errorResponse(result.code, c.get('requestId') ?? '', result.details);
   });
 
   api.get('/api/backups', (c) => {
-    const result = deps.backup.list();
+    const result = deps.logicalBackup.list();
     return result.ok
       ? c.json(result.data, 200)
       : errorResponse(result.code, c.get('requestId') ?? '', result.details);

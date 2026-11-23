@@ -148,6 +148,79 @@ describe('管理员端点', () => {
       const res = await h.json('/api/admin/backups/%2E%2E%2Fetc%2Fpasswd/download', authed());
       expect([404, 400]).toContain(res.status);
     });
+
+    it('逻辑备份：触发 → 异步完成 → 列表可见 → 下载 NDJSON（含 meta 行）', async () => {
+      const triggered = await h.json<{ jobId: string }>('/api/admin/logical-backups', {
+        ...authed(),
+        method: 'POST',
+      });
+      expect(triggered.status).toBe(200);
+      expect(triggered.body.jobId).toMatch(/^job-/);
+
+      for (let i = 0; i < 200; i += 1) {
+        if (!(await h.deps.logicalBackup.tick(4))) {
+          break;
+        }
+      }
+
+      const list = await h.json<{ items: { id: string }[]; enabled: boolean }>(
+        '/api/admin/logical-backups',
+        authed(),
+      );
+      expect(list.status).toBe(200);
+      expect(list.body.enabled).toBe(true);
+      expect(list.body.items.length).toBeGreaterThan(0);
+
+      const id = list.body.items[0]!.id;
+      const download = await h.request(`/api/admin/logical-backups/${id}/download`, authed());
+      expect(download.status).toBe(200);
+      expect(download.headers.get('content-disposition')).toContain('.backup.ndjson');
+      const text = await download.text();
+      const firstLine = text.split('\n')[0] ?? '';
+      expect(JSON.parse(firstLine)).toMatchObject({
+        kind: 'meta',
+        format: 'stockin-logical-backup',
+      });
+    });
+
+    it('备份间隔设置：读取默认值、更新后回显、越界 422', async () => {
+      const initial = await h.json<{
+        logicalBackupIntervalDays: number;
+        physicalBackupIntervalDays: number;
+      }>('/api/admin/backup-settings', authed());
+      expect(initial.status).toBe(200);
+      expect(initial.body.logicalBackupIntervalDays).toBe(7);
+      expect(initial.body.physicalBackupIntervalDays).toBe(30);
+
+      const updated = await h.json<{ logicalBackupIntervalDays: number }>(
+        '/api/admin/backup-settings',
+        { ...authed(), method: 'PUT', json: { logicalBackupIntervalDays: 14 } },
+      );
+      expect(updated.status).toBe(200);
+      expect(updated.body.logicalBackupIntervalDays).toBe(14);
+
+      const invalid = await h.json('/api/admin/backup-settings', {
+        ...authed(),
+        method: 'PUT',
+        json: { logicalBackupIntervalDays: 0 },
+      });
+      expect(invalid.status).toBe(422);
+    });
+
+    it('恢复批次：begin 返回 batchId 与时间窗口；require admin 鉴权', async () => {
+      const anonymous = await h.json('/api/admin/restore/begin');
+      expect(anonymous.status).toBe(401);
+      const begun = await h.json<{ batchId: string; windowMs: number }>(
+        '/api/admin/restore/begin',
+        {
+          ...authed(),
+          method: 'POST',
+        },
+      );
+      expect(begun.status).toBe(200);
+      expect(begun.body.batchId).toMatch(/^rb-/);
+      expect(begun.body.windowMs).toBe(30 * 60 * 1000);
+    });
   });
 });
 

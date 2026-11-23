@@ -20,10 +20,19 @@
 import type { Context, Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import {
+  Action,
   ErrorCode,
+  TARGET_TYPE,
   adminOwnerResetSchema,
+  backupSettingsSchema,
+  restoreCommitSchema,
   type AdminBackupListResponse,
   type AdminMeResponse,
+  type LogicalBackupListResponse,
+  type BackupSettingsRequest,
+  type BackupSettingsResponse,
+  type RestoreBeginResponse,
+  type RestoreCommitRequest,
 } from '@stockin/shared';
 import { errorResponse } from '../lib/response';
 import {
@@ -40,12 +49,28 @@ import type { AdminService } from '../services/admin.service';
 import type { AdminSessionRepository } from '../repositories/admin-session.repository';
 import type { AppEnv } from '../types/hono';
 import type { BackupService } from '../services/backup.service';
+import type { LogicalBackupService } from '../services/logical-backup.service';
+import type { RestoreService } from '../services/restore.service';
+import type { SettingsRepository } from '../repositories/settings.repository';
+import type { OperationLogRepository } from '../repositories/operation-log.repository';
+import type { Db } from '../repositories/db';
+import { immediateTransaction } from '../repositories/db';
+import type { Env } from '../env';
+import { utcNowIso } from '../lib/today';
+import { BACKUP_FILE_EXTENSION } from '../lib/backup-format';
 
 export interface AdminRouteDeps {
   readonly adminAuth: AdminAuthService;
   readonly admin: AdminService;
   readonly adminSessions: AdminSessionRepository;
   readonly backup: BackupService;
+  readonly logicalBackup: LogicalBackupService;
+  readonly restore: RestoreService;
+  readonly settings: SettingsRepository;
+  readonly logs: OperationLogRepository;
+  readonly db: Db;
+  readonly env: Env;
+  readonly requestIdOf: (c: Context<AppEnv>) => string;
 }
 
 /** 管理员的审计署名；未登录时回落匿名标记。 */
@@ -228,6 +253,149 @@ export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): vo
         actor: adminActorOf(c),
         adminSessionId: admin?.id ?? '',
       });
+      return result.ok
+        ? c.json(result.data, 200)
+        : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+    },
+  );
+
+  /* ------------------------- 加密逻辑备份（管理员） ------------------------- */
+
+  api.get('/api/admin/logical-backups', (c) => {
+    const result = deps.logicalBackup.list();
+    return result.ok
+      ? c.json(result.data satisfies LogicalBackupListResponse, 200)
+      : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+  });
+
+  api.post('/api/admin/logical-backups', async (c) => {
+    const result = await deps.logicalBackup.enqueue('manual-admin', c.get('requestId') ?? '');
+    return result.ok
+      ? c.json(result.data, 200)
+      : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+  });
+
+  api.get('/api/admin/logical-backups/:id/download', (c) => {
+    const id: string = c.req.param('id') ?? '';
+    const result = deps.logicalBackup.buildDownload(id);
+    if (!result.ok) {
+      return errorResponse(result.code, c.get('requestId') ?? '', result.details);
+    }
+    const admin = c.get('adminSession');
+    deps.admin.logBackupDownload(id, {
+      requestId: c.get('requestId') ?? '',
+      actor: adminActorOf(c),
+      adminSessionId: admin?.id ?? '',
+    });
+
+    const { meta, chunks } = result.data;
+    const encoder = new TextEncoder();
+    const parts: string[] = [JSON.stringify(meta), ...chunks.map((chunk) => JSON.stringify(chunk))];
+    let index = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (index >= parts.length) {
+          controller.close();
+          return;
+        }
+        // 每次推一行，保持内存水位低（不整包构造大 Buffer）。
+        controller.enqueue(encoder.encode(`${parts[index] ?? ''}\n`));
+        index += 1;
+      },
+    });
+    const stamp: string = meta.createdAt.replace(/[:.]/g, '-');
+    return c.body(stream, 200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Content-Disposition': `attachment; filename="stockin-${stamp}${BACKUP_FILE_EXTENSION}"`,
+      'Cache-Control': 'no-store',
+    });
+  });
+
+  /* ------------------------- 备份间隔设置（管理员） ------------------------- */
+
+  api.get('/api/admin/backup-settings', (c) => {
+    const body: BackupSettingsResponse = {
+      logicalBackupIntervalDays: deps.settings.getLogicalBackupIntervalDays(),
+      physicalBackupIntervalDays: deps.settings.getPhysicalBackupIntervalDays(),
+    };
+    return c.json(body, 200);
+  });
+
+  api.put(
+    '/api/admin/backup-settings',
+    zValidator('json', backupSettingsSchema, (result, c) => {
+      if (!result.success) {
+        return errorResponse(ErrorCode.VALID_FAILED, String(c.get('requestId') ?? ''), {
+          issues: result.error.issues,
+        });
+      }
+      return;
+    }),
+    (c) => {
+      const input = c.req.valid('json') as BackupSettingsRequest;
+      const nowUtc: string = utcNowIso();
+      const requestId: string = c.get('requestId') ?? '';
+      immediateTransaction(deps.db, () => {
+        if (input.logicalBackupIntervalDays !== undefined) {
+          deps.settings.setLogicalBackupIntervalDays(input.logicalBackupIntervalDays);
+        }
+        if (input.physicalBackupIntervalDays !== undefined) {
+          deps.settings.setPhysicalBackupIntervalDays(input.physicalBackupIntervalDays);
+        }
+        deps.logs.append({
+          action: Action.SETTINGS_UPDATE,
+          targetType: TARGET_TYPE.SETTINGS,
+          targetId: null,
+          detail: { ...input },
+          requestId,
+          actor: adminActorOf(c),
+          occurredAt: nowUtc,
+        });
+      });
+      const body: BackupSettingsResponse = {
+        logicalBackupIntervalDays: deps.settings.getLogicalBackupIntervalDays(),
+        physicalBackupIntervalDays: deps.settings.getPhysicalBackupIntervalDays(),
+      };
+      return c.json(body, 200);
+    },
+  );
+
+  /* ------------------------- 一次性恢复（管理员） ------------------------- */
+
+  api.post('/api/admin/restore/begin', (c) => {
+    const result = deps.restore.beginBatch();
+    return result.ok
+      ? c.json(result.data satisfies RestoreBeginResponse, 200)
+      : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+  });
+
+  api.put('/api/admin/restore/:batchId/chunk/:seq', async (c) => {
+    const batchId: string = c.req.param('batchId') ?? '';
+    const seqRaw: string = c.req.param('seq') ?? '';
+    const seq: number = Number.parseInt(seqRaw, 10);
+    if (!Number.isInteger(seq) || seq < 0) {
+      return errorResponse(ErrorCode.VALID_FAILED, c.get('requestId') ?? '');
+    }
+    const bytes: Uint8Array = new Uint8Array(await c.req.arrayBuffer());
+    const result = await deps.restore.putChunk(batchId, seq, bytes);
+    return result.ok
+      ? c.json({ ok: true }, 200)
+      : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+  });
+
+  api.post(
+    '/api/admin/restore/commit',
+    zValidator('json', restoreCommitSchema, (result, c) => {
+      if (!result.success) {
+        return errorResponse(ErrorCode.VALID_FAILED, String(c.get('requestId') ?? ''), {
+          issues: result.error.issues,
+        });
+      }
+      return;
+    }),
+    async (c) => {
+      const input = c.req.valid('json') as RestoreCommitRequest;
+      const result = await deps.restore.commit(input.batchId, input.ticket);
       return result.ok
         ? c.json(result.data, 200)
         : errorResponse(result.code, c.get('requestId') ?? '', result.details);

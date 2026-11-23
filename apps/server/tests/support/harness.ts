@@ -42,6 +42,13 @@ const migrationsDir: string = path.join(
   'migrations',
 );
 
+/**
+ * 测试用逻辑备份公钥（合法 P-256 SPKI DER base64）。
+ * 服务端只用公钥封装数据密钥，无需配对私钥；解密在独立脚本测试里覆盖。
+ */
+export const TEST_BACKUP_PUBLIC_KEY =
+  'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJ5lDQomj+ROr1cDXBrz5KTHtY/0j9W/42TBFYj6/4XS3K9bzDp9VJmdgWRscHXsWE53lRwrERuPuEj2vzHX+Mw==';
+
 /** 与真实构建产物同形的 index.html（ETag / 缓存头用例需要稳定内容）。 */
 const INDEX_HTML =
   '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>进货统计</title></head><body><div id="root"></div></body></html>';
@@ -97,6 +104,8 @@ export interface HarnessOptions {
     readonly clientSecret?: string;
     readonly logins?: string;
   };
+  /** 逻辑备份公钥覆盖（恢复端到端测试需注入与本地私钥配对的公钥）。 */
+  readonly backupPublicKey?: string;
 }
 
 /** 创建测试台。返回时数据库已迁移、凭据已生成，但 `setup` 尚未完成。 */
@@ -133,6 +142,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       tmpDir,
       staticRoot,
       admin: options.admin,
+      backupPublicKey: options.backupPublicKey ?? TEST_BACKUP_PUBLIC_KEY,
     },
   });
 

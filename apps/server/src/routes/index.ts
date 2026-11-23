@@ -32,6 +32,13 @@ export function createApiRouter(deps: AppDeps): Hono<AppEnv> {
     admin: deps.admin,
     adminSessions: deps.repositories.adminSessions,
     backup: deps.backup,
+    logicalBackup: deps.logicalBackup,
+    restore: deps.restore,
+    settings: deps.repositories.settings,
+    logs: deps.repositories.logs,
+    db: deps.db,
+    env: deps.env,
+    requestIdOf: (c) => c.get('requestId') ?? '',
   });
   return api;
 }

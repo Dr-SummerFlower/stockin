@@ -47,6 +47,9 @@ import {
 } from '@/utils/format';
 import { ROUTES, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 import EmptyState from '@/components/EmptyState';
+import LogicalBackupPanel from './LogicalBackupPanel';
+import BackupSettingsPanel from './BackupSettingsPanel';
+import RestorePanel from './RestorePanel';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -283,7 +286,7 @@ const AdminPage: React.FC = () => {
             <Descriptions.Item label="有效记录">{system.recordCount}</Descriptions.Item>
             <Descriptions.Item label="回收站记录">{system.trashCount}</Descriptions.Item>
             <Descriptions.Item label="审计日志条数">{system.logCount}</Descriptions.Item>
-            <Descriptions.Item label="备份保留份数">{keepCount}</Descriptions.Item>
+            <Descriptions.Item label="物理快照保留份数">{keepCount}</Descriptions.Item>
           </Descriptions>
         ) : (
           <Text type="secondary">概览加载失败，请刷新重试。</Text>
@@ -291,7 +294,7 @@ const AdminPage: React.FC = () => {
       </Card>
 
       <Card
-        title="备份管理"
+        title="物理快照"
         style={{ marginBottom: 20 }}
         extra={
           <Button
@@ -305,7 +308,7 @@ const AdminPage: React.FC = () => {
         }
       >
         <Paragraph type="secondary">
-          备份池保留最近 {keepCount} 份。{modeText(backupMode)}。
+          平台物理快照保留最近 {keepCount} 份。{modeText(backupMode)}。
         </Paragraph>
         <Table
           rowKey="file"
@@ -316,6 +319,10 @@ const AdminPage: React.FC = () => {
           locale={{ emptyText: '暂无备份' }}
         />
       </Card>
+
+      <LogicalBackupPanel />
+      <BackupSettingsPanel />
+      <RestorePanel />
 
       <Card title="数据导出" style={{ marginBottom: 20 }}>
         <Paragraph type="secondary">

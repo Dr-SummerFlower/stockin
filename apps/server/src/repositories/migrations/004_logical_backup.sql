@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS backups (
   schema_version        INTEGER NOT NULL,
   key_id                TEXT NOT NULL,
   ephemeral_public_key  TEXT NOT NULL,
+  /** ECDH 派生 KEK 的 HKDF salt；缺它则本地私钥无法解封 AES 数据密钥。 */
+  kdf_salt              TEXT NOT NULL,
   wrapped_key_iv        TEXT NOT NULL,
   wrapped_key_ciphertext TEXT NOT NULL,
   wrapped_key_tag       TEXT NOT NULL,

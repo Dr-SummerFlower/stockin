@@ -78,6 +78,8 @@ export interface RequestOptions {
   readonly json?: unknown;
   /** multipart/form-data 请求体（不手动设置 Content-Type，交给浏览器补 boundary）。 */
   readonly form?: FormData;
+  /** 原始二进制请求体（用于恢复分块上传，固定 application/octet-stream）。 */
+  readonly bytes?: Uint8Array;
   /** 查询参数（undefined / 空串自动省略）。 */
   readonly query?: Readonly<Record<string, string | number | boolean | undefined>>;
   readonly signal?: AbortSignal;
@@ -241,6 +243,10 @@ async function rawFetch(path: string, options: RequestOptions): Promise<Response
     body = JSON.stringify(options.json);
   } else if (options.form !== undefined) {
     body = options.form;
+  } else if (options.bytes !== undefined) {
+    headers['Content-Type'] = 'application/octet-stream';
+    // 显式复制一份，避免 subarray 上传时把底层大缓冲整体交给 fetch。
+    body = options.bytes.slice().buffer as ArrayBuffer;
   }
   return fetch(buildUrl(path, options.query), {
     method,

@@ -42,10 +42,16 @@ export interface DoSqlStorageLike {
   exec(query: string, ...bindings: unknown[]): DoSqlCursorLike;
 }
 
-/** DO storage 的最小结构。`transactionSync` 仅 SQLite 后端提供。 */
+/** DO storage 的最小结构。`transactionSync` 仅 SQLite 后端提供；KV / alarm 供暂存与调度使用。 */
 export interface DoStorageLike {
   readonly sql: DoSqlStorageLike;
   transactionSync<T>(callback: () => T): T;
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  put(key: string, value: ArrayBuffer | ArrayBufferView | string): Promise<void>;
+  delete(key: string): Promise<boolean>;
+  list(options?: { prefix?: string }): Promise<Map<string, unknown>>;
+  setAlarm(time: number | Date): Promise<void>;
+  deleteAlarm(): Promise<void>;
 }
 
 /** 归一化驱动返回值。 */

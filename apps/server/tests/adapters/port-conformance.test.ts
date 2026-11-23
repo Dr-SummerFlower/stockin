@@ -64,6 +64,7 @@ function createDoStorageFake(file: string): {
       }
     },
   };
+  const kv = new Map<string, ArrayBuffer | ArrayBufferView | string>();
   const storage: DoStorageLike = {
     sql,
     transactionSync<T>(callback: () => T): T {
@@ -80,6 +81,30 @@ function createDoStorageFake(file: string): {
         }
         throw error;
       }
+    },
+    async get<T>(key: string): Promise<T | undefined> {
+      return kv.get(key) as T | undefined;
+    },
+    async put(key: string, value: ArrayBuffer | ArrayBufferView | string): Promise<void> {
+      kv.set(key, value);
+    },
+    async delete(key: string): Promise<boolean> {
+      return kv.delete(key);
+    },
+    async list(options?: { prefix?: string }): Promise<Map<string, unknown>> {
+      const result = new Map<string, unknown>();
+      for (const [key, value] of kv) {
+        if (options?.prefix === undefined || key.startsWith(options.prefix)) {
+          result.set(key, value);
+        }
+      }
+      return result;
+    },
+    async setAlarm(): Promise<void> {
+      // 测试替身：alarm 不真正触发。
+    },
+    async deleteAlarm(): Promise<void> {
+      // 测试替身：no-op。
     },
   };
   return { storage, dispose: (): void => raw.close() };

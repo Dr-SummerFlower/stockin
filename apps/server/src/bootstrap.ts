@@ -33,8 +33,10 @@ import { OperationLogRepository } from './repositories/operation-log.repository'
 import { AdminAccountRepository } from './repositories/admin-account.repository';
 import { AdminSessionRepository } from './repositories/admin-session.repository';
 import type {
+  BackgroundTaskScheduler,
   BackupPort,
   MigrationSource,
+  RestoreStagingPort,
   RuntimeBundle,
   StaticPort,
   VersionStore,
@@ -137,6 +139,8 @@ export interface ResolvedPorts {
   readonly backup: BackupPort;
   readonly staticPort: StaticPort;
   readonly workbookReader: WorkbookReader;
+  readonly backgroundScheduler: BackgroundTaskScheduler;
+  readonly restoreStaging: RestoreStagingPort;
 }
 
 export interface BootstrapResult {
@@ -243,6 +247,8 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
       backup,
       staticPort: await bundle.staticPort(env),
       workbookReader: bundle.workbookReader(env),
+      backgroundScheduler: bundle.backgroundScheduler(env),
+      restoreStaging: bundle.restoreStaging(env),
     };
     return { db, env, migration, repositories, ports };
   } catch (error) {

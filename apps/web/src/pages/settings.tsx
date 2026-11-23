@@ -6,7 +6,7 @@
  * 工程排查信息统一收进技术信息折叠区，配中文标签、用途说明与完整值展示。
  * 服务端内部标记一律映射为中文，未知值回落中性文案。文案保持中性书面语。
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App as AntdApp, Button, Select, Table, Tag } from 'antd';
 import type { TableProps } from 'antd';
 import { ImeInput as Input } from '@/components/ImeInput';
@@ -14,6 +14,8 @@ import {
   EXPIRY_THRESHOLD_MAX,
   EXPIRY_THRESHOLD_MIN,
   PRESET_SECURITY_QUESTIONS,
+  type LogicalBackupItem,
+  type LogicalBackupJobView,
 } from '@stockin/shared';
 import { useModel, useNavigate } from 'umi';
 import { getSettings, updateSettings } from '@/services/api/settings';
@@ -22,11 +24,7 @@ import {
   lookupSecurityQuestion,
   updateSecurity,
 } from '@/services/api/auth';
-import {
-  listBackups,
-  triggerBackup,
-  type BackupMetaView,
-} from '@/services/api/backup';
+import { listBackups, triggerBackup } from '@/services/api/backup';
 import { errorMessage } from '@/services/request';
 import TechnicalInfo, { type TechnicalField } from '@/components/TechnicalInfo';
 import EmptyState from '@/components/EmptyState';
@@ -34,12 +32,7 @@ import ErrorView from '@/components/ErrorView';
 import Icon, { type IconName } from '@/components/Icon';
 import InfoTip from '@/components/InfoTip';
 import { resetTour } from '@/components/OnboardingTour';
-import {
-  describeBackupReason,
-  formatBytes,
-  formatDateTime,
-  formatRelativeDateTime,
-} from '@/utils/format';
+import { formatBytes, formatDateTime, formatRelativeDateTime } from '@/utils/format';
 import { THEME_MODE_OPTIONS, type ThemeMode } from '@/utils/theme';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { ROUTES, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
@@ -53,90 +46,77 @@ const THEME_ICONS: Readonly<Record<ThemeMode, IconName>> = {
   system: 'monitor',
 };
 
-/** 完整性结果：服务端标记 → 中文；未知值回落中性文案。 */
-const INTEGRITY_TEXT: Readonly<Record<string, string>> = {
-  ok: '校验通过',
-  failed: '校验未通过',
+/** 备份任务状态：服务端标记 → 中文；未知值回落中性文案。 */
+const JOB_STATUS_TEXT: Readonly<Record<string, string>> = {
+  pending: '排队中',
+  running: '生成中',
+  done: '已完成',
+  failed: '失败',
 };
 
-function integrityText(integrity: string): string {
-  return INTEGRITY_TEXT[integrity] ?? '校验结果未知';
+function jobStatusText(status: string): string {
+  return JOB_STATUS_TEXT[status] ?? '状态未知';
 }
 
-/** 账号初始化状态：服务端标记 → 中文；未知值回落中性文案。 */
-const INIT_STATE_TEXT: Readonly<Record<number, string>> = {
-  0: '未完成',
-  1: '已完成',
-};
-
-function initStateText(state: number): string {
-  return INIT_STATE_TEXT[state] ?? '状态未知';
-}
-
-/** 是否为基准备份：布尔标记 → 中文；异常值回落中性文案。 */
-function baselineText(baseline: unknown): string {
-  if (baseline === true) return '是';
-  if (baseline === false) return '否';
-  return '未标注';
+/** 逻辑备份是否已完成：manifest 摘要写入即表示全部分块已校验落库。 */
+function isReady(record: LogicalBackupItem): boolean {
+  return record.manifestSha256 !== null;
 }
 
 /** 展开区：元数据换中文标签 + 用途说明，完整值直接展示，不截断、不设复制入口。 */
-function buildBackupFields(record: BackupMetaView): readonly TechnicalField[] {
+function buildBackupFields(record: LogicalBackupItem): readonly TechnicalField[] {
   return [
     {
-      label: '原始文件名',
-      value: record.file,
-      hint: '服务器上备份文件的名称',
+      label: '备份编号',
+      value: record.id,
+      hint: '服务端唯一编号，管理员下载时使用',
       mono: true,
     },
     {
-      label: '压缩包文件名',
-      value: record.gzipFile === '' ? '—' : record.gzipFile,
-      hint: '压缩后的备份文件名',
+      label: '备份时间（UTC）',
+      value: record.createdAt,
+      hint: '备份任务完成时间',
       mono: true,
-    },
-    {
-      label: '数据校验码',
-      value: record.sha256 === '' ? '—' : record.sha256,
-      hint: '用于校验备份文件是否被改动',
-      mono: true,
-    },
-    {
-      label: '文件格式标识',
-      value: record.magic === '' ? '—' : record.magic,
-      hint: '用于标识本系统生成的备份文件',
     },
     {
       label: '数据库结构版本',
-      value: String(record.userVersion),
-      hint: '备份时的数据结构版本，恢复时需匹配',
+      value: String(record.schemaVersion),
+      hint: '备份时的结构版本，恢复时必须与当前版本一致',
       mono: true,
     },
     {
-      label: '账号设置状态',
-      value: initStateText(record.initState),
-      hint: '备份时的账号初始化状态',
+      label: '数据明文大小',
+      value: formatBytes(record.plainBytes),
+      hint: '加密前的数据量，不含线格式开销',
     },
     {
-      label: '基准备份',
-      value: baselineText(record.baseline),
-      hint: '首次账号设置完成后建立的基础快照',
+      label: '分块数量',
+      value: `${record.chunkCount} 块`,
+      hint: '备份按表与游标分块加密，便于低内存恢复',
     },
     {
-      label: '触发方式',
-      value: describeBackupReason(record.reason),
-      hint: '本次备份由何种操作触发',
+      label: '密钥标识',
+      value: record.keyId,
+      hint: '用于定位本地解密私钥，不含密钥本体',
+      mono: true,
     },
     {
-      label: '校验结果',
-      value: integrityText(record.integrity),
-      hint: '备份文件的完整性校验结果',
+      label: '线格式版本',
+      value: String(record.formatVersion),
+      hint: '备份文件格式的兼容性标记',
+      mono: true,
+    },
+    {
+      label: '整包摘要',
+      value: record.manifestSha256 ?? '—',
+      hint: '所有分块摘要的汇总校验值，写入后备份才可用',
+      mono: true,
     },
   ];
 }
 
 /** 展开区与手机卡片共用同一份技术信息。 */
-const BackupTechnicalInfo: React.FC<{ readonly record: BackupMetaView }> = ({
+const BackupTechnicalInfo: React.FC<{ readonly record: LogicalBackupItem }> = ({
   record,
 }) => (
   <div className="stockin-expand-row">
@@ -144,14 +124,14 @@ const BackupTechnicalInfo: React.FC<{ readonly record: BackupMetaView }> = ({
   </div>
 );
 
-/** 完整性标签：颜色 + 文字双通道，未知值用中性色。 */
-function integrityTag(value: string): React.ReactNode {
-  const color = value === 'ok' ? 'success' : value === 'failed' ? 'error' : 'default';
-  return <Tag color={color}>{integrityText(value)}</Tag>;
+/** 备份状态标签：颜色 + 文字双通道。 */
+function backupStatusTag(record: LogicalBackupItem): React.ReactNode {
+  const ready: boolean = isReady(record);
+  return <Tag color={ready ? 'success' : 'processing'}>{ready ? '已完成' : '生成中'}</Tag>;
 }
 
-/** 备份主表 4 列：备份时间 / 触发方式 / 大小 / 状态。 */
-const backupColumns: TableProps<BackupMetaView>['columns'] = [
+/** 备份主表 4 列：备份时间 / 结构版本 / 大小 / 状态。 */
+const backupColumns: TableProps<LogicalBackupItem>['columns'] = [
   {
     title: '备份时间（北京时间）',
     dataIndex: 'createdAt',
@@ -167,41 +147,42 @@ const backupColumns: TableProps<BackupMetaView>['columns'] = [
     ),
   },
   {
-    title: '触发方式',
-    dataIndex: 'reason',
-    key: 'reason',
-    width: 180,
-    render: (value: string): React.ReactNode => describeBackupReason(value),
+    title: '结构版本',
+    dataIndex: 'schemaVersion',
+    key: 'schemaVersion',
+    width: 110,
+    align: 'right',
+    render: (value: number): React.ReactNode => String(value),
   },
   {
-    title: '大小',
-    dataIndex: 'sizeBytes',
-    key: 'sizeBytes',
+    title: '数据大小',
+    dataIndex: 'plainBytes',
+    key: 'plainBytes',
     width: 120,
     align: 'right',
     render: (value: number): React.ReactNode => formatBytes(value),
   },
   {
     title: '状态',
-    dataIndex: 'integrity',
-    key: 'integrity',
+    key: 'status',
     width: 120,
-    render: (value: string): React.ReactNode => integrityTag(value),
+    render: (_: unknown, record: LogicalBackupItem): React.ReactNode =>
+      backupStatusTag(record),
   },
 ];
 
-/** 手机档单张备份卡片：时间 / 触发方式 / 大小 / 状态，展开看技术信息。 */
-const BackupCard: React.FC<{ readonly record: BackupMetaView }> = ({ record }) => {
+/** 手机档单张备份卡片：时间 / 大小 / 状态，展开看技术信息。 */
+const BackupCard: React.FC<{ readonly record: LogicalBackupItem }> = ({ record }) => {
   const [expanded, setExpanded] = useState<boolean>(false);
   return (
     <div className="stockin-simple-card">
       <div className="stockin-simple-card-head">
         <span>{formatRelativeDateTime(record.createdAt)}</span>
-        {integrityTag(record.integrity)}
+        {backupStatusTag(record)}
       </div>
-      <div className="stockin-simple-card-value">{formatBytes(record.sizeBytes)}</div>
+      <div className="stockin-simple-card-value">{formatBytes(record.plainBytes)}</div>
       <div className="stockin-simple-card-meta">
-        {describeBackupReason(record.reason)} · {formatDateTime(record.createdAt)}
+        {record.chunkCount} 块 · 结构版本 {record.schemaVersion} · {formatDateTime(record.createdAt)}
       </div>
       <Button
         type="link"
@@ -237,11 +218,15 @@ const SettingsPage: React.FC = () => {
   const [saving, setSaving] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<unknown>(null);
-  const [backups, setBackups] = useState<readonly BackupMetaView[]>([]);
+  const [backups, setBackups] = useState<readonly LogicalBackupItem[]>([]);
   const [keepCount, setKeepCount] = useState<number>(0);
+  const [intervalDays, setIntervalDays] = useState<number>(0);
+  const [backupEnabled, setBackupEnabled] = useState<boolean>(false);
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
+  const [activeJob, setActiveJob] = useState<LogicalBackupJobView | null>(null);
   const [backupBusy, setBackupBusy] = useState<boolean>(false);
   const [reloadToken, setReloadToken] = useState<number>(0);
+  const pollTimer = useRef<number | null>(null);
 
   // 账号安全：修改密码
   const [currentPassword, setCurrentPassword] = useState<string>('');
@@ -269,6 +254,15 @@ const SettingsPage: React.FC = () => {
     [],
   );
 
+  const applyBackupList = useCallback((list: Awaited<ReturnType<typeof listBackups>>): void => {
+    setBackups(list.items);
+    setKeepCount(list.keepCount);
+    setIntervalDays(list.intervalDays);
+    setBackupEnabled(list.enabled);
+    setLastBackupAt(list.lastBackupAt);
+    setActiveJob(list.activeJob);
+  }, []);
+
   const load = useCallback((): void => {
     setLoading(true);
     setError(null);
@@ -276,13 +270,11 @@ const SettingsPage: React.FC = () => {
       .then(([settings, list]): void => {
         setThreshold(String(settings.expiryThresholdDays));
         setShopName(settings.shopName ?? '');
-        setBackups(list.items);
-        setKeepCount(list.keepCount);
-        setLastBackupAt(list.lastBackupAt);
+        applyBackupList(list);
       })
       .catch((cause: unknown): void => setError(cause))
       .finally((): void => setLoading(false));
-  }, []);
+  }, [applyBackupList]);
 
   useEffect((): void => {
     load();
@@ -342,16 +334,44 @@ const SettingsPage: React.FC = () => {
     }
   };
 
+  // 备份由后台分块生成：入队后短轮询，任务结束后再完整刷新一次。
+  function pollBackup(remaining: number): void {
+    if (remaining <= 0) return;
+    pollTimer.current = window.setTimeout(() => {
+      void listBackups()
+        .then((list): void => {
+          applyBackupList(list);
+          const job: LogicalBackupJobView | null = list.activeJob;
+          if (job !== null && job.status !== 'done' && job.status !== 'failed') {
+            pollBackup(remaining - 1);
+          } else if (job?.status === 'failed') {
+            message.error(job.error === null ? '备份任务失败' : `备份任务失败：${job.error}`);
+          } else if (job !== null) {
+            message.success('备份已完成');
+            setReloadToken((value: number): number => value + 1);
+          }
+        })
+        .catch((): void => {
+          // 轮询失败不改页面状态，用户可用刷新按钮重试。
+        });
+    }, 2000);
+  }
+
+  useEffect((): (() => void) => {
+    return (): void => {
+      if (pollTimer.current !== null) {
+        window.clearTimeout(pollTimer.current);
+      }
+    };
+  }, []);
+
   const trigger = async (): Promise<void> => {
     setBackupBusy(true);
     try {
-      const result = await triggerBackup();
-      if (result.status === 'ok') {
-        message.success('备份已创建');
-      } else {
-        message.warning('磁盘空间不足，本次备份已跳过');
-      }
+      await triggerBackup();
+      message.info('备份任务已入队，正在后台生成');
       setReloadToken((value: number): number => value + 1);
+      pollBackup(15);
     } catch (cause) {
       message.error(errorMessage(cause, '备份失败'));
     } finally {
@@ -409,10 +429,6 @@ const SettingsPage: React.FC = () => {
       setSecurityBusy(false);
     }
   };
-
-  const failedCount: number = backups.filter(
-    (record: BackupMetaView): boolean => record.integrity !== 'ok',
-  ).length;
 
   return (
     <div className="stockin-page">
@@ -689,7 +705,8 @@ const SettingsPage: React.FC = () => {
                 备份记录
               </h2>
               <Button
-                loading={backupBusy}
+                loading={backupBusy || activeJob !== null}
+                disabled={activeJob !== null}
                 onClick={(): void => {
                   void trigger();
                 }}
@@ -704,6 +721,10 @@ const SettingsPage: React.FC = () => {
                 <b>最近 {keepCount} 份</b>
               </div>
               <div className="stockin-kv">
+                <span>自动备份</span>
+                <b>{backupEnabled ? `每 ${intervalDays} 天` : '未启用'}</b>
+              </div>
+              <div className="stockin-kv">
                 <span>最近一次备份</span>
                 <b className="stockin-mono">
                   {lastBackupAt === null ? '暂无' : formatDateTime(lastBackupAt)}
@@ -711,11 +732,15 @@ const SettingsPage: React.FC = () => {
               </div>
             </div>
             <div style={{ padding: '0 var(--stockin-s6) var(--stockin-s6)' }}>
-              {failedCount > 0 ? (
+              {activeJob !== null ? (
                 <Alert
-                  type="warning"
+                  type={activeJob.status === 'failed' ? 'error' : 'info'}
                   showIcon
-                  message={`${failedCount} 份备份校验未通过`}
+                  message={
+                    activeJob.status === 'failed'
+                      ? `备份任务失败：${activeJob.error ?? '未知原因'}`
+                      : `备份任务${jobStatusText(activeJob.status)} · ${activeJob.totalChunks === null ? '统计中' : `${activeJob.chunkSeq}/${activeJob.totalChunks} 块`}`
+                  }
                   style={{ marginBottom: 12 }}
                 />
               ) : null}
@@ -726,21 +751,21 @@ const SettingsPage: React.FC = () => {
                   <EmptyState icon="log" title="暂无备份记录" />
                 ) : (
                   <div className="stockin-card-list">
-                    {backups.map((record: BackupMetaView) => (
-                      <BackupCard key={record.file} record={record} />
+                    {backups.map((record: LogicalBackupItem) => (
+                      <BackupCard key={record.id} record={record} />
                     ))}
                   </div>
                 )
               ) : (
-                <Table<BackupMetaView>
-                  rowKey="file"
+                <Table<LogicalBackupItem>
+                  rowKey="id"
                   size="small"
                   loading={loading}
                   columns={backupColumns}
-                  dataSource={backups as BackupMetaView[]}
+                  dataSource={backups as LogicalBackupItem[]}
                   pagination={false}
                   expandable={{
-                    expandedRowRender: (record: BackupMetaView): React.ReactNode => (
+                    expandedRowRender: (record: LogicalBackupItem): React.ReactNode => (
                       <BackupTechnicalInfo record={record} />
                     ),
                   }}

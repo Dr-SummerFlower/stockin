@@ -196,6 +196,7 @@ export const ERROR_SEGMENT = {
   VALID: 'VALID',
   RECORD: 'RECORD',
   EXCEL: 'EXCEL',
+  BACKUP: 'BACKUP',
   COMMON: 'COMMON',
 } as const;
 export type ErrorSegment = (typeof ERROR_SEGMENT)[keyof typeof ERROR_SEGMENT];
