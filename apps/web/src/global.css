@@ -1676,6 +1676,21 @@ a.stockin-touch {
   .stockin-page-actions .ant-btn {
     flex: 1 1 auto;
   }
+  /* 记录页主操作「新增记录」的包裹 span（data-tour-id=records-new）置顶、
+     独占一行并撑满按钮宽度：此前它在 DOM 末尾，换行后掉到第二行且靠左，
+     最重要的操作反而最不显眼。工具按钮（模板/导入/导出）退到下一行等分。 */
+  .stockin-page-actions [data-tour-id='records-new'] {
+    order: -1;
+    flex: 1 1 100%;
+  }
+  .stockin-page-actions [data-tour-id='records-new'] .ant-btn {
+    width: 100%;
+  }
+  /* 只有一个操作的页面（日志「刷新」、表单「返回列表」）不必拉满整行：
+     保持自然宽度靠左，避免一个短操作横跨全屏的怪异观感。多按钮页仍等分。 */
+  .stockin-page-actions > .ant-btn:only-child {
+    flex: 0 0 auto;
+  }
   .stockin-receipt-strip > span {
     padding: 3px var(--stockin-s3) 3px 0;
     border-right: 0;
@@ -2061,6 +2076,16 @@ a.stockin-touch {
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+  /* 长动作名与「查看技术信息」并列时，链接保持整词不换行；空间不足由
+     flex-wrap 把链接整块移到下一行右对齐，避免被挤成「查看技术信/息」。 */
+  flex-wrap: wrap;
+}
+.stockin-tl-head b {
+  min-width: 0;
+}
+.stockin-tl-head .stockin-link-btn {
+  flex: none;
+  white-space: nowrap;
 }
 
 @media (max-width: 1199px) {

@@ -401,18 +401,22 @@ const TrashPage: React.FC = () => {
           ) : null}
 
           <div className="stockin-panel">
-            <div className="stockin-panel-head">
-              {/* 分区标题与 h1「回收站」同义，已删；面板头用值型信息填充，不加说明文字。 */}
-              <span className="stockin-hint">共 {total} 条</span>
-              <Checkbox
-                checked={allOnPageSelected}
-                indeterminate={someOnPageSelected && !allOnPageSelected}
-                disabled={items.length === 0}
-                onChange={(event): void => toggleAllOnPage(event.target.checked)}
-              >
-                全选本页
-              </Checkbox>
-            </div>
+            {/* 真正空态（已加载且无记录）时隐藏头部统计 / 全选与底部分页：
+                0 条时的「共 0 条 / 全选本页 / 第 1 页」是无意义控件，只增加噪声。 */}
+            {!(items.length === 0 && !loading) ? (
+              <div className="stockin-panel-head">
+                {/* 分区标题与 h1「回收站」同义，已删；面板头用值型信息填充，不加说明文字。 */}
+                <span className="stockin-hint">共 {total} 条</span>
+                <Checkbox
+                  checked={allOnPageSelected}
+                  indeterminate={someOnPageSelected && !allOnPageSelected}
+                  disabled={items.length === 0}
+                  onChange={(event): void => toggleAllOnPage(event.target.checked)}
+                >
+                  全选本页
+                </Checkbox>
+              </div>
+            ) : null}
 
             {useCardList ? (
               loading ? (
@@ -452,16 +456,18 @@ const TrashPage: React.FC = () => {
               </div>
             )}
 
-            {/* 分页：纯页码按钮，与列表连成一体。 */}
-            <div className="stockin-panel-foot">
-              <Pager
-                page={page}
-                pageSize={pageSize}
-                total={total}
-                disabled={loading}
-                onChange={changePage}
-              />
-            </div>
+            {/* 分页：纯页码按钮，与列表连成一体；空态时不渲染无意义的「第 1 页」。 */}
+            {!(items.length === 0 && !loading) ? (
+              <div className="stockin-panel-foot">
+                <Pager
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  disabled={loading}
+                  onChange={changePage}
+                />
+              </div>
+            ) : null}
           </div>
         </>
       )}
