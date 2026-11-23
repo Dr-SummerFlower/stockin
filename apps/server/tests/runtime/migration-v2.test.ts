@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { readUserVersion } from '../../src/repositories/db';
+import { SCHEMA_EXPECTED } from '../../src/repositories/schema';
 import { createHarness, type Harness } from '../support/harness';
 
 let harness: Harness | null = null;
@@ -24,9 +25,9 @@ function columnNames(harness: Harness, table: string): string[] {
 }
 
 describe('迁移 002：自助引导与账号安全字段', () => {
-  it('完整迁移链到达当前 schema 版本（002 之后还有 003 管理员表）', async () => {
+  it('完整迁移链到达当前 schema 版本', async () => {
     harness = await createHarness();
-    expect(readUserVersion(harness.deps.db)).toBe(3);
+    expect(readUserVersion(harness.deps.db)).toBe(SCHEMA_EXPECTED);
   });
 
   it('credentials 具备密保三列，settings 具备 shop_name', async () => {

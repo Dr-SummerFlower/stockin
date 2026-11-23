@@ -117,6 +117,8 @@ export interface SettingsRow {
   id: number;
   expiry_threshold_days: number;
   shop_name: string;
+  logical_backup_interval_days: number;
+  physical_backup_interval_days: number;
 }
 
 export interface MetaRow {

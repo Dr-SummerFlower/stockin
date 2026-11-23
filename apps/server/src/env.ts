@@ -59,6 +59,8 @@ export interface Env {
   /** 仅当显式设置 WEB_DIST_DIR（或自测覆盖）时才非 undefined；否则由运行时兜底。 */
   readonly staticRoot?: string;
   readonly backupKeepCount: number;
+  /** 逻辑备份公钥（DER/SPKI base64）；为空表示未配置，逻辑备份不可用。 */
+  readonly backupPublicKey: string;
   readonly tmpfsBytes: number;
   readonly minFreeBytes: number;
   readonly nodeVersionExpected: string;
@@ -83,6 +85,7 @@ export interface EnvOverrides {
   readonly backupDir?: string;
   readonly tmpDir?: string;
   readonly staticRoot?: string;
+  readonly backupPublicKey?: string;
   /** 管理员 OAuth 覆盖（自测注入；缺省读 process.env.GITHUB_*）。 */
   readonly admin?: {
     readonly clientId?: string;
@@ -316,6 +319,12 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     allowedLogins,
   };
 
+  const backupPublicKey: string = (
+    overrides.backupPublicKey ??
+    process.env.BACKUP_PUBLIC_KEY ??
+    ''
+  ).trim();
+
   return {
     nodeEnv: overrides.nodeEnv ?? process.env.NODE_ENV ?? 'production',
     port,
@@ -332,6 +341,7 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     dbFile: path.join(dataDir, 'stockin.db'),
     staticRoot,
     backupKeepCount: BACKUP_KEEP_COUNT,
+    backupPublicKey,
     tmpfsBytes: TMPFS_BYTES,
     minFreeBytes: MIN_FREE_BYTES,
     nodeVersionExpected: NODE_VERSION_EXPECTED,

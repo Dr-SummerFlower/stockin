@@ -168,7 +168,9 @@ jobs:
             printf 'previews_enabled = true\n'
             printf 'enabled = false\n'
           } > .wrangler.preview.toml
-          wrangler preview --config .wrangler.preview.toml --name dev --var "PUBLIC_ORIGINS:${PREVIEW_ORIGIN}"
+          wrangler preview --config .wrangler.preview.toml --name dev \
+            --var "PUBLIC_ORIGINS:${PREVIEW_ORIGIN}" \
+            --var "BACKUP_PUBLIC_KEY:${{ secrets.BACKUP_PUBLIC_KEY }}"
           {
             echo "### Worker Preview"
             echo "${PREVIEW_ORIGIN}"
@@ -431,7 +433,8 @@ jobs:
           # 否则命令替换会把失败输出一起吞掉、日志里只剩一行 set -e 退出。
           DOMAIN="${{ steps.origins.outputs.domain }}"
           ARGS=(deploy --name "${WORKER_NAME}" --tag "${VERSION}"
-            --var "PUBLIC_ORIGINS:${{ steps.origins.outputs.origins }}")
+            --var "PUBLIC_ORIGINS:${{ steps.origins.outputs.origins }}"
+            --var "BACKUP_PUBLIC_KEY:${{ secrets.BACKUP_PUBLIC_KEY }}")
           if [[ -n "${DOMAIN}" ]]; then
             ARGS+=(--domain "${DOMAIN}")
           fi

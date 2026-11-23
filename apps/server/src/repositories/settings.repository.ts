@@ -53,4 +53,35 @@ export class SettingsRepository {
       this.db.prepare('UPDATE settings SET shop_name = ? WHERE id = 1').run(name.trim()).changes > 0
     );
   }
+
+  getLogicalBackupIntervalDays(): number {
+    const value: number = this.getRow().logical_backup_interval_days;
+    return Number.isSafeInteger(value) && value >= 1 ? value : 7;
+  }
+
+  getPhysicalBackupIntervalDays(): number {
+    const value: number = this.getRow().physical_backup_interval_days;
+    return Number.isSafeInteger(value) && value >= 1 ? value : 30;
+  }
+
+  setLogicalBackupIntervalDays(days: number): boolean {
+    if (!Number.isInteger(days) || days < 1 || days > 365) {
+      throw new RangeError(`[settings] 逻辑备份间隔必须是 1~365 的整数: ${String(days)}`);
+    }
+    return (
+      this.db.prepare('UPDATE settings SET logical_backup_interval_days = ? WHERE id = 1').run(days)
+        .changes > 0
+    );
+  }
+
+  setPhysicalBackupIntervalDays(days: number): boolean {
+    if (!Number.isInteger(days) || days < 1 || days > 365) {
+      throw new RangeError(`[settings] 物理备份间隔必须是 1~365 的整数: ${String(days)}`);
+    }
+    return (
+      this.db
+        .prepare('UPDATE settings SET physical_backup_interval_days = ? WHERE id = 1')
+        .run(days).changes > 0
+    );
+  }
 }

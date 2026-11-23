@@ -84,6 +84,32 @@ export interface BackupPort {
   read?(file: string): { data: Uint8Array; filename: string } | null;
 }
 
+/**
+ * 后台任务调度端口：备份/恢复 job 需要跨请求推进。
+ *
+ * Node 用定时器，Workers 用 DO alarm；Service 只调用 `schedule()`，
+ * 不认识任何平台 API。
+ */
+export interface BackgroundTaskScheduler {
+  /** 请求在 `delayMs` 后执行一次后台 tick；重复调用由实现合并。 */
+  schedule(delayMs?: number): void;
+}
+
+/**
+ * 恢复数据暂存端口：恢复期间暂存上传分块，不落业务表。
+ *
+ * Node 用临时目录，Workers 用 DO KV；批次结束后必须删除。
+ * `markBatch` 用于一次性防重放，TTL 由实现按时间戳检查。
+ */
+export interface RestoreStagingPort {
+  putChunk(batchId: string, seq: number, data: Uint8Array): Promise<void>;
+  readChunk(batchId: string, seq: number): Promise<Uint8Array | null>;
+  listChunkSeqs(batchId: string): Promise<number[]>;
+  deleteBatch(batchId: string): Promise<void>;
+  /** 标记批次已使用；返回 false 表示重复/已过期。 */
+  consumeBatch(batchId: string, expiresAtIso: string): Promise<boolean>;
+}
+
 /** 备份入参；`backupDir` 由各实现从自身配置取，调用方不传。 */
 export interface BackupCreateOptions {
   readonly reason: string;

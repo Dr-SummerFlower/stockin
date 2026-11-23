@@ -42,6 +42,7 @@ export function workerEnvOverrides(env: Record<string, unknown>): EnvOverrides {
     originScheme: scheme === undefined ? undefined : (scheme as OriginScheme),
     cookieSecure: pick(vars, 'COOKIE_SECURE'),
     nodeEnv: pick(vars, 'NODE_ENV'),
+    backupPublicKey: pick(vars, 'BACKUP_PUBLIC_KEY'),
     // 管理员 GitHub OAuth：三项都是 Worker 的 Secret 绑定，必须显式从平台 env
     // 取出并注入；Worker 上 `process.env` 不可靠，漏映射会让管理员登录恒返回「未配置」。
     admin: {
