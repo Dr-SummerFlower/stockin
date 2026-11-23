@@ -10,6 +10,7 @@ import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const REMOTE = 'origin';
+const BRANCH = 'main';
 
 function fail(message) {
   process.stderr.write(`\n[pre] ✗ ${message}\n`);
@@ -35,6 +36,7 @@ if (status.stdout.trim()) {
 
 const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim();
 if (branch === 'HEAD') fail('当前处于 detached HEAD，无法确定预发布分支');
+if (branch !== BRANCH) fail(`当前在 ${branch} 分支，预发布必须在 ${BRANCH} 分支进行`);
 
 const sha = git(['rev-parse', 'HEAD']).stdout.trim();
 const sha7 = sha.slice(0, 7);
