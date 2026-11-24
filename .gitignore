@@ -21,6 +21,9 @@ build/
 .cache/
 coverage/
 
+# --- 本地密钥（逻辑备份私钥等，绝不入库；读取需用户明确同意，见 CONVENTIONS §4） ---
+.keys/
+
 # --- 运行时数据（本地持久化，绝不入库） ---
 data/
 backups/

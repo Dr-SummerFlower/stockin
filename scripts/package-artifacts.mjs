@@ -134,6 +134,8 @@ set "DATA_DIR=%~dp0data"
 set "BACKUP_DIR=%~dp0backups"
 set "TMP_DIR=%~dp0tmp"
 set "WEB_DIST_DIR=%~dp0web\\dist"
+REM 逻辑备份公钥（可选）：也可在启动前设置同名环境变量；为空则逻辑备份不可用。
+if not defined BACKUP_PUBLIC_KEY set "BACKUP_PUBLIC_KEY="
 
 echo 正在启动进货统计，访问 %PUBLIC_ORIGIN%
 echo 首次启动会在下方打印 [BOOTSTRAP] 初始账号与密码，请及时登录并修改。
@@ -163,6 +165,8 @@ export DATA_DIR="$PWD/data"
 export BACKUP_DIR="$PWD/backups"
 export TMP_DIR="$PWD/tmp"
 export WEB_DIST_DIR="$PWD/web/dist"
+# 逻辑备份公钥（可选）：也可在启动前 export 同名变量；为空则逻辑备份不可用。
+export BACKUP_PUBLIC_KEY="\${BACKUP_PUBLIC_KEY:-}"
 
 echo "正在启动进货统计，访问 $PUBLIC_ORIGIN"
 echo "首次启动会在下方打印 [BOOTSTRAP] 初始账号与密码，请及时登录并修改。"

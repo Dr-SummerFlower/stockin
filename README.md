@@ -87,8 +87,9 @@ cp .env.example .env          # 编辑 .env：确认镜像标签与来源白名�
 | `IMAGE_REPO` / `IMAGE_TAG` | 见 `.env` | 仅 Docker 编排层；镜像仓库与版本 |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 空 | GitHub OAuth App 凭据；仅管理员登录使用，三者缺一即禁用管理员入口 |
 | `ADMIN_GITHUB_LOGINS` | 空 | 允许登录的 GitHub 账号名，逗号分隔（大小写不敏感） |
+| `BACKUP_PUBLIC_KEY` | 空 | 逻辑备份公钥（DER/SPKI base64，单行）；为空则逻辑备份与一次性恢复不可用。用 `pnpm backup:keygen` 生成到本地 `.keys/`，私钥不部署 |
 
-`RUNTIME_TARGET` 及 11 项平台覆盖项用于 Node / Workers 双运行时切换，正常部署只需设 `RUNTIME_TARGET=workers`（Workers 预设里已设），其余走预设。除上述管理员 OAuth 三项（Workers 上以 Secret 形式配置）外，应用没有密钥型环境变量：账密哈希、salt、会话都在 SQLite，CI 凭据是 GitHub secrets。
+`RUNTIME_TARGET` 及 11 项平台覆盖项用于 Node / Workers 双运行时切换，正常部署只需设 `RUNTIME_TARGET=workers`（Workers 预设里已设），其余走预设。除管理员 OAuth 三项（Workers 上以 Secret 形式配置）与逻辑备份公钥 `BACKUP_PUBLIC_KEY` 外，应用没有密钥型环境变量：账密哈希、salt、会话都在 SQLite，CI 凭据是 GitHub secrets；逻辑备份私钥只保存在部署机的 `.keys/`，从不进入运行环境。
 
 ### 管理员入口与 GitHub OAuth
 
