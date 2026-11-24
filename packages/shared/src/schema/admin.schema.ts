@@ -24,7 +24,7 @@ export const backupSettingsSchema = z
     { message: '至少提供一项间隔设置' },
   );
 
-/** 恢复票据：字段固定，签名 8~1024 字符（base64）。 */
+/** 恢复票据：字段固定，签名 8~2048 字符（base64；P-256 DER 约 88 字符，上限留余量）。 */
 export const restoreCommitSchema = z.object({
   batchId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
   ticket: z.object({
