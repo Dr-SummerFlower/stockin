@@ -102,6 +102,32 @@ describe('LogicalBackupRepository', () => {
     expect(tables).not.toContain('sqlite_sequence');
   });
 
+  it('listTables 排除平台内部表（_cf_METADATA / __cf_kv / app_schema_version）', () => {
+    // DO SQLite 自带 `_cf_METADATA`，workerd 上对它执行 PRAGMA table_info 会返回
+    // `not authorized: SQLITE_AUTH`；这里在 Node 上等价造同名表，断言不会被当成
+    // 业务表参与分块（2026-11-24 pre 预览逻辑备份停在 running 的成因）。
+    db.exec('CREATE TABLE "_cf_METADATA" (key TEXT PRIMARY KEY, value TEXT)');
+    db.exec('CREATE TABLE "__cf_kv" (key TEXT PRIMARY KEY, value BLOB)');
+    db.exec('CREATE TABLE "__miniflare_do_name" (name TEXT)');
+    db.exec('CREATE TABLE "app_schema_version" (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)');
+    db.exec('CREATE TABLE "app_flags" (name TEXT PRIMARY KEY, value TEXT NOT NULL)');
+
+    const tables = repo.listTables();
+    expect(tables).toContain('records');
+    expect(tables).toContain('settings');
+    // Workers 备份包必须与 Node 等价：只含 RESTORE_TABLES 那批业务表。
+    expect(tables).toEqual([
+      'admin_accounts',
+      'credentials',
+      'meta',
+      'operation_logs',
+      'records',
+      'settings',
+    ]);
+    // 仍受白名单保护：排除表不可被显式寻址。
+    expect(() => repo.listColumns('_cf_METADATA')).toThrow(/非法表名/);
+  });
+
   it('readRows 按 rowid 分块推进，且不越过 limit', () => {
     for (let i = 0; i < LOGICAL_BACKUP_CHUNK_ROWS + 5; i += 1) {
       db.prepare(

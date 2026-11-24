@@ -18,6 +18,31 @@ const EXCLUDED_TABLES = new Set([
   'admin_sessions',
 ]);
 
+/**
+ * 平台内部表：既不是业务数据，也不该出现在跨平台的备份包里。
+ *
+ *  - Cloudflare DO SQLite 自带 `_cf_METADATA`（存储元数据）、KV API 的 `__cf_kv`，
+ *    以及本地 miniflare 的 `__miniflare_*`：以 `__` / `_cf_` 开头；
+ *  - Workers 的 schema 版本与旗标落在 `app_schema_version` / `app_flags`
+ *    （Node 用 `PRAGMA user_version`，没有这两张表），它们不在 RESTORE_TABLES 里，
+ *    备份进来也恢复不回去，只会让 Workers 备份包比 Node 多出无关表。
+ *
+ * 关键约束：`PRAGMA table_info('_cf_METADATA')` 在 workerd 上直接返回
+ * `not authorized: SQLITE_AUTH`（2026-11-24 本地 workerd 实测）。一旦这类表被
+ * 当成业务表参与分块，整个逻辑备份会永远停在 running —— 这也是 pre 预览里
+ * 备份一直推进不动的原因。
+ */
+const PLATFORM_INTERNAL_PREFIXES: readonly string[] = ['sqlite_', '_cf_', '__'];
+const PLATFORM_INTERNAL_TABLES = new Set(['app_schema_version', 'app_flags']);
+
+/** 是否属于平台内部/被排除的表（不参与逻辑备份）。 */
+function isExcludedTable(name: string): boolean {
+  if (EXCLUDED_TABLES.has(name) || PLATFORM_INTERNAL_TABLES.has(name)) {
+    return true;
+  }
+  return PLATFORM_INTERNAL_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 export interface BackupJobRow {
   id: string;
   kind: 'logical';
@@ -314,7 +339,7 @@ export class LogicalBackupRepository {
          ORDER BY name ASC`,
       )
       .all() as { name: string }[];
-    return rows.map((row) => row.name).filter((name) => !EXCLUDED_TABLES.has(name));
+    return rows.map((row) => row.name).filter((name) => !isExcludedTable(name));
   }
 
   listColumns(table: string): string[] {
