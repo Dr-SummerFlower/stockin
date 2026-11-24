@@ -61,7 +61,12 @@ const RestorePanel: React.FC = () => {
     }
     setBusy(true);
     try {
-      const ticket = JSON.parse(await ticketFile.text()) as RestoreTicket;
+      let ticket: RestoreTicket;
+      try {
+        ticket = JSON.parse(await ticketFile.text()) as RestoreTicket;
+      } catch {
+        throw new Error('票据文件不是合法的 JSON，请检查是否选错了文件');
+      }
       if (ticket?.payload?.batchId !== batch.batchId) {
         throw new Error('票据批次与当前批次不一致，请按页面显示的批次号重新生成票据');
       }
