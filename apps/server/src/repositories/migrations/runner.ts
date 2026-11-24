@@ -62,8 +62,16 @@ export function renderMigrationSql(raw: string, version: number): string {
  *
  * 仅匹配「以 ALTER TABLE 开头、以分号结尾」的独立语句行，与仓库现有迁移
  * 脚本的书写风格一致；多行 ALTER 或带子查询的写法不在此列（本仓库没有）。
+ *
+ * **注释必须独占一行**：workerd 把整段 SQL 切成语句逐条 prepare，末条语句
+ * 之后若还残留非空内容（如行尾 `-- 说明`），会因「切出来的那一段没有语句」
+ * 抛 `SQL code did not contain a statement.` —— Node 的 `db.exec` 不会，
+ * 于是这个差异只会在 Cloudflare 上暴露（2026-11-24 pre 预览 1101 即此）。
  */
 const ADD_COLUMN_LINE = /^(\s*)ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+.*;\s*$/i;
+
+/** 末条语句之后只允许空白：workerd 的语句切分要求（见上）。 */
+const TRAILING_STATEMENT_TAIL = /;\s*$/;
 
 export function columnExists(db: Db, table: string, column: string): boolean {
   const quoted: string = `'${table.replaceAll("'", "''")}'`;
@@ -83,11 +91,24 @@ export function makeAddColumnsIdempotent(db: Db, sql: string): string {
       const table: string = matched[2] ?? '';
       const column: string = matched[3] ?? '';
       if (columnExists(db, table, column)) {
-        return `${indent}SELECT 1; -- 幂等补列：${table}.${column} 已存在`;
+        // 注释独占一行、语句放在最后：末条语句之后只剩空白，workerd 才不会
+        // 因为「切出的一段没有语句」而报 `SQL code did not contain a statement.`。
+        return `${indent}-- 幂等补列：${table}.${column} 已存在，跳过 ALTER\n${indent}SELECT 1;`;
       }
       return line;
     })
     .join('\n');
+}
+
+/**
+ * 末条语句之后是否只剩空白。
+ *
+ * workerd 把整段 SQL 切成语句逐条 prepare，末尾残留 `-- 注释` 这类非空内容会
+ * 直接抛 `SQL code did not contain a statement.`（Node 的 `db.exec` 不会），
+ * 因此迁移脚本生成结果必须满足这条约束，由测试逐脚本断言。
+ */
+export function hasStatementOnlyTail(sql: string): boolean {
+  return TRAILING_STATEMENT_TAIL.test(sql);
 }
 
 export interface RunMigrationsOptions {
