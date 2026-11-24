@@ -18,6 +18,17 @@ export const RESTORE_TABLES = [
   'admin_accounts',
 ] as const;
 
+/**
+ * 返回恢复包中缺失的可恢复表名。
+ * 全量替换语义要求包覆盖 RESTORE_TABLES 全集：restoreAll 会先 DELETE 全部表，
+ * 缺失的表清空后不会回填，构成半恢复（违反 CONVENTIONS §4）。
+ * 正常脚本在 decrypt 阶段用 ensureAllRestoreTables 补齐，服务端再做一道强制校验。
+ */
+export function missingRestoreTables(tables: readonly { table: string }[]): string[] {
+  const present = new Set(tables.map((entry) => entry.table));
+  return RESTORE_TABLES.filter((name) => !present.has(name));
+}
+
 /** 恢复窗口内需临时移除、随后重建的触发器定义（名称 + 完整 CREATE 语句）。 */
 const TRIGGERS: readonly { name: string; create: string }[] = [
   {
@@ -86,6 +97,13 @@ export class RestoreRepository {
    */
   restoreAll(tables: readonly RestoreTable[]): void {
     this.db.transaction('immediate', () => {
+      // 0) 覆盖校验（服务端强制，防半恢复）：缺表时 DELETE 会清空该表却无法回填。
+      //    在任何删除之前校验，抛错由事务契约整体回滚，数据不受影响。
+      const missing: string[] = missingRestoreTables(tables);
+      if (missing.length > 0) {
+        throw new Error(`[restore] 恢复包缺少可恢复表，拒绝半恢复: ${missing.join(', ')}`);
+      }
+
       // 1) 移除 append-only / 单向状态机触发器，否则 DELETE 会被 RAISE 拦截。
       for (const trigger of TRIGGERS) {
         this.db.exec(`DROP TRIGGER IF EXISTS ${trigger.name}`);

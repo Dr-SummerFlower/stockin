@@ -51,6 +51,45 @@ export function renderMigrationSql(raw: string, version: number): string {
     .join('\n');
 }
 
+/**
+ * 把单条 `ALTER TABLE ... ADD COLUMN ...` 改写为幂等语句：列已存在时整条变成
+ * 无副作用的 `SELECT 1`，否则原样保留。
+ *
+ * 用于修复「004 曾就地加列、版本未升」这类历史问题：新增的 005 补列脚本在
+ * 全新库（004 已含列）和旧库（004 未含列）上都要能安全执行。真正的幂等分支
+ * 由 `columnExists` 在应用层判定——SQLite 的 ADD COLUMN 没有 IF NOT EXISTS，
+ * 且不能放在事务外执行，故只能在生成 SQL 文本时替换。
+ *
+ * 仅匹配「以 ALTER TABLE 开头、以分号结尾」的独立语句行，与仓库现有迁移
+ * 脚本的书写风格一致；多行 ALTER 或带子查询的写法不在此列（本仓库没有）。
+ */
+const ADD_COLUMN_LINE = /^(\s*)ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+.*;\s*$/i;
+
+export function columnExists(db: Db, table: string, column: string): boolean {
+  const quoted: string = `'${table.replaceAll("'", "''")}'`;
+  const rows = db.prepare(`PRAGMA table_info(${quoted})`).all() as { name: string }[];
+  return rows.some((row) => row.name === column);
+}
+
+export function makeAddColumnsIdempotent(db: Db, sql: string): string {
+  return sql
+    .split('\n')
+    .map((line) => {
+      const matched: RegExpExecArray | null = ADD_COLUMN_LINE.exec(line);
+      if (matched === null) {
+        return line;
+      }
+      const indent: string = matched[1] ?? '';
+      const table: string = matched[2] ?? '';
+      const column: string = matched[3] ?? '';
+      if (columnExists(db, table, column)) {
+        return `${indent}SELECT 1; -- 幂等补列：${table}.${column} 已存在`;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
 export interface RunMigrationsOptions {
   readonly db: Db;
   /** 脚本来源：文件系统或构建期内联。 */
@@ -113,7 +152,10 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
   const applied: number[] = [];
   for (const file of pending) {
     const raw: string = migrations.read(file);
-    const sql: string = renderMigrationSql(raw, file.version);
+    const rendered: string = renderMigrationSql(raw, file.version);
+    // 幂等化补列：列已存在（如全新库的 004 已含 kdf_salt）时跳过该 ALTER，
+    // 让同一份 005 脚本对全新库与各类 v4 旧库都能安全执行。
+    const sql: string = makeAddColumnsIdempotent(db, rendered);
     logger.info({ script: file.filename }, '[migration] 开始执行');
     immediateTransaction(db, () => {
       db.exec(sql);

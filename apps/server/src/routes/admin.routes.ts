@@ -277,7 +277,7 @@ export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): vo
 
   api.get('/api/admin/logical-backups/:id/download', (c) => {
     const id: string = c.req.param('id') ?? '';
-    const result = deps.logicalBackup.buildDownload(id);
+    const result = deps.logicalBackup.openDownload(id);
     if (!result.ok) {
       return errorResponse(result.code, c.get('requestId') ?? '', result.details);
     }
@@ -288,19 +288,24 @@ export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): vo
       adminSessionId: admin?.id ?? '',
     });
 
-    const { meta, chunks } = result.data;
+    const { meta, lines } = result.data;
     const encoder = new TextEncoder();
-    const parts: string[] = [JSON.stringify(meta), ...chunks.map((chunk) => JSON.stringify(chunk))];
-    let index = 0;
+    const lineIter = lines[Symbol.iterator]();
+    let first = true;
     const stream = new ReadableStream<Uint8Array>({
       pull(controller) {
-        if (index >= parts.length) {
+        if (first) {
+          first = false;
+          controller.enqueue(encoder.encode(`${JSON.stringify(meta)}\n`));
+          return;
+        }
+        // 每次只从迭代器取一行，不整包构造数组/Buffer，保持内存水位低。
+        const next = lineIter.next();
+        if (next.done) {
           controller.close();
           return;
         }
-        // 每次推一行，保持内存水位低（不整包构造大 Buffer）。
-        controller.enqueue(encoder.encode(`${parts[index] ?? ''}\n`));
-        index += 1;
+        controller.enqueue(encoder.encode(next.value));
       },
     });
     const stamp: string = meta.createdAt.replace(/[:.]/g, '-');
@@ -395,7 +400,7 @@ export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): vo
     }),
     async (c) => {
       const input = c.req.valid('json') as RestoreCommitRequest;
-      const result = await deps.restore.commit(input.batchId, input.ticket);
+      const result = await deps.restore.commit(input.batchId, input.ticket, adminActorOf(c));
       return result.ok
         ? c.json(result.data, 200)
         : errorResponse(result.code, c.get('requestId') ?? '', result.details);

@@ -26,6 +26,7 @@ import type { OperationLogRepository } from '../repositories/operation-log.repos
 import type { BackupService } from './backup.service';
 import type { Env } from '../env';
 import type { RuntimeTarget } from '../runtime/platform';
+import { SCHEMA_EXPECTED } from '../repositories/schema';
 import { derivePasswordHash, generateSaltHex, serializeScryptParams } from '../lib/crypto';
 import { utcNowIso } from '../lib/today';
 import type { ServiceResult } from '../app';
@@ -66,7 +67,10 @@ export class AdminService {
     return {
       version: APP_VERSION,
       runtime: this.deps.runtimeTarget,
-      schemaVersion: this.deps.meta.schemaVersion(),
+      // 恢复票据的 schema 由服务端按 SCHEMA_EXPECTED 校验；这里必须下发同一值。
+      // meta.schema_version 只在 001 初始化，升级库上仍为初始值，用它指导签名会让
+      // 升级库签出的票据被拒绝恢复。
+      schemaVersion: SCHEMA_EXPECTED,
       recordCount: counts?.active ?? 0,
       trashCount: counts?.trashed ?? 0,
       logCount: counts?.logs ?? 0,

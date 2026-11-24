@@ -98,6 +98,15 @@ export interface BackgroundTaskScheduler {
   setTick(fn: () => Promise<boolean>): void;
   /** 请求在 `delayMs` 后执行一次后台 tick；重复调用由实现合并。 */
   schedule(delayMs?: number): void;
+  /**
+   * 平台定时器/alarms 真正触发时的入口（可选，仅 Workers alarm 实现）。
+   *
+   * Workers 的 alarm 调度器有一个「只保留更早 alarm」的合并守卫；alarm 触发后
+   * 必须经本方法清空守卫标记，否则 tick 末尾的 `schedule()` 会被自己吞掉，
+   * 多 chunk 备份推进一次即永久停滞。Node 定时器无此守卫，可不实现；调用方
+   * 在未实现时回落到直接 `tick()`。
+   */
+  onAlarm?(): Promise<void>;
   /** 停止调度（优雅停机 / DO 关闭）。 */
   stop?(): void;
 }
@@ -115,6 +124,11 @@ export interface RestoreStagingPort {
   deleteBatch(batchId: string): Promise<void>;
   /** 标记批次已使用；返回 false 表示重复/已过期。 */
   consumeBatch(batchId: string, expiresAtIso: string): Promise<boolean>;
+  /**
+   * 只读查询批次是否已被消费。用于在读取数据/校验前提前识别重放，
+   * 使「已消费的重放」返回 CONFLICT，而「校验失败」仍可用同批次重试。
+   */
+  isConsumed(batchId: string): Promise<boolean>;
 }
 
 /** 备份入参；`backupDir` 由各实现从自身配置取，调用方不传。 */

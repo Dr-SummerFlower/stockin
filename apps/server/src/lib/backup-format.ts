@@ -183,6 +183,27 @@ export async function restoreDataDigest(tables: readonly RestoreTable[]): Promis
   return hashBackupBytes(new TextEncoder().encode(parts.join('\n')));
 }
 
+/**
+ * 保证恢复包覆盖全部可恢复表。全量替换语义下，服务端会先清空全部业务表再
+ * 按包回填；零行的表不产生 chunk，若不在包里显式列出就会「被清空且不回填」。
+ * 这里为缺失的表补一行空表（rows 为空，服务端跳过插入），避免半恢复。
+ *
+ * 表名白名单由调用方传入（避免 lib 层依赖 repository），顺序即白名单顺序。
+ */
+export function ensureAllRestoreTables(
+  tables: readonly RestoreTable[],
+  requiredTables: readonly string[],
+): RestoreTable[] {
+  const present = new Set(tables.map((table) => table.table));
+  const filled: RestoreTable[] = [...tables];
+  for (const name of requiredTables) {
+    if (!present.has(name)) {
+      filled.push({ kind: 'table', table: name, columns: [], rows: [] });
+    }
+  }
+  return filled;
+}
+
 /** 把一行 NDJSON 解析为恢复包记录；非法行抛错。 */
 export function parseRestoreLine(line: string): RestorePackageLine {
   const parsed: unknown = JSON.parse(line);

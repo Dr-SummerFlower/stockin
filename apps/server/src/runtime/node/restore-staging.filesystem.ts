@@ -71,12 +71,18 @@ export function createFilesystemRestoreStaging(
       }
       // 保留 .consumed 标记：与 Workers KV 版一致，batchId 的防重放需持续到
       // 时间窗口自然过期；删除分块但保留消费记录，避免同批次被重放。
+      // .consuming 是瞬时锁，正常路径已被 consumeBatch 清理；这里兜底删除残留。
       for (const name of fs.readdirSync(dir)) {
-        if (name === '.consumed' || name === '.consuming') {
+        if (name === '.consumed') {
           continue;
         }
         fs.rmSync(path.join(dir, name), { force: true });
       }
+    },
+
+    async isConsumed(batchId): Promise<boolean> {
+      const consumed = path.join(batchDir(batchId), '.consumed');
+      return fs.existsSync(consumed);
     },
 
     async consumeBatch(batchId, expiresAtIso): Promise<boolean> {
@@ -98,6 +104,8 @@ export function createFilesystemRestoreStaging(
         return false;
       }
       fs.writeFileSync(consumed, expiresAtIso, 'utf8');
+      // .consumed 已是持久的防重放标记，瞬时锁不再需要，立即清理避免残留。
+      fs.rmSync(lock, { force: true });
       return true;
     },
   };

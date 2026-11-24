@@ -28,12 +28,14 @@ import {
   chunkAad,
   encodeManifest,
   encodeTicketPayload,
+  ensureAllRestoreTables,
   parseBackupLine,
   restoreDataDigest,
   type BackupFileMeta,
   type RestoreTable,
   type RestoreTicket,
 } from '../apps/server/src/lib/backup-format';
+import { RESTORE_TABLES } from '../apps/server/src/repositories/restore.repository';
 
 function arg(name: string, required = true): string | undefined {
   const idx = process.argv.indexOf(`--${name}`);
@@ -82,7 +84,14 @@ async function cmdDecrypt(): Promise<void> {
 
   // 按表聚合并校验每个 chunk 的 sha256 与 AAD。
   const byTable = new Map<string, RestoreTable>();
-  const manifestEntries: { seq: number; table: string; rowStart: number; rowCount: number; sha256: string; plainBytes: number }[] = [];
+  const manifestEntries: {
+    seq: number;
+    table: string;
+    rowStart: number;
+    rowCount: number;
+    sha256: string;
+    plainBytes: number;
+  }[] = [];
   let seenSeq = 0;
   for (let i = 1; i < lines.length; i += 1) {
     const line = parseBackupLine(lines[i] ?? '');
@@ -142,7 +151,10 @@ async function cmdDecrypt(): Promise<void> {
     throw new Error('manifest 摘要不匹配，备份可能已被篡改');
   }
 
-  const tables = [...byTable.values()];
+  // 全量替换语义要求恢复包恒定覆盖 RESTORE_TABLES 全部表：零行的表不会产生
+  // chunk，若不在包里显式列出，服务端 restoreAll 先清空该表又不会回填，构成
+  // 半恢复。ensureAllRestoreTables 为缺失表补空表条目（rows 为空时服务端跳过插入）。
+  const tables: RestoreTable[] = ensureAllRestoreTables([...byTable.values()], RESTORE_TABLES);
   const dataSha256 = await restoreDataDigest(tables);
   const restoreLines = [
     JSON.stringify({
@@ -184,12 +196,21 @@ async function cmdTicket(): Promise<void> {
     .split('\n')
     .map((line) => {
       try {
-        return JSON.parse(line) as { kind?: string; keyId?: string };
+        return JSON.parse(line) as { kind?: string; keyId?: string; dataSha256?: string };
       } catch {
         return {};
       }
     })
     .find((row) => row.kind === 'restore-meta');
+  // 签名前必须校验恢复包摘要：decrypt 阶段已把可信摘要写入 restore-meta。
+  // 若 decrypt 与 ticket 之间包被篡改，重算值与 meta 不符即拒绝签名，避免把
+  // 篡改后的数据摘要签进票据（服务端只校验「上传数据 == 票据摘要」，否则会放行）。
+  if (metaRow?.dataSha256 !== dataSha256) {
+    throw new Error(
+      `恢复包摘要与 restore-meta 不符（meta=${metaRow?.dataSha256 ?? '缺失'}，` +
+        `实际=${dataSha256}），包可能已被篡改，拒绝签名`,
+    );
+  }
   const payload = {
     v: BACKUP_WIRE_VERSION,
     batchId,
@@ -214,13 +235,30 @@ async function cmdRestore(): Promise<void> {
   const ticket = JSON.parse(readText(arg('ticket')!)) as RestoreTicket;
   const chunkBytes = Number.parseInt(arg('chunk-bytes', false) ?? '65536', 10);
 
+  // 上传前再校验一次：恢复包当前内容的摘要必须与待签票据的 dataSha256 一致，
+  // 防止 ticket 之后包被替换，导致服务端按旧摘要放行被篡改的数据。
+  const uploadTables: RestoreTable[] = packageText
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as RestoreTable)
+    .filter((row) => row.kind === 'table');
+  const uploadDigest = await restoreDataDigest(uploadTables);
+  if (uploadDigest !== ticket.payload.dataSha256) {
+    throw new Error(
+      `恢复包摘要与票据不符（票据=${ticket.payload.dataSha256}，实际=${uploadDigest}），拒绝上传`,
+    );
+  }
+
   const headers: Record<string, string> = {
     cookie,
     origin,
     'content-type': 'application/json',
   };
   const api = async (p: string, init: RequestInit): Promise<Response> => {
-    const res = await fetch(`${origin}${p}`, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } });
+    const res = await fetch(`${origin}${p}`, {
+      ...init,
+      headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
+    });
     if (!res.ok) {
       throw new Error(`${p} 返回 ${res.status}: ${await res.text()}`);
     }
@@ -283,6 +321,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`[backup-local] 失败: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(
+    `[backup-local] 失败: ${error instanceof Error ? error.message : String(error)}\n`,
+  );
   process.exitCode = 1;
 });

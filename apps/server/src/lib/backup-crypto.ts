@@ -154,6 +154,9 @@ export async function createBackupDataKey(publicKeyBase64: string): Promise<{
     false,
     ['encrypt', 'decrypt'],
   );
+  // keyId 标识的是「解封公钥」（即本地私钥这批密钥），不是每次随机生成的
+  // AES 数据密钥；多份备份共用同一 keyId 是刻意的——它们都能被同一把本地私钥
+  // 解封。数据密钥本身每次备份独立随机生成并单独封装（见上方 rawDataKey）。
   const keyId = (await sha256(base64ToBytes(publicKeyBase64))).slice(0, 32);
   return {
     dataKey,
@@ -259,6 +262,11 @@ export async function hashBackupBytes(bytes: Uint8Array): Promise<string> {
  * 与备份封装共用同一把 P-256 密钥对。DER 编码本身不绑定算法用途，
  * 因此同一份私钥 DER 可导入为 ECDH（解封数据密钥）或 ECDSA（签票据），
  * 公钥 DER 同理。私钥始终只在本地脚本中出现，服务端只有公钥。
+ *
+ * 已知待评审（纵深防御）：同一把密钥兼具 ECDH 封装与 ECDSA 签名两用，
+ * 缺少密钥用途分离。目前未见可直接利用的交叉协议攻击；拆分密钥需要同时
+ * 变更 generateBackupKeyPair、env 公钥配置、本地私钥脚本与既有备份的兼容
+ * 策略，属重大变更，留待安全评审裁决后再动，不在本次修复范围。
  * ------------------------------------------------------------------ */
 
 async function importSigningPrivateKey(privateKeyBase64: string): Promise<CryptoKey> {
@@ -281,7 +289,7 @@ async function importVerifyingPublicKey(publicKeyBase64: string): Promise<Crypto
   );
 }
 
-/** 本地：用私钥对票据字节签名，返回 base64（P1363 定长 128 字节）。 */
+/** 本地：用私钥对票据字节签名，返回 base64（P-256 P1363 定长 64 字节 = r||s 各 32）。 */
 export async function signRestoreTicket(
   privateKeyBase64: string,
   payload: Uint8Array,

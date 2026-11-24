@@ -55,7 +55,7 @@ describe('恢复票据 ECDSA 签名', () => {
     batchId: 'rb-123',
     issuedAt: '2026-01-01T00:00:00.000Z',
     dataSha256: 'a'.repeat(64),
-    schemaVersion: 4,
+    schemaVersion: 5,
     keyId: 'key-1',
   };
 

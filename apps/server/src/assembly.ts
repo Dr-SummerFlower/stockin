@@ -49,6 +49,11 @@ export interface AssembledRuntime {
   runScheduledBackup(): Promise<void>;
   /** 推进一次后台逻辑备份分块；Node 定时器 / Workers alarm 调用。 */
   runBackgroundTick(): Promise<boolean>;
+  /**
+   * Workers alarm 触发专用入口。与 `runBackgroundTick` 的区别：先清空 alarm
+   * 调度器的合并守卫，再推进 tick，保证多 chunk 备份能持续续调度。
+   */
+  runAlarmTick(): Promise<void>;
 }
 
 /** 构造应用与后台任务。 */
@@ -63,6 +68,7 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     meta: repositories.meta,
     logs: repositories.logs,
     gate,
+    settings: repositories.settings,
     port: ports.backup,
   });
   const logicalBackup = new LogicalBackupService({
@@ -159,9 +165,14 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
   // 定时动作统一入口：物理快照（Node 文件 / Workers PITR）与加密逻辑备份
   // 各自按间隔判断。Node interval 与 Workers cron 都走这里，避免两套分支漂移。
   const runScheduledBackup = async (): Promise<void> => {
-    const physical = await backup.trigger('scheduled-daily');
-    if (!physical.ok) {
-      logger.warn({ code: physical.code }, '[backup-scheduler] 本次定时物理备份跳过');
+    // 物理快照按管理员配置的间隔触发，而非每次定时都做（此前该设置是死配置）。
+    // 到期判定收口在 BackupService.isPhysicalDue()，与逻辑备份后的兜底快照共用，
+    // 避免兜底刷新时间让间隔失效（遗留 A）；PITR 模式恒不到期，跳过每日空触发（遗留 E）。
+    if (backup.isPhysicalDue()) {
+      const physical = await backup.trigger('scheduled-daily');
+      if (!physical.ok) {
+        logger.warn({ code: physical.code }, '[backup-scheduler] 本次定时物理备份跳过');
+      }
     }
     try {
       await logicalBackup.triggerScheduled();
@@ -180,6 +191,19 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
 
   const runBackgroundTick = async (): Promise<boolean> => logicalBackup.tick();
 
+  // Workers alarm 必须走调度器的 onAlarm()：它会清空「只保留更早 alarm」的
+  // 合并守卫标记，tick 内再次 schedule() 才能续上下一次 alarm。若直接调 tick()
+  // （旧实现），守卫会吞掉续调度，多 chunk 备份推进一次即永久停滞。
+  const runAlarmTick = async (): Promise<void> => {
+    const alarm = ports.backgroundScheduler.onAlarm;
+    if (alarm !== undefined) {
+      await alarm.call(ports.backgroundScheduler);
+      return;
+    }
+    // Node 定时器没有合并守卫，回落到直接推进（防御性分支）。
+    await logicalBackup.tick();
+  };
+
   return {
     app,
     deps,
@@ -194,5 +218,6 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     },
     runScheduledBackup,
     runBackgroundTick,
+    runAlarmTick,
   };
 }

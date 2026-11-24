@@ -14,6 +14,7 @@ import type { BackupMeta } from '../repositories/backup';
 import type { BackupPort } from '../runtime/ports';
 import type { MetaRepository } from '../repositories/meta.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
+import type { SettingsRepository } from '../repositories/settings.repository';
 import type { Env } from '../env';
 import { utcNowIso } from '../lib/today';
 import type { HeavyTaskGate } from './heavy-task';
@@ -25,6 +26,7 @@ export interface BackupServiceDeps {
   readonly meta: MetaRepository;
   readonly logs: OperationLogRepository;
   readonly gate: HeavyTaskGate;
+  readonly settings: SettingsRepository;
   /** 备份端口：Node 文件快照 / Workers 平台 PITR。 */
   readonly port: BackupPort;
 }
@@ -110,6 +112,29 @@ export class BackupService {
   /** 备份池形态：`filesystem` 可下载，`pitr` 由平台托管。 */
   get mode(): 'filesystem' | 'pitr' {
     return this.deps.port.mode;
+  }
+
+  /**
+   * 应用侧物理快照是否到期：距最近一份快照已达管理员配置的间隔。
+   * 定时入口与逻辑备份后的兜底快照共用此判定，避免兜底快照不断刷新
+   * 「最近快照时间」而让物理间隔配置失效（遗留 A）。
+   * - 从未有快照：到期（首次即做）。
+   * - PITR 模式：恒不到期——回滚点由平台托管，应用侧 trigger 只会 skipped，
+   *   跳过可避免每日写入无意义的 BACKUP_CREATE skipped 日志（遗留 E）。
+   * @param nowMs 注入当前时间，便于确定性测试。
+   */
+  isPhysicalDue(nowMs: number = Date.now()): boolean {
+    if (this.mode === 'pitr') {
+      return false;
+    }
+    const intervalDays: number = this.deps.settings.getPhysicalBackupIntervalDays();
+    const listResult = this.list();
+    const latest = listResult.ok ? listResult.data.items[0] : undefined;
+    if (latest === undefined) {
+      return true;
+    }
+    const lastMs: number = Date.parse(latest.createdAt);
+    return !Number.isFinite(lastMs) || nowMs - lastMs >= intervalDays * 86_400_000;
   }
 
   /**

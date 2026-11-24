@@ -49,18 +49,17 @@ export function createAlarmScheduler(options: AlarmSchedulerOptions): Background
       void options.storage.deleteAlarm();
     },
     /**
-     * alarm 触发时由 DO 调用的辅助方法（用类型断言暴露，不在接口里）。
-     * 放在返回对象上、通过 `as` 转换访问，避免污染共享端口契约。
+     * alarm 触发时由 DO 调用的入口。先清空合并守卫标记 `nextAlarmMs`，
+     * 这样 tick 内部再次 `schedule()` 才能重新 setAlarm，形成推进链。
+     * 对 `BackgroundTaskScheduler` 而言是可选扩展方法；本实现始终提供。
      */
-    ...({
-      async onAlarm(): Promise<void> {
-        nextAlarmMs = Number.POSITIVE_INFINITY;
-        if (tickFn === null || stopped) {
-          return;
-        }
-        await tickFn();
-      },
-    } as Record<string, unknown>),
+    async onAlarm(): Promise<void> {
+      nextAlarmMs = Number.POSITIVE_INFINITY;
+      if (tickFn === null || stopped) {
+        return;
+      }
+      await tickFn();
+    },
   };
 }
 

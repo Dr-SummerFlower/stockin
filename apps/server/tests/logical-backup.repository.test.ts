@@ -197,4 +197,72 @@ describe('LogicalBackupRepository', () => {
     expect(repo.getBackup('gc-bk-0')).toBeUndefined();
     expect(repo.listChunks('gc-bk-0')).toHaveLength(0);
   });
+
+  /** 建一份带 chunk 的 failed 备份。 */
+  function seedFailedBackup(backupId: string, jobId: string, createdAt: string): void {
+    repo.createJob({ ...makeJob(jobId), status: 'failed', created_at: createdAt });
+    repo.createBackup({
+      ...makeBackup(backupId, jobId),
+      created_at: createdAt,
+      status: 'failed',
+    });
+    repo.insertChunk({
+      backup_id: backupId,
+      seq: 1,
+      table_name: 'records',
+      row_start: 0,
+      row_count: 1,
+      iv: 'iv',
+      ciphertext: 'cipher',
+      tag: 'tag',
+      plain_bytes: 10,
+      sha256: 'h',
+    });
+  }
+
+  it('gcTerminal 清理超额 failed 备份及其 chunks', () => {
+    for (let i = 0; i < 3; i += 1) {
+      seedFailedBackup(`fail-bk-${i}`, `fail-job-${i}`, `2026-02-0${i + 1}T00:00:00Z`);
+    }
+    // 保留最近 1 份：最旧两份被回收。
+    repo.gcTerminal(1);
+    expect(repo.getBackup('fail-bk-0')).toBeUndefined();
+    expect(repo.listChunks('fail-bk-0')).toHaveLength(0);
+    expect(repo.getBackup('fail-bk-1')).toBeUndefined();
+    expect(repo.listChunks('fail-bk-1')).toHaveLength(0);
+    expect(repo.getBackup('fail-bk-2')).toBeDefined();
+    expect(repo.listChunks('fail-bk-2')).toHaveLength(1);
+  });
+
+  it('外键关闭时 gcReady 仍显式删除 chunks（模拟 Workers DO SQLite）', () => {
+    // Workers 的 DO SQLite 不下发 PRAGMA foreign_keys，默认关闭外键。
+    // 这里显式关闭以复现「删 backups 不级联删 chunks」的条件。
+    db.exec('PRAGMA foreign_keys = OFF');
+    for (let i = 0; i < 6; i += 1) {
+      const backupId = `nofk-bk-${i}`;
+      const jobId = `nofk-job-${i}`;
+      repo.createJob({ ...makeJob(jobId), created_at: `2026-03-0${i + 1}T00:00:00Z` });
+      repo.createBackup({
+        ...makeBackup(backupId, jobId),
+        created_at: `2026-03-0${i + 1}T00:00:00Z`,
+        status: 'ready',
+      });
+      repo.insertChunk({
+        backup_id: backupId,
+        seq: 1,
+        table_name: 'records',
+        row_start: 0,
+        row_count: 1,
+        iv: 'iv',
+        ciphertext: 'cipher',
+        tag: 'tag',
+        plain_bytes: 10,
+        sha256: 'h',
+      });
+    }
+    repo.gcReady(5);
+    expect(repo.getBackup('nofk-bk-0')).toBeUndefined();
+    // 关键断言：不依赖外键级联，chunks 也被清理。
+    expect(repo.listChunks('nofk-bk-0')).toHaveLength(0);
+  });
 });

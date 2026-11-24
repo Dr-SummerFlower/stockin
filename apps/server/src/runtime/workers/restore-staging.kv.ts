@@ -83,10 +83,18 @@ export function createKvRestoreStaging(options: KvRestoreStagingOptions): Restor
       }
     },
 
+    async isConsumed(batchId): Promise<boolean> {
+      return (await storage.get(consumedKey(batchId))) !== undefined;
+    },
+
     async consumeBatch(batchId, expiresAtIso): Promise<boolean> {
       if (Date.parse(expiresAtIso) <= Date.now()) {
         return false;
       }
+      // 待核实（需在 workerd 实测）：get→put 之间存在 await，若 Cloudflare DO
+      // 在该 await 点允许事件交错（即未隐式串行化），两个并发 commit 可能都
+      // 读到「未消费」。官方语义是单 DO 实例串行执行，本实现据此假设成立；
+      // 若实测不成立，应在 DO 侧用 blockConcurrencyWhile 包裹整个消费流程。
       const key = consumedKey(batchId);
       const already = await storage.get(key);
       if (already !== undefined) {

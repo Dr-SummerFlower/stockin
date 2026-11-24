@@ -15,11 +15,13 @@ import { generateBackupKeyPair, signRestoreTicket } from '../../src/lib/backup-c
 import {
   BACKUP_WIRE_VERSION,
   encodeTicketPayload,
+  ensureAllRestoreTables,
   restoreDataDigest,
   type RestoreTable,
   type RestoreTicket,
 } from '../../src/lib/backup-format';
 import { SCHEMA_EXPECTED } from '../../src/repositories/schema';
+import { RESTORE_TABLES } from '../../src/repositories/restore.repository';
 
 const ADMIN_CONFIG = {
   clientId: 'test-client-id',
@@ -60,7 +62,7 @@ describe('恢复链路 HTTP 端到端', () => {
     batchId: string,
     issuedAt: string,
   ): Promise<{ bytes: Uint8Array; ticket: RestoreTicket }> {
-    const tables: RestoreTable[] = [
+    const filledTables: RestoreTable[] = [
       {
         kind: 'table',
         table: 'settings',
@@ -98,6 +100,8 @@ describe('恢复链路 HTTP 端到端', () => {
         ],
       },
     ];
+    // 模拟本地脚本产物：补齐零行表，覆盖全部可恢复表。
+    const tables: RestoreTable[] = ensureAllRestoreTables(filledTables, RESTORE_TABLES);
     const dataSha256: string = await restoreDataDigest(tables);
     const lines: string[] = [
       JSON.stringify({
@@ -162,7 +166,10 @@ describe('恢复链路 HTTP 端到端', () => {
       { ...authed(), method: 'POST', json: { batchId: begun.body.batchId, ticket } },
     );
     expect(committed.status).toBe(200);
-    expect(committed.body).toMatchObject({ restoredTables: 2, restoredRows: 2 });
+    expect(committed.body).toMatchObject({
+      restoredTables: RESTORE_TABLES.length,
+      restoredRows: 2,
+    });
 
     const record = h.deps.db.prepare('SELECT name FROM records ORDER BY id').get() as {
       name: string;

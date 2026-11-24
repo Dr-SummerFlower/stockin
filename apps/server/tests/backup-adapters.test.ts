@@ -4,7 +4,7 @@
  * 目标是把平台差异的分支也纳入覆盖率口径（这些文件此前 0%）。
  * 用内存 DoStorageLike 仿真 DO 的 KV + alarm，不依赖 workerd。
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -106,6 +106,38 @@ describe('Workers alarm 调度器', () => {
     scheduler.stop?.();
   });
 
+  it('alarm 触发后 tick 内再次 schedule 能续上（多 chunk 链不中断）', async () => {
+    // 复现修复前的核心缺陷：DO alarm() 直接调 tick() 时，tick 末尾的 schedule()
+    // 因 nextAlarmMs 守卫未清空而被吞，多 chunk 备份推进一次即停滞。
+    const storage = createMemoryStorage();
+    const scheduler = createAlarmScheduler({ storage, defaultDelayMs: 10 });
+    let ticks = 0;
+    scheduler.setTick(async () => {
+      ticks += 1;
+      // 模拟 LogicalBackupService.tick() 末尾的续调度。
+      if (ticks < 3) {
+        scheduler.schedule(5);
+      }
+      return ticks < 3;
+    });
+    scheduler.schedule(25);
+    expect(storage.alarms.length).toBe(1);
+
+    const handle = asAlarmScheduler(scheduler);
+    // 第一次 alarm：onAlarm 清空守卫 → tick → tick 内 schedule 续上第二次 alarm。
+    await handle.onAlarm();
+    expect(ticks).toBe(1);
+    expect(storage.alarms.length).toBe(2);
+    // 第二次 alarm：同样能续上第三次。
+    await handle.onAlarm();
+    expect(ticks).toBe(2);
+    expect(storage.alarms.length).toBe(3);
+    // 第三次 tick 返回 false（工作完成），不再 schedule，链自然终止。
+    await handle.onAlarm();
+    expect(ticks).toBe(3);
+    expect(storage.alarms.length).toBe(3);
+  });
+
   it('非 alarm 调度器取 handle 抛错', () => {
     const nodeScheduler = createNodeScheduler();
     expect(() => asAlarmScheduler(nodeScheduler)).toThrow(/alarm/);
@@ -126,9 +158,14 @@ describe('Node 文件系统恢复暂存', () => {
     await staging.putChunk('rb-1', 1, new TextEncoder().encode('b'));
     expect(await staging.listChunkSeqs('rb-1')).toEqual([0, 1]);
     expect(new TextDecoder().decode((await staging.readChunk('rb-1', 1))!)).toBe('b');
+    expect(await staging.isConsumed('rb-1')).toBe(false);
     expect(await staging.consumeBatch('rb-1', new Date(Date.now() + 60_000).toISOString())).toBe(
       true,
     );
+    expect(await staging.isConsumed('rb-1')).toBe(true);
+    // 瞬时锁 .consuming 在消费成功后应立即清理，不留残留。
+    expect(existsSync(path.join(dir, 'restore-staging', 'rb-1', '.consuming'))).toBe(false);
+    expect(existsSync(path.join(dir, 'restore-staging', 'rb-1', '.consumed'))).toBe(true);
     expect(await staging.consumeBatch('rb-1', new Date(Date.now() + 60_000).toISOString())).toBe(
       false,
     );
@@ -155,9 +192,11 @@ describe('Workers KV 恢复暂存', () => {
     await staging.putChunk('rb-2', 0, new TextEncoder().encode('x'));
     expect(new TextDecoder().decode((await staging.readChunk('rb-2', 0))!)).toBe('x');
     expect(await staging.listChunkSeqs('rb-2')).toEqual([0]);
+    expect(await staging.isConsumed('rb-2')).toBe(false);
     expect(await staging.consumeBatch('rb-2', new Date(Date.now() + 60_000).toISOString())).toBe(
       true,
     );
+    expect(await staging.isConsumed('rb-2')).toBe(true);
     expect(await staging.consumeBatch('rb-2', new Date(Date.now() + 60_000).toISOString())).toBe(
       false,
     );

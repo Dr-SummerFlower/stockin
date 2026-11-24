@@ -119,6 +119,23 @@ describe('LogicalBackupService', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('并发 enqueue 只有一个成功（busy 判定在事务内）', async () => {
+    // 两个请求同时入队：createBackupDataKey 是异步的，旧实现在 await 前检查
+    // hasActiveJob，两者都可能通过并各建一个 job。修复后检查与落库同事务，
+    // 只有一个能建 job，另一个返回 COMMON_BUSY。
+    const results = await Promise.all([
+      service.enqueue('concurrent-a'),
+      service.enqueue('concurrent-b'),
+    ]);
+    const succeeded = results.filter((r) => r.ok);
+    const busy = results.filter((r) => !r.ok && r.code === 'COMMON_BUSY');
+    expect(succeeded).toHaveLength(1);
+    expect(busy).toHaveLength(1);
+    // 库里只应有一个 job。
+    const jobs = db.prepare('SELECT COUNT(*) AS c FROM backup_jobs').get() as { c: number };
+    expect(jobs.c).toBe(1);
+  });
+
   it('enqueue → 多次 tick → ready，且 chunk 可解密还原行数', async () => {
     const recordCount = LOGICAL_BACKUP_CHUNK_ROWS * 2 + 3;
     insertRecords(recordCount);

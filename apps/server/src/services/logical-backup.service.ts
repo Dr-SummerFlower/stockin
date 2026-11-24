@@ -5,11 +5,13 @@
  *  - 每次触发先建 job + backup（building），返回 jobId；数据由一个异步 tick
  *    状态机逐块推进，绝不在单请求里序列化整库（10ms CPU 上限）。
  *  - 每个 tick 只处理有限个 chunk；游标 (cursor_table, cursor_rowid, chunk_seq)
- *    落库，进程重启 / DO alarm 都能续跑。
+ *    落库，DO alarm 在进程存活期间可跨 tick 续跑。数据密钥只存在进程内缓存，
+ *    服务端无私钥、无法解封持久化信封，因此进程重启 / DO 驱逐会中断当前 job
+ *    并在下次 tick 标记失败（需重新触发）；这是「无私钥」约束下的既定取舍。
  *  - 备份范围 = Repository 白名单（排除 backup_* 与 sessions/admin_sessions）。
  *  - 数据密钥每次随机，用公钥封装；明文只在本进程短暂存在。
- *  - 完成态计算 manifest 摘要、GC 保留 5 份；启用时每次逻辑备份前额外刷新
- *    物理快照（Node 文件 / Workers PITR）作为容灾兜底。
+ *  - 完成态计算 manifest 摘要、GC 保留 5 份；物理快照（Node 文件 / Workers
+ *    PITR）作为容灾兜底，按管理员配置的物理间隔生成，与定时入口共用到期判定。
  *
  * 本服务只依赖端口与 Repository，不认识任何平台 API；调度由
  * `BackgroundTaskScheduler` 注入，触发方只调用 `enqueue()`。
@@ -28,6 +30,7 @@ import {
   LOGICAL_BACKUP_FORMAT_VERSION,
   LOGICAL_BACKUP_KEEP_COUNT,
   LogicalBackupRepository,
+  type BackupChunkRow,
   type BackupJobRow,
   type BackupRow,
 } from '../repositories/logical-backup.repository';
@@ -121,10 +124,6 @@ export class LogicalBackupService {
     if (!this.enabled) {
       return { ok: false, code: ErrorCode.COMMON_FORBIDDEN, details: { reason: '备份公钥未配置' } };
     }
-    if (this.deps.repo.hasActiveJob()) {
-      return { ok: false, code: ErrorCode.COMMON_BUSY };
-    }
-
     let wrapped: WrappedKeyMaterial;
     let dataKey: CryptoKey;
     try {
@@ -142,53 +141,67 @@ export class LogicalBackupService {
     const jobId: string = `job-${randomUUID()}`;
     const backupId: string = `bk-${randomUUID()}`;
     const now: string = utcNowIso();
-    // 登记数据密钥供后续 tick 复用（进程内内存缓存，重启则本次 job 失败可重试）。
-    cacheDataKey(backupId, dataKey);
 
-    immediateTransaction(this.deps.db, () => {
-      const job: BackupJobRow = {
-        id: jobId,
-        kind: 'logical',
-        status: 'pending',
-        cursor_table: null,
-        cursor_rowid: null,
-        chunk_seq: 0,
-        total_chunks: null,
-        error: null,
-        created_at: now,
-        updated_at: now,
-        finished_at: null,
-      };
-      const backup: BackupRow = {
-        id: backupId,
-        job_id: jobId,
-        format_version: LOGICAL_BACKUP_FORMAT_VERSION,
-        schema_version: SCHEMA_EXPECTED,
-        key_id: wrapped.keyId,
-        ephemeral_public_key: wrapped.ephemeralPublicKey,
-        kdf_salt: wrapped.kdfSalt,
-        wrapped_key_iv: wrapped.iv,
-        wrapped_key_ciphertext: wrapped.ciphertext,
-        wrapped_key_tag: wrapped.tag,
-        created_at: now,
-        chunk_count: 0,
-        plain_bytes: 0,
-        manifest_sha256: null,
-        status: 'building',
-      };
-      this.deps.repo.createJob(job);
-      this.deps.repo.createBackup(backup);
-      this.deps.logs.append({
-        action: 'BACKUP_CREATE' as never,
-        targetType: 'backup' as never,
-        targetId: null,
-        detail: { kind: 'logical', jobId, backupId, reason, status: 'enqueued' },
-        requestId,
-        actor: 'system',
-        occurredAt: now,
-      });
-    });
+    const conflict: ServiceResult<{ jobId: string }> | null = immediateTransaction(
+      this.deps.db,
+      () => {
+        // busy 判定必须在事务内、与 createJob 同一临界区：此前在 await
+        // createBackupDataKey() 之前做检查，两个并发请求都可能通过检查并各建一个
+        // job。数据密钥生成是异步的无法放进同步事务，但「检查 + 落库」可以，
+        // 单写者事务保证并发入队只有一个成功，其余返回 COMMON_BUSY。
+        if (this.deps.repo.hasActiveJob()) {
+          return { ok: false, code: ErrorCode.COMMON_BUSY };
+        }
+        // 登记数据密钥供后续 tick 复用（进程内内存缓存，重启则本次 job 失败可重试）。
+        cacheDataKey(backupId, dataKey);
+        const job: BackupJobRow = {
+          id: jobId,
+          kind: 'logical',
+          status: 'pending',
+          cursor_table: null,
+          cursor_rowid: null,
+          chunk_seq: 0,
+          total_chunks: null,
+          error: null,
+          created_at: now,
+          updated_at: now,
+          finished_at: null,
+        };
+        const backup: BackupRow = {
+          id: backupId,
+          job_id: jobId,
+          format_version: LOGICAL_BACKUP_FORMAT_VERSION,
+          schema_version: SCHEMA_EXPECTED,
+          key_id: wrapped.keyId,
+          ephemeral_public_key: wrapped.ephemeralPublicKey,
+          kdf_salt: wrapped.kdfSalt,
+          wrapped_key_iv: wrapped.iv,
+          wrapped_key_ciphertext: wrapped.ciphertext,
+          wrapped_key_tag: wrapped.tag,
+          created_at: now,
+          chunk_count: 0,
+          plain_bytes: 0,
+          manifest_sha256: null,
+          status: 'building',
+        };
+        this.deps.repo.createJob(job);
+        this.deps.repo.createBackup(backup);
+        this.deps.logs.append({
+          action: 'BACKUP_CREATE' as never,
+          targetType: 'backup' as never,
+          targetId: null,
+          detail: { kind: 'logical', jobId, backupId, reason, status: 'enqueued' },
+          requestId,
+          actor: 'system',
+          occurredAt: now,
+        });
+        return null; // null 表示创建成功（无冲突）。
+      },
+    );
 
+    if (conflict !== null) {
+      return conflict;
+    }
     this.deps.scheduler.schedule(SCHEDULE_DELAY_MS);
     return { ok: true, data: { jobId } };
   }
@@ -329,6 +342,7 @@ export class LogicalBackupService {
       this.deps.repo.markBackupReady(backup.id);
       this.deps.repo.finishJob(job.id, 'done', null);
       this.deps.repo.gcReady(LOGICAL_BACKUP_KEEP_COUNT);
+      this.deps.repo.gcTerminal(LOGICAL_BACKUP_KEEP_COUNT);
       this.deps.meta.setLastBackup(now, 'ok');
       this.deps.logs.append({
         action: 'BACKUP_CREATE' as never,
@@ -347,8 +361,11 @@ export class LogicalBackupService {
       });
     });
 
-    // 逻辑备份完成后刷新一次物理快照作为整库容灾（异步、失败只告警）。
-    if (this.deps.physicalBackup !== undefined) {
+    // 逻辑备份完成后按需刷新物理快照作为整库容灾（异步、失败只告警）。
+    // 与定时入口共用 isPhysicalDue()：兜底快照也受管理员配置的物理间隔约束，
+    // 不再每次逻辑备份都刷新「最近物理快照时间」而让间隔失效（遗留 A）。
+    // 恢复前的 pre-restore 快照不在此列，仍是无条件生成（CONVENTIONS §4）。
+    if (this.deps.physicalBackup !== undefined && this.deps.physicalBackup.isPhysicalDue()) {
       try {
         await this.deps.physicalBackup.backupWithoutGate('post-logical-backup', '', 'system');
       } catch (error) {
@@ -358,12 +375,15 @@ export class LogicalBackupService {
         );
       }
     }
+    // 进入终态，释放进程内数据密钥。
+    uncacheDataKey(backup.id);
   }
 
   private failJob(job: BackupJobRow, error: string): void {
     const now: string = utcNowIso();
     immediateTransaction(this.deps.db, () => {
       this.deps.repo.finishJob(job.id, 'failed', error);
+      this.deps.repo.gcTerminal(LOGICAL_BACKUP_KEEP_COUNT);
       const backup = this.findBackupByJob(job.id);
       if (backup !== undefined) {
         this.deps.repo.markBackupFailed(backup.id);
@@ -379,6 +399,11 @@ export class LogicalBackupService {
         occurredAt: now,
       });
     });
+    // 失败也释放密钥；半成品 chunk 交由 gcReady 的终态清理统一回收。
+    const failedBackup = this.findBackupByJob(job.id);
+    if (failedBackup !== undefined) {
+      uncacheDataKey(failedBackup.id);
+    }
   }
 
   /** 按间隔检查是否需要自动入队一次逻辑备份（由定时调度调用）。 */
@@ -435,15 +460,8 @@ export class LogicalBackupService {
     };
   }
 
-  /** 构造可流式下发的 NDJSON 行（meta + chunks）。仅在管理员下载端点调用。 */
-  buildDownload(
-    backupId: string,
-  ): ServiceResult<{ meta: BackupFileMeta; chunks: BackupFileChunk[] }> {
-    const backup: BackupRow | undefined = this.deps.repo.getBackup(backupId);
-    if (backup === undefined || backup.status !== 'ready') {
-      return { ok: false, code: ErrorCode.COMMON_NOT_FOUND };
-    }
-    const meta: BackupFileMeta = {
+  private toFileMeta(backup: BackupRow): BackupFileMeta {
+    return {
       kind: 'meta',
       format: 'stockin-logical-backup',
       version: backup.format_version,
@@ -460,7 +478,20 @@ export class LogicalBackupService {
       plainBytes: backup.plain_bytes,
       manifestSha256: backup.manifest_sha256 ?? '',
     };
-    const chunks: BackupFileChunk[] = this.deps.repo.listChunks(backup.id).map((chunk) => ({
+  }
+
+  private toFileChunk(chunk: {
+    seq: number;
+    table_name: string;
+    row_start: number;
+    row_count: number;
+    iv: string;
+    ciphertext: string;
+    tag: string;
+    sha256: string;
+    plain_bytes: number;
+  }): BackupFileChunk {
+    return {
       kind: 'chunk',
       seq: chunk.seq,
       table: chunk.table_name,
@@ -471,8 +502,54 @@ export class LogicalBackupService {
       tag: chunk.tag,
       sha256: chunk.sha256,
       plainBytes: chunk.plain_bytes,
-    }));
-    return { ok: true, data: { meta, chunks } };
+    };
+  }
+
+  /**
+   * 惰性打开下载流：返回 meta 与「逐行 NDJSON」迭代器，chunk 由调用方按需拉取。
+   * 与 buildDownload 的区别是不把全部 chunk 物化成数组，避免 256MB 上限下
+   * 在 1G 内存机器 / Workers 上叠加出第二份整包副本。
+   */
+  openDownload(
+    backupId: string,
+  ): ServiceResult<{ meta: BackupFileMeta; lines: IterableIterator<string>; count: number }> {
+    const backup: BackupRow | undefined = this.deps.repo.getBackup(backupId);
+    if (backup === undefined || backup.status !== 'ready') {
+      return { ok: false, code: ErrorCode.COMMON_NOT_FOUND };
+    }
+    const toLine = (chunk: BackupChunkRow): string =>
+      `${JSON.stringify(this.toFileChunk(chunk))}\n`;
+    const iter = this.deps.repo.iterateChunks(backup.id);
+    const lines: IterableIterator<string> = {
+      [Symbol.iterator]() {
+        return this;
+      },
+      next(): IteratorResult<string> {
+        const next = iter.next();
+        if (next.done) {
+          return { done: true, value: undefined };
+        }
+        return { done: false, value: toLine(next.value) };
+      },
+    };
+    return {
+      ok: true,
+      data: { meta: this.toFileMeta(backup), lines, count: backup.chunk_count },
+    };
+  }
+
+  /** 构造完整 NDJSON 行（meta + chunks，全部物化）。测试与小程序调用，路由用 openDownload。 */
+  buildDownload(
+    backupId: string,
+  ): ServiceResult<{ meta: BackupFileMeta; chunks: BackupFileChunk[] }> {
+    const backup: BackupRow | undefined = this.deps.repo.getBackup(backupId);
+    if (backup === undefined || backup.status !== 'ready') {
+      return { ok: false, code: ErrorCode.COMMON_NOT_FOUND };
+    }
+    const chunks: BackupFileChunk[] = this.deps.repo
+      .listChunks(backup.id)
+      .map((chunk) => this.toFileChunk(chunk));
+    return { ok: true, data: { meta: this.toFileMeta(backup), chunks } };
   }
 
   private findBackupByJob(jobId: string): BackupRow | undefined {
@@ -495,6 +572,16 @@ const dataKeyCache = new Map<string, CryptoKey>();
 /** enqueue 后登记数据密钥（进程内内存缓存；DO 重启则由下方 derive 兜底）。 */
 export function cacheDataKey(backupId: string, key: CryptoKey): void {
   dataKeyCache.set(backupId, key);
+}
+
+/** 备份进入终态后释放内存密钥；避免模块级 Map 随备份次数无界增长。 */
+export function uncacheDataKey(backupId: string): void {
+  dataKeyCache.delete(backupId);
+}
+
+/** 仅供测试：清理全部缓存密钥。 */
+export function clearDataKeyCache(): void {
+  dataKeyCache.clear();
 }
 
 /** tick 取数据密钥：优先内存缓存；缺失时用公钥+信封信息重新派生（密钥封装的逆过程在本地脚本，服务端无私钥）。 */

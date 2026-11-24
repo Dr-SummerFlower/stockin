@@ -255,14 +255,54 @@ export class LogicalBackupRepository {
       .all(backupId) as BackupChunkRow[];
   }
 
+  /** 逐行迭代 chunk（不整表缓冲），供下载流式响应控制内存水位。 */
+  iterateChunks(backupId: string): IterableIterator<BackupChunkRow> {
+    return this.db
+      .prepare('SELECT * FROM backup_chunks WHERE backup_id = ? ORDER BY seq ASC')
+      .iterate(backupId) as IterableIterator<BackupChunkRow>;
+  }
+
+  /**
+   * 删除一份备份及其 chunk。显式先删 chunks：Workers（DO SQLite）默认关闭外键，
+   * `DELETE FROM backups` 不会级联清理 backup_chunks，会导致失败/过期备份的
+   * chunk 残留、GC 失效（遗留 C）。Node 上外键开启时重复删除是幂等的。
+   */
+  private deleteBackupWithChunks(backupId: string): void {
+    this.db.prepare('DELETE FROM backup_chunks WHERE backup_id = ?').run(backupId);
+    this.db.prepare('DELETE FROM backups WHERE id = ?').run(backupId);
+  }
+
   /** 保留最近 N 份 ready 备份；失败/构建中的任务不参与 GC。 */
   gcReady(keepCount = LOGICAL_BACKUP_KEEP_COUNT): void {
     const rows = this.db
       .prepare("SELECT id FROM backups WHERE status = 'ready' ORDER BY created_at DESC, id DESC")
       .all() as { id: string }[];
     for (const row of rows.slice(keepCount)) {
-      this.db.prepare('DELETE FROM backups WHERE id = ?').run(row.id);
+      this.deleteBackupWithChunks(row.id);
     }
+  }
+
+  /**
+   * 回收终态残留：failed 备份与其 job、以及已完成但对应备份已被 GC 的孤儿 job。
+   * pending/running job 与其备份一律不动，避免影响进行中的备份。
+   * 供 finish/failJob 调用，防止失败记录与半成品 chunk 无界增长。
+   */
+  gcTerminal(maxFailed = LOGICAL_BACKUP_KEEP_COUNT): void {
+    // 超额的失败备份（按时间倒序，保留最近 maxFailed 份便于排障）。
+    const failed = this.db
+      .prepare("SELECT id FROM backups WHERE status = 'failed' ORDER BY created_at DESC, id DESC")
+      .all() as { id: string }[];
+    for (const row of failed.slice(maxFailed)) {
+      this.deleteBackupWithChunks(row.id);
+    }
+    // 终态 job：done/failed 且没有对应 backup 的，直接删除。
+    this.db
+      .prepare(
+        `DELETE FROM backup_jobs
+         WHERE status IN ('done', 'failed')
+           AND id NOT IN (SELECT job_id FROM backups)`,
+      )
+      .run();
   }
 
   /** 白名单：只备份普通业务表，排除备份表与会话表。 */
