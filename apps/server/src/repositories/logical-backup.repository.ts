@@ -206,13 +206,20 @@ export class LogicalBackupRepository {
       .run(cursorTable, cursorRowid, chunkSeq, totalChunks, new Date().toISOString(), id);
   }
 
+  /**
+   * 任务终态落库。
+   *
+   * `WHERE status IN ('pending','running')` 是状态机守卫：并发/迟到的 tick 不允许
+   * 覆盖已经 `done` 的任务（否则一份成功的备份会被后来的失败覆盖成 failed，
+   * 再被终态 GC 清掉）。已到终态时 `changes = 0`，调用方无需关心。
+   */
   finishJob(id: string, status: 'done' | 'failed', error: string | null): void {
     const now = new Date().toISOString();
     this.db
       .prepare(
         `UPDATE backup_jobs
          SET status = ?, error = ?, updated_at = ?, finished_at = ?
-         WHERE id = ?`,
+         WHERE id = ? AND status IN ('pending', 'running')`,
       )
       .run(status, error, now, now, id);
   }
@@ -231,8 +238,11 @@ export class LogicalBackupRepository {
     this.db.prepare("UPDATE backups SET status = 'ready' WHERE id = ?").run(id);
   }
 
+  /** 只把「未就绪」的备份标失败：已 ready 的备份不允许被迟到失败覆盖。 */
   markBackupFailed(id: string): void {
-    this.db.prepare("UPDATE backups SET status = 'failed' WHERE id = ?").run(id);
+    this.db
+      .prepare("UPDATE backups SET status = 'failed' WHERE id = ? AND status <> 'ready'")
+      .run(id);
   }
 
   /** 备份完成后写入整包 manifest 的 SHA-256（覆盖所有 chunk 的有序摘要）。 */

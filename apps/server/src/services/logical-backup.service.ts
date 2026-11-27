@@ -113,6 +113,17 @@ const MAX_PLAIN_BYTES = 256 * 1024 * 1024;
 const STALE_JOB_MS = 10 * 60 * 1000;
 
 export class LogicalBackupService {
+  /**
+   * `tick()` 重入锁。
+   *
+   * 两路调用方可能同时推进同一个 job：Node 的 interval 调度器（`enqueue`
+   * 里 `schedule(25ms)`）与手动推进（管理台/测试直接调 `tick`）；Workers 上
+   * alarm 与在飞 tick 也可能交叉。两个 tick 读到同一游标 → 算出同一个 `seq`
+   * → `backup_chunks` 主键冲突 → 冲突方走 `failJob` 把一份健康的备份标成
+   * failed。锁只挡并发，不影响「上一轮结束后继续推进」。
+   */
+  private ticking = false;
+
   constructor(private readonly deps: LogicalBackupServiceDeps) {}
 
   /** 逻辑备份是否可用（库内有公钥，或部署锚点已配置）。 */
@@ -217,9 +228,23 @@ export class LogicalBackupService {
 
   /**
    * 推进一个 job 若干 chunk。返回是否还有未完成工作（供调度器决定是否续调度）。
-   * 幂等：重复调用只读游标之后的数据。
+   * 幂等：重复调用只读游标之后的数据。**不可重入**：上一轮未结束时的调用直接
+   * 返回 `false`（本轮没有为此推进任何东西，交回给调用方下一轮再试）。
    */
   async tick(maxChunks: number = DEFAULT_CHUNKS_PER_TICK): Promise<boolean> {
+    if (this.ticking) {
+      return false;
+    }
+    this.ticking = true;
+    try {
+      return await this.advanceOnce(maxChunks);
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  /** `tick()` 的实际推进体；并发控制与收尾全部在外层。 */
+  private async advanceOnce(maxChunks: number): Promise<boolean> {
     const job: BackupJobRow | undefined = this.deps.repo.nextRunnableJob();
     if (job === undefined) {
       return false;

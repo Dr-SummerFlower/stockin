@@ -165,12 +165,20 @@ describe('设置与备份', () => {
     expect(triggered.status).toBe(200);
     expect(triggered.body.jobId).toMatch(/^job-/);
 
-    // 驱动后台分块直到完成（真实调度器的定时器在测试里不可靠，直接推进）。
+    // 驱动后台分块直到备份就绪。
+    // 不能只看 `tick()` 的返回值：`runtime.start()` 已经把同一个 tick 注册进调度器
+    // （enqueue 里 `schedule(25ms)`），撞车时本轮 tick 会立刻返回 false（服务侧重入
+    // 保护），据此 break 会把「还在跑」误判成「已完成」。这里以 `/api/backups` 的
+    // 可见结果为准：出现 ready 备份，或 job 已到终态（失败），就停止空转。
     for (let i = 0; i < 200; i += 1) {
-      const more = await h.deps.logicalBackup.tick(4);
-      if (!more) {
+      await h.deps.logicalBackup.tick(4);
+      const state = await h.json<{ items: unknown[]; activeJob: unknown }>('/api/backups', {
+        cookie,
+      });
+      if (state.body.items.length > 0 || state.body.activeJob === null) {
         break;
       }
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
 
     const list = await h.json<{
@@ -186,6 +194,36 @@ describe('设置与备份', () => {
     expect(list.body.items[0]?.manifestSha256).toBeTruthy();
     // 用户端响应不含文件名 / 下载字段。
     expect(JSON.stringify(list.body)).not.toContain('gzipFile');
+  });
+
+  it('两路 tick 并发推进同一 job：不产生重复 seq，备份仍能就绪', async () => {
+    const { h, cookie } = await ready();
+    const triggered = await h.json<{ jobId: string }>('/api/backup', {
+      method: 'POST',
+      cookie,
+    });
+    expect(triggered.status).toBe(200);
+
+    // 回归 AUDIT-13：此前 tick 无重入保护，两路同时推进会算出同一个 seq，
+    // `backup_chunks` 主键冲突 → 冲突方 failJob 把健康备份标成 failed。
+    for (let i = 0; i < 60; i += 1) {
+      await Promise.all([h.deps.logicalBackup.tick(4), h.deps.logicalBackup.tick(4)]);
+      const state = await h.json<{ items: unknown[]; activeJob: unknown }>('/api/backups', {
+        cookie,
+      });
+      if (state.body.items.length > 0 || state.body.activeJob === null) {
+        break;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+
+    const list = await h.json<{ items: { chunkCount: number }[]; activeJob: unknown }>(
+      '/api/backups',
+      { cookie },
+    );
+    expect(list.body.activeJob).toBeNull();
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.items[0]?.chunkCount).toBeGreaterThan(0);
   });
 });
 
