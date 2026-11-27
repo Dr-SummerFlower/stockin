@@ -31,6 +31,10 @@ const NewOrderPage: React.FC = () => {
       });
       bumpRefresh();
       holderMessage.success(`进货单已保存：${created.orderNo}（${created.itemCount} 条）`);
+      // 照抄纸质单号允许重复，但要让用户知道当天已有同号单（04-F-03）。
+      if (created.duplicatedNo === true) {
+        holderMessage.warning(`单号 ${created.orderNo} 当天已存在另一张，已照常保存`);
+      }
       navigate(ROUTES.orderDetail(created.id));
     } finally {
       setSubmitting(false);

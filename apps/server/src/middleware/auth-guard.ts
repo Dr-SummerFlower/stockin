@@ -29,6 +29,7 @@ const WHITELIST = new Set<string>(AUTH_GUARD_WHITELIST);
  */
 const PROTECTED_PREFIXES: readonly string[] = [
   '/api/records',
+  '/api/orders',
   '/api/trash',
   '/api/operation-logs',
   '/api/dashboard',

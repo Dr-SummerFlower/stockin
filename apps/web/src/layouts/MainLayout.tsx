@@ -111,7 +111,12 @@ const AppLayout: React.FC = () => {
 
         <div className="stockin-nav-group">
           {isMobile ? (
-            <nav className="stockin-nav stockin-nav--mobile" aria-label="主导航">
+            <nav
+              className={`stockin-nav stockin-nav--mobile${
+                location.pathname === ROUTES.orderNew ? ' is-compact' : ''
+              }`}
+              aria-label="主导航"
+            >
               {MOBILE_TABS.slice(0, 2).map((item) => (
                 <Link
                   key={item.key}
@@ -123,17 +128,20 @@ const AppLayout: React.FC = () => {
                   <span>{item.label}</span>
                 </Link>
               ))}
-              <Link
-                to={ROUTES.orderNew}
-                className="stockin-nav-item stockin-nav-fab"
-                aria-label="记一笔进货"
-                data-tour-id="nav-order-new"
-              >
-                <span className="stockin-nav-fab__btn">
-                  <Icon name="plus" />
-                </span>
-                <span>记一笔</span>
-              </Link>
+              {/* 新建页已有吸底「保存整单」，中央 FAB 与之上下相叠容易误点，故隐藏（04-F-05）。 */}
+              {location.pathname === ROUTES.orderNew ? null : (
+                <Link
+                  to={ROUTES.orderNew}
+                  className="stockin-nav-item stockin-nav-fab"
+                  aria-label="记一笔进货"
+                  data-tour-id="nav-order-new"
+                >
+                  <span className="stockin-nav-fab__btn">
+                    <Icon name="plus" />
+                  </span>
+                  <span>记一笔</span>
+                </Link>
+              )}
               {MOBILE_TABS.slice(2).map((item) => (
                 <Link
                   key={item.key}

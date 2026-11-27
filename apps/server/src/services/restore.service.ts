@@ -24,6 +24,7 @@ import type { RestoreStagingPort } from '../runtime/ports';
 import type { BackupService } from './backup.service';
 import {
   LEGACY_BACKUP_FORMAT_VERSION,
+  LOGICAL_BACKUP_FORMAT_VERSION,
   missingRestoreTables,
   RestoreRepository,
 } from '../repositories/restore.repository';
@@ -163,6 +164,7 @@ export class RestoreService {
     const tables: RestoreTable[] = [];
     // 首行 restore-meta 里的包格式版本；老包没有该字段，按 v1 处理。
     let formatVersion: number = LEGACY_BACKUP_FORMAT_VERSION;
+    let formatVersionTooNew = false;
     let pending = '';
     let total = 0;
 
@@ -178,6 +180,11 @@ export class RestoreService {
       const version: number = Number(parsed.formatVersion);
       if (Number.isInteger(version) && version >= LEGACY_BACKUP_FORMAT_VERSION) {
         formatVersion = version;
+        // 高于当前程序的包可能含本版本不认识的表 / 列语义，直接拒绝（06-P2-8），
+        // 与本地 cmdDecrypt 的上界校验对齐；仍消费完整分块后再统一失败。
+        if (version > LOGICAL_BACKUP_FORMAT_VERSION) {
+          formatVersionTooNew = true;
+        }
       }
     };
 
@@ -208,6 +215,15 @@ export class RestoreService {
     pending += decoder.decode();
     if (pending.trim() !== '') {
       consumeLine(pending);
+    }
+    if (formatVersionTooNew) {
+      return {
+        ok: false,
+        code: ErrorCode.BACKUP_RESTORE_FAILED,
+        details: {
+          reason: `恢复包格式版本 ${formatVersion} 高于当前程序支持的 ${LOGICAL_BACKUP_FORMAT_VERSION}`,
+        },
+      };
     }
     return { ok: true, data: { tables, formatVersion } };
   }

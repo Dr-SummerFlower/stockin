@@ -191,7 +191,14 @@ export class RestoreRepository {
       }
 
       // 3) 按恢复包回填。表名必须在白名单内；列名做标识符安全校验。
-      for (const entry of tables) {
+      //    顺序强制走 RESTORE_TABLES（父表在前），不信任包内顺序：构造出
+      //    records 先于 purchase_orders 的包会撞外键而整单回滚（06-P2-7）。
+      const byTable: Map<string, RestoreTable> = new Map(tables.map((t) => [t.table, t]));
+      const ordered: RestoreTable[] = RESTORE_TABLES.flatMap((name) => {
+        const entry: RestoreTable | undefined = byTable.get(name);
+        return entry === undefined ? [] : [entry];
+      });
+      for (const entry of ordered) {
         if (!(RESTORE_TABLES as readonly string[]).includes(entry.table)) {
           throw new Error(`[restore] 恢复包含非白名单表: ${entry.table}`);
         }

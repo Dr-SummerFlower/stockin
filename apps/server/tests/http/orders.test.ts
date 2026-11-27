@@ -11,6 +11,8 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from '../support/harness';
+import { RecordRepository } from '../../src/repositories/record.repository';
+import { serverToday } from '../../src/lib/today';
 
 let harness: Harness | null = null;
 
@@ -140,15 +142,25 @@ describe('建单', () => {
     expect(scalar(h, 'SELECT COUNT(*) AS c FROM records')).toBe(0);
   });
 
-  it('明细条数超上限时 422', async () => {
+  it('明细条数超上限时 422 且 details.index=200', async () => {
     const { h, cookie } = await ready();
     const items = Array.from({ length: 201 }, (_, i) => item({ name: `商品${i}` }));
-    const rejected = await h.json<{ code: string }>('/api/orders', {
+    const rejected = await h.json<{ code: string; details: { index?: number } }>('/api/orders', {
       json: payload({ items }),
       cookie,
     });
     expect(rejected.status).toBe(422);
+    expect(rejected.body.code).toBe('VALID_FAILED');
+    expect(rejected.body.details.index).toBe(200);
     expect(scalar(h, 'SELECT COUNT(*) AS c FROM purchase_orders')).toBe(0);
+  });
+
+  it('分页参数非整数时 422（parseInt 截断回归）', async () => {
+    const { h, cookie } = await ready();
+    const fractional = await h.json('/api/orders?page=1.5&pageSize=20', { cookie });
+    const trailing = await h.json('/api/orders?pageSize=20abc', { cookie });
+    expect(fractional.status).toBe(422);
+    expect(trailing.status).toBe(422);
   });
 
   it('同一幂等键重复提交只建一张单，两次响应一致', async () => {
@@ -183,7 +195,7 @@ describe('建单', () => {
 });
 
 describe('单号生成', () => {
-  it('同日三张单依次 001/002/003，删掉中间一张后不复用已删号', async () => {
+  it('同日三张单依次 001/002/003，删掉中间/最后一张后都不复用已删号', async () => {
     const { h, cookie } = await ready();
     const first = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
     const second = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
@@ -200,11 +212,13 @@ describe('单号生成', () => {
     });
     expect(next.body.orderNo).toBe('20261125004');
 
-    // 删掉最后一张（003）：序号取「含回收站」的最大值 + 1，所以 003 不会被复用。
-    await h.json(`/api/orders/${third.body.id}`, { method: 'DELETE', cookie });
-    const fourth = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
-    expect(fourth.body.orderNo).toBe('20261125004');
+    // 删中间一张（002）：最大号仍是 003，下一单必须继续到 004（06-P2-19）。
+    await h.json(`/api/orders/${second.body.id}`, { method: 'DELETE', cookie });
+    const afterMiddle = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
+    expect(afterMiddle.body.orderNo).toBe('20261125004');
 
+    // 再删最后一张（004）：同样不复用。
+    await h.json(`/api/orders/${afterMiddle.body.id}`, { method: 'DELETE', cookie });
     const fifth = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
     expect(fifth.body.orderNo).toBe('20261125005');
   });
@@ -368,6 +382,30 @@ describe('删除与回收站', () => {
     const after = await h.json<OrderView>(`/api/orders/${created.body.id}`, { cookie });
     expect(after.body.itemCount).toBe(1);
   });
+
+  it('单据软删后彻底删除其明细，明细物理消失且不可恢复（06-P2-17）', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({ items: [item({ name: '甲货' }), item({ name: '乙货' })] }),
+      cookie,
+    });
+    await h.json(`/api/orders/${created.body.id}`, { method: 'DELETE', cookie });
+
+    const trash = await h.json<{ items: RecordView[] }>('/api/trash', { cookie });
+    const ids: number[] = trash.body.items.map((row: RecordView): number => row.id);
+    expect(ids).toHaveLength(2);
+    const purged = await h.json<{ purged: number }>('/api/trash/batch-purge', {
+      method: 'POST',
+      json: { ids },
+      cookie,
+    });
+    expect(purged.status).toBe(200);
+    expect(purged.body.purged).toBe(2);
+
+    expect(scalar(h, 'SELECT COUNT(*) AS c FROM records')).toBe(0);
+    const restore = await h.json(`/api/trash/${ids[0]}/restore`, { method: 'POST', cookie });
+    expect(restore.status).toBe(404);
+  });
 });
 
 describe('记录视图带出单据', () => {
@@ -391,6 +429,12 @@ describe('记录视图带出单据', () => {
 
     const one = await h.json<RecordView>(`/api/records/${loose.body.id}`, { cookie });
     expect(one.body.order ?? null).toBeNull();
+
+    // B-11 第 8 条正例：`/api/records/:id` 单条详情也带单据（06-P2-14）。
+    const fromOrder = await h.json<RecordView>(`/api/records/${inOrder?.id}`, { cookie });
+    expect(fromOrder.status).toBe(200);
+    expect(fromOrder.body.order?.orderNo).toBe(created.body.orderNo);
+    expect(fromOrder.body.order?.supplier).toBe('红星批发部');
   });
 });
 
@@ -467,6 +511,25 @@ describe('建议与商品名清单', () => {
   });
 });
 
+describe('路由边界', () => {
+  it('非法 id 返回 400，未登录返回 401', async () => {
+    const { h, cookie } = await ready();
+    expect((await h.json('/api/orders/abc', { cookie })).status).toBe(400);
+    expect((await h.json('/api/orders/1', { cookie: null })).status).toBe(401);
+  });
+
+  it('单头字段错误返回 422 且 details 不含明细 index', async () => {
+    const { h, cookie } = await ready();
+    const bad = await h.json<{ code: string; details: { index?: number } }>('/api/orders', {
+      json: payload({ supplier: '   ' }),
+      cookie,
+    });
+    expect(bad.status).toBe(422);
+    expect(bad.body.code).toBe('VALID_FAILED');
+    expect(bad.body.details.index).toBeUndefined();
+  });
+});
+
 describe('统计口径', () => {
   it('建单与删单让仪表盘笔数同步增减，不额外改变口径', async () => {
     const { h, cookie } = await ready();
@@ -489,5 +552,29 @@ describe('统计口径', () => {
     );
     expect(after.body.metrics.totalRecords).toBe(0);
     expect(after.body.metrics.totalAmountCents).toBe(0);
+  });
+
+  it('建单后 dashboard 与 aggregateSql 口径逐字段一致（06-P2-15）', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/orders', {
+      json: payload({
+        items: [
+          item({ name: '口径甲', expiryDate: '2026-12-10' }),
+          item({ name: '口径乙', expiryDate: '2026-11-01' }),
+          item({ name: '口径甲', expiryDate: null }),
+        ],
+      }),
+      cookie,
+    });
+
+    const dashboard = await h.json<{ metrics: Record<string, number>; thresholdDays: number }>(
+      '/api/dashboard',
+      { cookie },
+    );
+    const expected = new RecordRepository(h.deps.db).aggregateSql(
+      serverToday(),
+      dashboard.body.thresholdDays,
+    );
+    expect(dashboard.body.metrics).toEqual(expected);
   });
 });

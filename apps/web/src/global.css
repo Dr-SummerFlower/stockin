@@ -2751,6 +2751,16 @@ a.stockin-touch {
 .stockin-order-grid--row:last-child {
   border-bottom: 0;
 }
+/* 保存失败时服务端的 details.index 指向的这一行：红边框 + 浅红底（04-F-01） */
+.stockin-order-grid--row.is-error {
+  box-shadow: inset 0 0 0 2px var(--stockin-color-expired);
+  background: var(--stockin-color-expired-bg);
+}
+.stockin-order-card-item.is-error {
+  border-color: var(--stockin-color-expired);
+  box-shadow: inset 0 0 0 1px var(--stockin-color-expired);
+  background: var(--stockin-color-expired-bg);
+}
 .stockin-order-cell {
   padding: 8px 8px;
   border-right: 1px solid var(--stockin-color-border-visible);
@@ -2858,6 +2868,35 @@ a.stockin-touch {
 }
 
 /* ---------- 录入：合计条 ---------- */
+/* F-07：手机端滚动录入时的常驻摘要；屏幕档不显示，底部合计仍保留。 */
+.stockin-order-sticky-sum {
+  display: none;
+}
+@media (max-width: 767px) {
+  .stockin-order-sticky-sum {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--stockin-s3);
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--stockin-color-border-visible);
+    border-radius: var(--stockin-radius-md);
+    background: var(--stockin-color-surface);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 8%);
+    font-size: var(--stockin-fs-caption);
+    color: var(--stockin-color-muted);
+  }
+  .stockin-order-sticky-sum b {
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+    color: var(--stockin-color-text);
+  }
+}
+
 .stockin-order-foot {
   display: flex;
   align-items: center;
@@ -3174,6 +3213,10 @@ a.stockin-touch {
     width: 100%;
     gap: 0;
   }
+  /* 新建页隐藏中央「记一笔」后只剩 4 格，避免第 5 列留白（06-P2-12）。 */
+  .stockin-nav--mobile.is-compact {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
   /* 首页风险优先：把风险栏提到预警清单之前（DOM 不变，仅移动端改顺序） */
   .stockin-dashboard-grid {
     display: flex;
@@ -3188,4 +3231,77 @@ a.stockin-touch {
   .stockin-risk-column .stockin-note-panel {
     grid-column: 1 / -1;
   }
+}
+
+/* ------------------------------------------------------------------ 打印 ----
+ * 单据详情页的「打印」不能把导航、顶栏、操作按钮一起打出去（04-F-06）。
+ * 只留抬头 + 明细表 + 合计 + 备注；明细多时允许跨页，单行不拆。
+ */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  html,
+  body {
+    background: #fff;
+  }
+  .stockin-app-shell {
+    display: block;
+  }
+  .stockin-sidebar,
+  .stockin-topbar,
+  .stockin-nav,
+  .stockin-page-actions,
+  .stockin-receipt-strip,
+  .stockin-submit-bar,
+  .stockin-mfilter,
+  .stockin-pager,
+  .ant-drawer,
+  .ant-modal-root {
+    display: none !important;
+  }
+  .stockin-content {
+    padding: 0;
+  }
+  .stockin-panel {
+    border: 0;
+    box-shadow: none;
+  }
+  .stockin-page-title {
+    font-size: 18pt;
+  }
+  .stockin-order-detail-table table {
+    page-break-inside: auto;
+  }
+  .stockin-order-detail-table tr {
+    break-inside: avoid;
+  }
+  /* 手机档明细是卡片而非表格，同样不能被拆到两页（06-P2-23）。 */
+  .stockin-order-item-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  /* 仅打印时出现的抬头（店铺名 + 单据信息） */
+  .stockin-print-only {
+    display: block !important;
+  }
+}
+
+/* 屏幕上看不到的打印抬头 */
+.stockin-print-only {
+  display: none;
+}
+.stockin-print-head {
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+  padding-bottom: 8px;
+}
+.stockin-print-head b {
+  font-size: 16px;
+}
+.stockin-print-head span {
+  margin-left: 12px;
+  color: var(--stockin-color-muted);
+  font-size: 12px;
 }

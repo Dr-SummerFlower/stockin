@@ -95,6 +95,10 @@ export class OrderService {
     key: string,
     produce: () => ServiceResult<OrderView>,
   ): ServiceResult<OrderView> {
+    // 内部直调可能传空 key：空串不该成为所有调用共享的缓存槽（06-P2-6）。
+    if (key === '') {
+      return produce();
+    }
     const now: number = epochSeconds();
     const cached: ServiceResult<OrderView> | undefined = idempotencyStore.get(key, now);
     if (cached !== undefined) {
@@ -182,19 +186,23 @@ export class OrderService {
       }
 
       const explicitNo: string = (input.orderNo ?? '').trim();
-      const orderNo: string =
-        explicitNo === '' ? this.deps.orders.nextNo(input.purchaseDate) : explicitNo;
-      const duplicatedNo: boolean = this.deps.orders.existsSameNo(orderNo, input.purchaseDate);
-      const write: OrderWriteInput = {
-        orderNo,
-        supplier,
-        purchaseDate: input.purchaseDate,
-        remark: nullable(input.remark ?? null),
-        items: prepared,
-      };
       const ctx: WriteContext = ctxOf(requestId, actor);
 
-      const createdId: number = immediateTransaction(this.deps.db, () => {
+      // 单号生成、重复标记、写入、审计与回读全部落在同一个 BEGIN IMMEDIATE：
+      // ① 并发自动单号在写锁下串行，取 MAX+1 不会撞号；
+      // ② duplicatedNo 在事务内判定，不会被并发提交「漏标」；
+      // ③ 回读失败即抛错回滚（不留半张单），重试同 key 不会造重复单（06-P2-3/4）。
+      const view: OrderView = immediateTransaction(this.deps.db, () => {
+        const orderNo: string =
+          explicitNo === '' ? this.deps.orders.nextNo(input.purchaseDate) : explicitNo;
+        const duplicatedNo: boolean = this.deps.orders.existsSameNo(orderNo, input.purchaseDate);
+        const write: OrderWriteInput = {
+          orderNo,
+          supplier,
+          purchaseDate: input.purchaseDate,
+          remark: nullable(input.remark ?? null),
+          items: prepared,
+        };
         const orderId: number = this.deps.orders.create(write, ctx);
         this.deps.logs.append({
           action: Action.ORDER_CREATE,
@@ -212,15 +220,13 @@ export class OrderService {
           actor,
           occurredAt: ctx.occurredAt,
         });
-        return orderId;
+        const row = this.deps.orders.findView(orderId);
+        if (row === null) {
+          throw new Error(`[order.service] 建单后回读失败: id=${orderId}`);
+        }
+        return this.deps.orders.toView(row, duplicatedNo);
       });
-
-      const row = this.deps.orders.findView(createdId);
-      if (row === null) {
-        // 刚写入却读不到只可能是并发删除，按内部错误处理（事务已提交，不回滚）。
-        return { ok: false, code: ErrorCode.COMMON_INTERNAL };
-      }
-      return { ok: true, data: this.deps.orders.toView(row, duplicatedNo) };
+      return { ok: true, data: view };
     });
   }
 

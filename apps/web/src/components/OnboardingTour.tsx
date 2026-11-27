@@ -86,6 +86,16 @@ const SCENES: readonly TourScene[] = [
     placement: 'bottom',
   },
   {
+    // F-15：新模型以整单为主入口，引导必须讲清「记一笔 = 整单录入」。
+    path: '/',
+    target: 'nav-order-new',
+    title: '记一笔 = 整单',
+    description:
+      '点底部凸起的「记一笔」开进货单：一个供货商、一次录完多条商品；单条补录只在记录页需要订正历史时使用。',
+    placement: 'top',
+    waitForPath: '/orders/new',
+  },
+  {
     path: '/',
     target: 'nav-records',
     title: '进入进货记录',
@@ -108,6 +118,14 @@ const SCENES: readonly TourScene[] = [
     description: '点击右上角「新增记录」，进入录入表单。',
     placement: 'bottomRight',
     waitForPath: '/records/new',
+  },
+  {
+    path: '/orders/new',
+    target: 'order-basic',
+    title: '整单录入',
+    description:
+      '先填供货商与进货日期，再逐行填商品；整单一次保存，单号自动生成。历史单据可以在「从上次带入」里勾选复用。',
+    placement: 'bottom',
   },
   {
     path: '/records/new',

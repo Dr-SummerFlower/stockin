@@ -264,13 +264,18 @@ export function toRecordView(row: RecordRow, today: string, thresholdDays: numbe
     remainingDays: d,
     expiryStatus: classifyExpiry(d, thresholdDays),
     // 散记恒为 null；只有带 purchase_orders 关联的查询才会填出单号与供货商。
+    // order_id 非空但别名缺失（如扫描查询用 SELECT *）时不能造出空串脏引用（06-P2-9）。
     order:
-      row.order_id === null
+      row.order_id === null ||
+      row.order_no === undefined ||
+      row.order_no === null ||
+      row.order_supplier === undefined ||
+      row.order_supplier === null
         ? null
         : {
             id: row.order_id,
-            orderNo: row.order_no ?? '',
-            supplier: row.order_supplier ?? '',
+            orderNo: row.order_no,
+            supplier: row.order_supplier,
           },
   };
 }

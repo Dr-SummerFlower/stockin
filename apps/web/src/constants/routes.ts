@@ -57,6 +57,8 @@ export const ACTION_LABELS: Readonly<Record<string, string>> = {
   RECORD_BATCH_DELETE: '批量删除记录',
   RECORD_RESTORE: '恢复记录',
   RECORD_PURGE: '彻底删除记录',
+  ORDER_CREATE: '新建进货单',
+  ORDER_DELETE: '删除进货单',
   EXCEL_TEMPLATE: '下载模板',
   EXCEL_IMPORT: '导入 Excel',
   EXCEL_EXPORT: '导出 Excel',
@@ -105,8 +107,10 @@ export const RECORD_FIELD_LABELS: Readonly<Record<string, string>> = {
 /** 触控目标最小尺寸（px），响应式三档共用。 */
 export const TOUCH_TARGET_MIN_PX = 44;
 
-/** 日志筛选默认展示的常用操作类型；完整 17 项见 ACTION_LABELS。 */
+/** 日志筛选默认展示的常用操作类型；完整清单见 ACTION_LABELS。 */
 export const LOG_COMMON_ACTIONS: readonly string[] = [
+  'ORDER_CREATE',
+  'ORDER_DELETE',
   'RECORD_CREATE',
   'RECORD_UPDATE',
   'RECORD_DELETE',

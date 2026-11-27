@@ -52,7 +52,7 @@ import { immediateTransaction } from '../repositories/db';
 import type { RecordRepository } from '../repositories/record.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { SettingsRepository } from '../repositories/settings.repository';
-import { toRecordFields, type WriteContext } from '../repositories/types';
+import { toRecordFields, toRecordView, type WriteContext } from '../repositories/types';
 import type { Env } from '../env';
 import { serverToday, utcNowIso } from '../lib/today';
 import { logger } from '../lib/logger';
@@ -354,8 +354,8 @@ export class ExcelService {
         fields.quantity / SCALE.QUANTITY,
         fields.amountCents / SCALE.AMOUNT_CENTS,
         fields.remark ?? '',
-        // 单据编号（散记留空）：列序与 EXCEL_HEADERS 一致，加在最后不影响旧文件。
-        row.order_no ?? '',
+        // 单据编号（散记留空）：走 toRecordView 这一唯一映射入口，避免与记录接口漂移（06-P2-2）。
+        toRecordView(row, today, thresholdDays).order?.orderNo ?? '',
       ]);
       if (streaming) {
         (added as unknown as { commit(): void }).commit();

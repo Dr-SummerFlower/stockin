@@ -218,16 +218,23 @@ const RecordsPage: React.FC = () => {
           >
             导出
           </Button>
+          {/* 主操作 = 开一张进货单；单条补录降级为次要入口（历史数据订正用）。 */}
           <span data-tour-id="records-new" style={{ display: 'inline-flex' }}>
             <Button
               type="primary"
               icon={<Icon name="plus" size="sm" />}
-              onClick={(): void => navigate(ROUTES.recordNew)}
+              onClick={(): void => navigate(ROUTES.orderNew)}
               style={{ minHeight: TOUCH_TARGET_MIN_PX }}
             >
-              新增记录
+              新增进货单
             </Button>
           </span>
+          <Button
+            onClick={(): void => navigate(ROUTES.recordNew)}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+          >
+            单条补录
+          </Button>
         </div>
       </div>
 

@@ -6,11 +6,13 @@
  * 手机档改卡片，字段按「商品 / 日期 / 金额」优先级重排。
  */
 import React, { useEffect, useState } from 'react';
-import { Button, Spin, Table, Tooltip } from 'antd';
+import { App as AntdApp, Button, Modal, Spin, Table, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'umi';
 import type { OrderDetailView, RecordView } from '@stockin/shared';
-import { getOrder } from '@/services/api/order';
+import { deleteOrder, getOrder } from '@/services/api/order';
+import { errorMessage } from '@/services/request';
+import { getSettings } from '@/services/api/settings';
 import ErrorView from '@/components/ErrorView';
 import Icon from '@/components/Icon';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -31,11 +33,27 @@ const OrderDetailPage: React.FC = () => {
   const orderId: number = Number.parseInt(id ?? '', 10);
   const navigate = useNavigate();
   const { isMobile } = useBreakpoint();
+  const { message: holderMessage } = AntdApp.useApp();
+  const [deleting, setDeleting] = useState<boolean>(false);
 
   const [order, setOrder] = useState<OrderDetailView | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<unknown>(null);
   const [reloadKey, setReloadKey] = useState<number>(0);
+  /** 打印抬头用的店铺名（取不到就不显示，不阻塞页面）。 */
+  const [shopName, setShopName] = useState<string>('');
+
+  useEffect((): (() => void) => {
+    let active = true;
+    void getSettings()
+      .then((settings): void => {
+        if (active) setShopName(settings.shopName ?? '');
+      })
+      .catch((): void => undefined);
+    return (): void => {
+      active = false;
+    };
+  }, []);
 
   useEffect((): (() => void) => {
     let active = true;
@@ -169,6 +187,14 @@ const OrderDetailPage: React.FC = () => {
 
   return (
     <div className="stockin-page">
+      {/* 仅打印时出现：店铺名 + 单据抬头（屏幕上由导航与票条承担同样的信息） */}
+      <div className="stockin-print-only stockin-print-head">
+        <b>{shopName === '' ? '进货单' : shopName}</b>
+        <span>
+          {order.orderNo} · {order.supplier} · {order.purchaseDate}
+        </span>
+      </div>
+
       <div className="stockin-page-head">
         <div>
           <h1 className="stockin-page-title">
@@ -193,6 +219,37 @@ const OrderDetailPage: React.FC = () => {
               打印
             </Button>
           </Tooltip>
+          {/* F-13：编辑暂不可用（无 PUT 契约），不放假按钮；删除复用已有端点。 */}
+          <Button
+            danger
+            icon={<Icon name="trash" size="sm" />}
+            loading={deleting}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+            onClick={(): void => {
+              Modal.confirm({
+                title: '删除这张进货单？',
+                content: `将连带 ${formatCount(order.itemCount)} 条明细一起移入回收站，可在回收站恢复。`,
+                okText: '删除整单',
+                okButtonProps: { danger: true },
+                cancelText: '取消',
+                onOk: async (): Promise<void> => {
+                  setDeleting(true);
+                  try {
+                    const result = await deleteOrder(order.id);
+                    holderMessage.success(`已删除，${result.deletedRecords} 条明细进入回收站`);
+                    navigate(ROUTES.orders);
+                  } catch (cause) {
+                    holderMessage.error(errorMessage(cause, '删除失败'));
+                    throw cause;
+                  } finally {
+                    setDeleting(false);
+                  }
+                },
+              });
+            }}
+          >
+            删除这张单
+          </Button>
         </div>
       </div>
 
@@ -231,7 +288,7 @@ const OrderDetailPage: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="stockin-panel">
+        <div className="stockin-panel stockin-order-detail-table">
           <Table<RecordView>
             rowKey="id"
             size="middle"

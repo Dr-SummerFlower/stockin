@@ -45,6 +45,7 @@ import { getNextOrderNo, getOrder, listOrders } from '@/services/api/order';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 import {
+  formatCount,
   formatMoney,
   formatQuantity,
   formatQuantityShort,
@@ -53,7 +54,7 @@ import {
   SHORT_UNIT_LABELS,
 } from '@/utils/format';
 import { createIdempotencyKey } from '@/utils/idempotency-key';
-import { errorMessage } from '@/services/request';
+import { ApiError, errorMessage } from '@/services/request';
 
 /* ------------------------------------------------------------------ 行模型 */
 
@@ -137,6 +138,35 @@ function todayIso(): string {
   return shifted.toISOString().slice(0, 10);
 }
 
+/**
+ * 从保存失败里取「第几条明细出错」（0 基）与**具体原因**。
+ *
+ * 服务端 `VALID_FAILED` 的顶层 message 是固定文案「请求数据校验失败」，真正原因在
+ * `details.reason`（Service 逐条校验）或 `details.issues[].message`（zValidator）。
+ * 两者都读，否则用户只会看到「第 N 条：请求数据校验失败」（06-P1-2）。
+ */
+function orderSubmitError(error: unknown): { index: number | null; reason: string } | null {
+  if (!(error instanceof ApiError)) return null;
+  const details = error.details as {
+    index?: unknown;
+    reason?: unknown;
+    issues?: readonly { message?: unknown }[] | null;
+  } | null;
+  const index: number | null =
+    typeof details?.index === 'number' && Number.isInteger(details.index) && details.index >= 0
+      ? details.index
+      : null;
+  let reason: string =
+    typeof details?.reason === 'string' && details.reason !== '' ? details.reason : '';
+  if (reason === '' && Array.isArray(details?.issues)) {
+    const first: string | undefined = details?.issues?.find(
+      (issue): boolean => typeof issue.message === 'string' && issue.message !== '',
+    )?.message as string | undefined;
+    reason = first ?? '';
+  }
+  return { index, reason: reason === '' ? error.message : reason };
+}
+
 /* ------------------------------------------------------------------ 组件 */
 
 export interface OrderPayload {
@@ -154,6 +184,18 @@ export interface OrderFormProps {
   readonly onCancel: () => void;
 }
 
+/**
+ * 保存前确认。
+ *
+ * - `new`：清单正常，历史里没有这些名字；
+ * - `similar`：清单失败，兜底查到与历史相似的名字；
+ * - `unverified`：清单失败且兜底也没查到，无法完成重名校验。
+ */
+interface NewNameConfirm {
+  readonly names: readonly string[];
+  readonly kind: 'new' | 'similar' | 'unverified';
+}
+
 const UNIT_OPTIONS: { value: ShelfLifeUnit; label: string }[] = SHELF_LIFE_UNITS.map(
   (unit) => ({ value: unit, label: SHORT_UNIT_LABELS[unit] }),
 );
@@ -168,9 +210,32 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
   const [remark, setRemark] = useState<string>('');
   const [lines, setLines] = useState<OrderLine[]>((): OrderLine[] => [emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
+  /**
+   * 单号是否被用户手改过。
+   *
+   * 手改成纸质单号后再改进货日期，不能被接口返回值冲掉（04-F-02）。
+   * 用 ref 而不是 state：只做「能不能覆盖」的判定，不需要重渲染。
+   */
+  const orderNoTouched = useRef<boolean>(false);
+  /** 服务端指明的出错明细（按行 key 记录，行增删不会错位）。 */
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  /** 行节点索引，用于滚动定位到出错行。 */
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect((): void => {
+    if (errorKey === null) return;
+    rowRefs.current[errorKey]?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [errorKey]);
 
   /** 疑似重复检测用的历史商品名，进入页面拉一次。 */
   const [productNames, setProductNames] = useState<readonly ProductNameItem[]>([]);
+  /**
+   * 商品名清单是否已成功加载。
+   *
+   * 初始 false：清单未就绪或加载失败时，保存前必须走建议接口兜底并给出可见确认，
+   * 不能把「拿不到清单」误判成「历史确实为空」而静默落库（06-D-01）。
+   */
+  const [productNamesReady, setProductNamesReady] = useState<boolean>(false);
   /** 当前行命中的相似商品（key → 候选）。 */
   const [similarOf, setSimilarOf] = useState<Readonly<Record<string, readonly ProductNameItem[]>>>({});
 
@@ -181,22 +246,27 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
   const [pickChecked, setPickChecked] = useState<readonly number[]>([]);
   const [pickSource, setPickSource] = useState<OrderView | null>(null);
 
-  /** 保存前的「新商品」确认。 */
-  const [confirmNewNames, setConfirmNewNames] = useState<readonly string[] | null>(null);
+  /** 保存前的「新商品」确认（或清单失败时的未校验提示）。 */
+  const [confirmNewNames, setConfirmNewNames] = useState<NewNameConfirm | null>(null);
   const pendingPayload = useRef<OrderPayload | null>(null);
 
   useEffect((): void => {
     void getProductNames(500)
-      .then((result): void => setProductNames(result.items))
-      .catch((): void => undefined);
+      .then((result): void => {
+        setProductNames(result.items);
+        setProductNamesReady(true);
+      })
+      .catch((): void => {
+        setProductNamesReady(false);
+      });
   }, []);
 
-  /* 单号预填：拿不到就留空，交给服务端生成 */
+  /* 单号预填：拿不到就留空，交给服务端生成；用户手改过就不再覆盖 */
   useEffect((): (() => void) => {
     let active = true;
     void getNextOrderNo(purchaseDate)
       .then((result): void => {
-        if (active) setOrderNo(result.orderNo);
+        if (active && !orderNoTouched.current) setOrderNo(result.orderNo);
       })
       .catch((): void => undefined);
     return (): void => {
@@ -205,6 +275,8 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
   }, [purchaseDate]);
 
   const dispatch = useCallback((key: string, event: FieldEvent): void => {
+    // 改动了出错行就撤掉它的高亮，避免「已经改好还红着」。
+    setErrorKey((prev: string | null): string | null => (prev === key ? null : prev));
     setLines((prev: OrderLine[]): OrderLine[] =>
       prev.map((line: OrderLine): OrderLine =>
         line.key === key ? { ...line, linkage: applyFieldEvent(line.linkage, event) } : line,
@@ -213,6 +285,7 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
   }, []);
 
   const patchBase = useCallback((key: string, p: Partial<LineBase>): void => {
+    setErrorKey((prev: string | null): string | null => (prev === key ? null : prev));
     setLines((prev: OrderLine[]): OrderLine[] =>
       prev.map((line: OrderLine): OrderLine =>
         line.key === key ? { ...line, base: { ...line.base, ...p } } : line,
@@ -221,6 +294,8 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
   }, []);
 
   const removeLine = useCallback((key: string): void => {
+    // 删掉出错行后不能再高亮它（06-P2-22）。
+    setErrorKey((prev: string | null): string | null => (prev === key ? null : prev));
     setLines((prev: OrderLine[]): OrderLine[] => {
       const next: OrderLine[] = prev.filter((line: OrderLine): boolean => line.key !== key);
       return next.length === 0 ? [emptyLine()] : next;
@@ -370,6 +445,8 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
       setPickOpen(false);
       return;
     }
+    // 整批带入会替换行集合，旧错误高亮不再对应任何行（06-P2-22）。
+    setErrorKey(null);
     setLines((prev: OrderLine[]): OrderLine[] => {
       const kept: OrderLine[] = prev.filter(
         (line: OrderLine): boolean => line.base.name.trim() !== '',
@@ -382,7 +459,7 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
   /* -------- 提交 -------- */
   const buildItems = useCallback((): { drafts: RecordDraft[]; error: string | null } => {
     const drafts: RecordDraft[] = [];
-    for (const [index, line] of lines.entries()) {
+    for (const line of lines) {
       if (line.base.name.trim() === '') continue;
       const base = {
         name: line.base.name,
@@ -392,15 +469,43 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
       };
       const invalid: string | null = validateRecordForm(base, line.linkage);
       if (invalid !== null) {
-        return { drafts: [], error: `第 ${index + 1} 行：${invalid}` };
+        // 用过滤空行后的序号（drafts.length + 1），与服务端 details.index 的口径一致（06-P2-13）。
+        return { drafts: [], error: `第 ${drafts.length + 1} 行：${invalid}` };
       }
       drafts.push(buildRecordDraft(base, line.linkage, null));
     }
     return { drafts, error: null };
   }, [lines, purchaseDate]);
 
+  /**
+   * 真正提交：统一处理服务端 422。
+   *
+   * `details.index` 指明第几条明细出错时，把该行标红并滚动到位，
+   * 顶部 Alert 同时给出「第 N 条：原因」（04-F-01）。
+   */
+  const submit = useCallback(
+    async (payload: OrderPayload): Promise<void> => {
+      try {
+        await onSubmit(payload);
+      } catch (cause) {
+        const info: { index: number | null; reason: string } | null = orderSubmitError(cause);
+        if (info !== null && info.index !== null) {
+          const filled: OrderLine[] = lines.filter(
+            (line: OrderLine): boolean => line.base.name.trim() !== '',
+          );
+          setErrorKey(filled[info.index]?.key ?? null);
+          setFormError(`第 ${info.index + 1} 条：${info.reason}`);
+          return;
+        }
+        setFormError(info?.reason ?? errorMessage(cause, '保存失败'));
+      }
+    },
+    [lines, onSubmit],
+  );
+
   const doSubmit = useCallback(async (): Promise<void> => {
     setFormError(null);
+    setErrorKey(null);
     if (supplier.trim() === '') {
       setFormError('请先填供货商');
       return;
@@ -428,22 +533,65 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
       idempotencyKey: createIdempotencyKey(),
     };
 
-    /* 保存前汇总：本次出现了历史里没有的商品名 */
-    const known: Set<string> = new Set(productNames.map((item: ProductNameItem): string => item.name));
-    const fresh: string[] = Array.from(
-      new Set(
-        drafts
-          .map((draft: RecordDraft): string => draft.name)
-          .filter((name: string): boolean => known.size > 0 && !known.has(name)),
-      ),
+    /* 保存前汇总：本次出现了历史里没有的商品名（06-D-01）。
+     *
+     * 清单加载成功时用本地清单；未就绪/加载失败时逐个走建议接口兜底，
+     * 兜底也失败则进入「未校验」确认，绝不静默落库。 */
+    const names: string[] = Array.from(
+      new Set(drafts.map((draft: RecordDraft): string => draft.name)),
     );
-    if (fresh.length > 0 && productNames.length > 0) {
+
+    if (productNamesReady) {
+      const known: Set<string> = new Set(
+        productNames.map((item: ProductNameItem): string => item.name),
+      );
+      /* known 为空表示历史确实为空，此时不提示、按原样保存 */
+      const fresh: string[] = names.filter(
+        (name: string): boolean => known.size > 0 && !known.has(name),
+      );
+      if (fresh.length > 0) {
+        pendingPayload.current = payload;
+        setConfirmNewNames({ names: fresh, kind: 'new' });
+        return;
+      }
+    } else {
+      /* 清单未就绪/加载失败：逐个走建议接口兜底。
+       * 注意服务端是「包含匹配」，无法覆盖编辑距离类相似名；
+       * 因此只要清单不可用，就必须显式确认，绝不静默落库（06-D-01）。 */
+      const supplierName: string = supplier.trim();
+      const similar: string[] = [];
+      for (const name of names) {
+        try {
+          const result = await getRecordSuggestions(
+            'name',
+            name,
+            supplierName === '' ? undefined : supplierName,
+          );
+          if (result.items.some((item): boolean => item.value !== name)) {
+            similar.push(name);
+          }
+        } catch {
+          /* 建议接口也失败：仍按「未校验」处理，下面统一走显式确认 */
+        }
+      }
       pendingPayload.current = payload;
-      setConfirmNewNames(fresh);
+      setConfirmNewNames({
+        names: similar.length > 0 ? similar : names,
+        kind: similar.length > 0 ? 'similar' : 'unverified',
+      });
       return;
     }
-    await onSubmit(payload);
-  }, [buildItems, onSubmit, orderNo, productNames, purchaseDate, remark, supplier]);
+    await submit(payload);
+  }, [
+    buildItems,
+    orderNo,
+    productNames,
+    productNamesReady,
+    purchaseDate,
+    remark,
+    submit,
+    supplier,
+  ]);
 
   /* -------- 单行字段：返回命名节点，两套布局共用 -------- */
   const cellsOf = (line: OrderLine, index: number): Record<string, React.ReactNode> => {
@@ -644,8 +792,15 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
           {filled.map((line: OrderLine, index: number): React.ReactNode => {
             const c = cellsOf(line, index);
             const changed: boolean = line.origin !== null;
+            const isError: boolean = errorKey === line.key;
             return (
-              <div key={line.key} className={`stockin-order-card-item${changed ? ' is-copied' : ''}`}>
+              <div
+                key={line.key}
+                ref={(node: HTMLDivElement | null): void => {
+                  rowRefs.current[line.key] = node;
+                }}
+                className={`stockin-order-card-item${changed ? ' is-copied' : ''}${isError ? ' is-error' : ''}`}
+              >
                 <div className="stockin-order-card-item__head">
                   {c.name}
                   {c.remove}
@@ -682,8 +837,15 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         </div>
         {filled.map((line: OrderLine, index: number): React.ReactNode => {
           const c = cellsOf(line, index);
+          const isError: boolean = errorKey === line.key;
           return (
-            <div key={line.key} className="stockin-order-grid stockin-order-grid--row">
+            <div
+              key={line.key}
+              ref={(node: HTMLDivElement | null): void => {
+                rowRefs.current[line.key] = node;
+              }}
+              className={`stockin-order-grid stockin-order-grid--row${isError ? ' is-error' : ''}`}
+            >
               {c.name}
               {c.spec}
               {c.productionDate}
@@ -720,8 +882,15 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         />
       ) : null}
 
+      {/* F-07：手机端滚动录 20 行时仍能看见当前品种 / 件数 / 合计。 */}
+      <div className="stockin-order-sticky-sum" aria-live="polite">
+        <span>{formatCount(totals.count)} 个品种</span>
+        <span>{formatQuantityShort(totals.quantity)} 件</span>
+        <b>{formatMoney(totals.cents)}</b>
+      </div>
+
       <section className="stockin-form-section">
-        <div className="stockin-form-section-head">
+        <div className="stockin-form-section-head" data-tour-id="order-basic">
           <div className="stockin-form-section-heading">
             <h3>单据信息</h3>
           </div>
@@ -751,9 +920,12 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                 aria-label="单据编号"
                 placeholder="留空由系统生成"
                 maxLength={40}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>): void =>
-                  setOrderNo(event.target.value)
-                }
+                onChange={(event: React.ChangeEvent<HTMLInputElement>): void => {
+                  const next: string = event.target.value;
+                  // 清空视为「交回系统生成」，改进货日期时重新自动带号。
+                  orderNoTouched.current = next.trim() !== '';
+                  setOrderNo(next);
+                }}
               />
               <div className="stockin-hint">日期 + 当日序号，可改成纸质单上的号码</div>
             </div>
@@ -907,10 +1079,16 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         )}
       </Drawer>
 
-      {/* 保存前：疑似新商品确认 */}
+      {/* 保存前：疑似新商品确认 / 清单失败时的未校验确认 */}
       <Modal
         open={confirmNewNames !== null}
-        title="确认新商品"
+        title={
+          confirmNewNames?.kind === 'unverified'
+            ? '未能校验商品名'
+            : confirmNewNames?.kind === 'similar'
+              ? '商品名与历史相似'
+              : '确认新商品'
+        }
         okText="就是这个，继续保存"
         cancelText="返回修改"
         onCancel={(): void => {
@@ -921,13 +1099,19 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
           const payload: OrderPayload | null = pendingPayload.current;
           setConfirmNewNames(null);
           pendingPayload.current = null;
-          if (payload !== null) void onSubmit(payload);
+          if (payload !== null) void submit(payload);
         }}
         okButtonProps={{ loading: submitting }}
       >
-        <p style={{ marginTop: 0 }}>历史里没有这些商品名，确认是新商品而不是打错字：</p>
+        <p style={{ marginTop: 0 }}>
+          {confirmNewNames?.kind === 'unverified'
+            ? '商品名清单加载失败，未能重名校验；确认以下商品名无误后继续：'
+            : confirmNewNames?.kind === 'similar'
+              ? '商品名清单加载失败，但这些名字与历史相似；确认是否打错：'
+              : '历史里没有这些商品名，确认是新商品而不是打错字：'}
+        </p>
         <ul style={{ paddingLeft: 20, margin: '8px 0 0' }}>
-          {(confirmNewNames ?? []).map(
+          {(confirmNewNames?.names ?? []).map(
             (name: string): React.ReactNode => (
               <li key={name} style={{ fontWeight: 600 }}>{name}</li>
             ),

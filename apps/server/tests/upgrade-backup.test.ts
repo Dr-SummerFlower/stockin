@@ -284,6 +284,49 @@ describe('bootstrap 接线', () => {
     }
   });
 
+  it('v6→v7 升级：新表与索引也拿到查询规划器统计', async () => {
+    const dataDir: string = path.join(dir, 'data');
+    const backupDir: string = path.join(dir, 'backups');
+    mkdirSync(dataDir, { recursive: true });
+    const legacy: Db = openDatabase({ filename: path.join(dataDir, 'stockin.db') });
+    try {
+      migrateTo(6, legacy);
+      insertRecord('啤酒', legacy);
+      // 旧库已经有 records 的统计行：这正是原判据误判「无需 ANALYZE」的前提。
+      legacy.exec('ANALYZE');
+      const before = legacy
+        .prepare("SELECT COUNT(*) AS c FROM sqlite_stat1 WHERE tbl = 'purchase_orders'")
+        .get() as { c: number };
+      expect(before.c).toBe(0);
+    } finally {
+      closeDatabase(legacy);
+    }
+
+    const base = nodeRuntime({});
+    const boot = await bootstrap({
+      bundle: { ...base, platform: { ...base.platform, nodeVersionAssert: 'skip' } },
+      overrides: {
+        nodeEnv: 'test',
+        dataDir,
+        backupDir,
+        tmpDir: path.join(dir, 'tmp'),
+        backupPublicKey: defaultPublicKey,
+      },
+    });
+    try {
+      expect(boot.migration.fromVersion).toBe(6);
+      expect(boot.migration.applied).toEqual([7]);
+      const rows = boot.db
+        .prepare("SELECT idx FROM sqlite_stat1 WHERE tbl = 'purchase_orders'")
+        .all() as { idx: string }[];
+      // 空表的 ANALYZE 只为部分索引写统计行；有单据后普通索引才会有自己的行。
+      // 这里只要证明新表进入了统计即可（列表页依赖的正是 idx_orders_date）。
+      expect(rows.map((row) => row.idx)).toContain('idx_orders_date');
+    } finally {
+      closeDatabase(boot.db);
+    }
+  });
+
   it('没有发生迁移时不生成逻辑备份', async () => {
     const dataDir: string = path.join(dir, 'data');
     const backupDir: string = path.join(dir, 'backups');

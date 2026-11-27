@@ -262,7 +262,10 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
     // 额度的生死线（一次列表页 12 万行）。幂等，已有统计即跳过；失败只降级
     // 性能，不得阻断启动。
     try {
-      const analyzed: boolean = ensureQueryPlannerStats(db);
+      // 旧库升级时判据仍锚定 records：records 行数没变就判「无需 ANALYZE」，
+      // 新表（purchase_orders 及其索引）会永久没有统计行，列表页重演全表扫描。
+      // 单个脚本迁移也算升级，强制重算一次；幂等路径仍走原判据跳过。
+      const analyzed: boolean = ensureQueryPlannerStats(db, migration.applied.length > 0);
       if (analyzed) {
         logger.info('[BOOTSTRAP] 已生成查询规划器统计（ANALYZE）');
       }

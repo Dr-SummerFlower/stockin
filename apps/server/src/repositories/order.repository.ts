@@ -258,14 +258,6 @@ export class OrderRepository {
       .run(ctx.occurredAt, ...ids).changes;
   }
 
-  /** 回收站里这张单还有多少条明细被软删（详情页提示「另有 N 条已被删除」用）。 */
-  countDeletedItems(id: number): number {
-    return this.scalar(
-      'SELECT COUNT(*) AS c FROM records WHERE order_id = ? AND deleted_at IS NOT NULL',
-      id,
-    );
-  }
-
   /** 行 → 视图（唯一映射入口，避免 service 里再拼字段）。 */
   toView(row: OrderRow, duplicatedNo?: boolean): OrderView {
     return toOrderView(row, duplicatedNo);

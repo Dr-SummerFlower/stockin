@@ -165,6 +165,9 @@ export class RecordService {
   ): ServiceResult<RecordSuggestionResponse> {
     if (field === 'name') {
       const rows = this.deps.records.suggestNames(q, limit);
+      // 供货商优先只在「全局最近 limit 个名称」里找该供货商的价（06-P2-10）：
+      // 某商品在该供货商下有货、但不在全局 top-limit 时不会以该供货商价出现。
+      // 个体自用数据量下可接受；若要求「供货商商品必现」，需改成独立来源合并。
       const normalizedSupplier: string = normalizeName(supplier ?? '');
       const preferred: Map<string, SuggestionRow> =
         normalizedSupplier === ''

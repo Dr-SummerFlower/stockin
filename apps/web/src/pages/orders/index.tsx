@@ -259,7 +259,11 @@ const OrdersPage: React.FC = () => {
       ) : isMobile ? (
         <div>
           {loading ? (
-            <div className="stockin-hint" style={{ padding: 24, textAlign: 'center' }}>加载中…</div>
+            <div className="stockin-skeleton-list" aria-busy="true">
+              {[0, 1, 2, 3].map((key: number) => (
+                <div key={key} className="stockin-skeleton-card" />
+              ))}
+            </div>
           ) : items.length === 0 ? (
             <EmptyState icon="list" title="还没有进货单" />
           ) : (
@@ -298,11 +302,19 @@ const OrdersPage: React.FC = () => {
         </div>
       ) : (
         <div className="stockin-panel">
+          {/* F-16：与记录页一致的骨架，不再叠加 antd Table 的居中 Spin。 */}
+          {loading ? (
+            <div className="stockin-skeleton-list" aria-busy="true">
+              {[0, 1, 2, 3, 4].map((key: number) => (
+                <div key={key} className="stockin-skeleton-row" />
+              ))}
+            </div>
+          ) : null}
           <Table<OrderView>
             rowKey="id"
             size="middle"
-            loading={loading}
-            dataSource={items as OrderView[]}
+            loading={false}
+            dataSource={loading ? [] : (items as OrderView[])}
             columns={columns}
             pagination={false}
             onRow={(record: OrderView) => ({

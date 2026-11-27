@@ -32,7 +32,6 @@ import {
 import { SCHEMA_EXPECTED } from '../src/repositories/schema';
 import {
   RESTORE_TABLES,
-  LEGACY_BACKUP_FORMAT_VERSION,
   LOGICAL_BACKUP_FORMAT_VERSION,
   requiredRestoreTables,
 } from '../src/repositories/restore.repository';
@@ -111,6 +110,30 @@ async function buildPackageAndTicket(
     },
     {
       kind: 'table',
+      table: 'purchase_orders',
+      columns: [
+        'id',
+        'order_no',
+        'supplier',
+        'supplier_norm',
+        'purchase_date',
+        'created_at',
+        'updated_at',
+      ],
+      rows: [
+        [
+          1,
+          '20260201001',
+          '恢复供货商',
+          '恢复供货商',
+          '2026-02-01',
+          '2026-02-01T00:00:00Z',
+          '2026-02-01T00:00:00Z',
+        ],
+      ],
+    },
+    {
+      kind: 'table',
       table: 'records',
       columns: [
         'id',
@@ -118,6 +141,7 @@ async function buildPackageAndTicket(
         'name_norm',
         'purchase_date',
         'spec_norm',
+        'order_id',
         'created_at',
         'updated_at',
       ],
@@ -128,6 +152,7 @@ async function buildPackageAndTicket(
           '恢复商品a',
           '2026-02-01',
           '',
+          1,
           '2026-02-01T00:00:00Z',
           '2026-02-01T00:00:00Z',
         ],
@@ -197,14 +222,23 @@ describe('RestoreService', () => {
 
     const result = await service.commit(batchId, ticket);
     expect(result.ok).toBe(true);
-    // 恢复包覆盖全部 6 张可恢复表（含补齐的空表），其中 2 张非空共 2 行。
+    // 恢复包覆盖全部 7 张可恢复表（含补齐的空表），其中 3 张非空共 3 行。
     expect(result.data?.restoredTables).toBe(RESTORE_TABLES.length);
-    expect(result.data?.restoredRows).toBe(2);
+    expect(result.data?.restoredRows).toBe(3);
 
     // 验证数据已被替换。
-    const records = db.prepare('SELECT name FROM records ORDER BY id').all() as { name: string }[];
+    const records = db.prepare('SELECT name, order_id FROM records ORDER BY id').all() as {
+      name: string;
+      order_id: number | null;
+    }[];
     expect(records).toHaveLength(1);
     expect(records[0]?.name).toBe('恢复商品A');
+    // v2 包必须把单据↔明细的关联一起回填（06-P2-16）。
+    expect(records[0]?.order_id).toBe(1);
+    const order = db.prepare('SELECT id, order_no FROM purchase_orders WHERE id = 1').get() as
+      | { id: number; order_no: string }
+      | undefined;
+    expect(order?.order_no).toBe('20260201001');
     const shop = db
       .prepare('SELECT shop_name, expiry_threshold_days FROM settings WHERE id = 1')
       .get() as {
@@ -250,7 +284,7 @@ describe('RestoreService', () => {
 
     const result = await service.commit(batchId, ticket);
     expect(result.ok).toBe(true);
-    expect(result.data?.restoredRows).toBe(2);
+    expect(result.data?.restoredRows).toBe(3);
     expect(
       (db.prepare('SELECT shop_name FROM settings WHERE id = 1').get() as { shop_name: string })
         .shop_name,
@@ -374,6 +408,15 @@ describe('RestoreService', () => {
 
   it('升级前导出的 v1 旧包（schema 低一版、无 purchase_orders）仍能恢复', async () => {
     // 升级前的老包：6 张表、没有单据表、restore-meta 里也没有 formatVersion。
+    // 硬编码升级前的 6 表清单：不调用 requiredRestoreTables，避免实现有误时夹具跟着错（06-P2-20）。
+    const LEGACY_TABLE_NAMES: readonly string[] = [
+      'credentials',
+      'settings',
+      'records',
+      'operation_logs',
+      'meta',
+      'admin_accounts',
+    ];
     const legacyTables: RestoreTable[] = ensureAllRestoreTables(
       [
         {
@@ -401,7 +444,7 @@ describe('RestoreService', () => {
           ],
         },
       ],
-      requiredRestoreTables(LEGACY_BACKUP_FORMAT_VERSION),
+      LEGACY_TABLE_NAMES,
     );
     const dataSha256: string = await restoreDataDigest(legacyTables);
     const begun = service.beginBatch();
@@ -587,6 +630,34 @@ describe('RestoreService', () => {
     };
     expect(shop.shop_name).toBe('原始店铺');
     expect((db.prepare('SELECT COUNT(*) AS c FROM sessions').get() as { c: number }).c).toBe(1);
+  });
+
+  it('恢复包格式版本高于当前程序时拒绝', async () => {
+    const begun = service.beginBatch();
+    const { batchId, issuedAt } = begun.data!;
+    const { lines, ticket } = await buildPackageAndTicket(batchId, issuedAt);
+    // 只改包的 meta 行（数据行与票据摘要不变）：读取阶段的上界校验先于摘要比对。
+    const futureLines: string[] = lines.map((line: string): string => {
+      const parsed: unknown = JSON.parse(line);
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        (parsed as { kind?: string }).kind === 'restore-meta'
+      ) {
+        return JSON.stringify({
+          ...parsed,
+          formatVersion: LOGICAL_BACKUP_FORMAT_VERSION + 1,
+        });
+      }
+      return line;
+    });
+    for (let i = 0; i < futureLines.length; i += 1) {
+      await service.putChunk(batchId, i, new TextEncoder().encode(`${futureLines[i]}\n`));
+    }
+    const result = await service.commit(batchId, ticket);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('BACKUP_RESTORE_FAILED');
+    expect(String(result.details?.reason)).toMatch(/格式版本/);
   });
 
   it('同一 batchId 不能重复恢复（防重放）', async () => {
