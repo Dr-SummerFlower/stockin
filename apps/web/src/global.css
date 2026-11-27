@@ -2751,6 +2751,28 @@ a.stockin-touch {
 .stockin-order-grid--row:last-child {
   border-bottom: 0;
 }
+/* 桌面表格：日期组（3-5 列）与金额组（6-8 列）用虚线外框标出联动关系。
+   左右边界落在每组首/末列，上下端只画在表头与末行，跨行连成一个框。 */
+.stockin-order-grid--head > :nth-child(3),
+.stockin-order-grid--head > :nth-child(6),
+.stockin-order-grid--row > :nth-child(3),
+.stockin-order-grid--row > :nth-child(6) {
+  border-left: 1px dashed var(--stockin-color-control-border);
+}
+.stockin-order-grid--head > :nth-child(5),
+.stockin-order-grid--head > :nth-child(8),
+.stockin-order-grid--row > :nth-child(5),
+.stockin-order-grid--row > :nth-child(8) {
+  border-right: 1px dashed var(--stockin-color-control-border);
+}
+.stockin-order-grid--head > :nth-child(n + 3):nth-child(-n + 5),
+.stockin-order-grid--head > :nth-child(n + 6):nth-child(-n + 8) {
+  border-top: 1px dashed var(--stockin-color-control-border);
+}
+.stockin-order-grid--row:last-child > :nth-child(n + 3):nth-child(-n + 5),
+.stockin-order-grid--row:last-child > :nth-child(n + 6):nth-child(-n + 8) {
+  border-bottom: 1px dashed var(--stockin-color-control-border);
+}
 /* 保存失败时服务端的 details.index 指向的这一行：红边框 + 浅红底（04-F-01） */
 .stockin-order-grid--row.is-error {
   box-shadow: inset 0 0 0 2px var(--stockin-color-expired);
@@ -2985,14 +3007,14 @@ a.stockin-touch {
   padding: 0;
   border-right: 0;
 }
-/* 金额组 / 日期组：两组各一行成对的输入 + 一行独立字段，宽度按内容收敛 */
-.stockin-order-card-item__amounts {
-  margin-top: 10px;
-}
+/* 金额组 / 日期组：虚线框点明组内三选二联动；各两行成对输入，宽度按内容收敛 */
+.stockin-order-card-item__amounts,
 .stockin-order-card-item__dates {
   margin-top: 10px;
-  padding-top: 9px;
-  border-top: 1px dashed var(--stockin-color-border-visible);
+  padding: 10px;
+  border: 1px dashed var(--stockin-color-control-border);
+  border-radius: var(--stockin-radius);
+  background: var(--stockin-color-subtle);
 }
 .stockin-order-card-item__row2 {
   display: grid;
