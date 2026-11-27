@@ -263,9 +263,7 @@ jobs:
             [[ -e "$f" ]] && ASSETS+=("$f")
           done
 
-          # 发布正文直接内嵌本次版本的变更记录，读者不必跳到 CHANGELOG.md。
-          # 变更内容仍以仓库 CHANGELOG.md 为单一真源。
-          CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/$(git rev-parse HEAD)/CHANGELOG.md"
+          # 发布正文只放版本号与本次变更；变更内容仍以仓库 CHANGELOG.md 为单一真源。
           if [[ "${CHANNEL}" == "stable" ]]; then
             SEGMENT="$(pnpm exec git-cliff --config cliff.toml --tag "${RELEASE_TAG}" --latest --strip all 2>/dev/null || true)"
           else
@@ -276,10 +274,9 @@ jobs:
           if ! printf '%s' "${SEGMENT}" | grep -qE '^(### |[-*] )'; then
             SEGMENT=""
           fi
+          NOTES="构建版本 ${VERSION}"
           if [[ -n "${SEGMENT}" ]]; then
-            NOTES="构建版本 ${VERSION}"$'\n\n'"${SEGMENT}"$'\n\n'"完整变更记录：${CHANGELOG_URL}"
-          else
-            NOTES="构建版本 ${VERSION}"$'\n\n'"变更记录：${CHANGELOG_URL}"
+            NOTES="${NOTES}"$'\n\n'"${SEGMENT}"
           fi
 
           if [[ "${CHANNEL}" == "stable" ]]; then
