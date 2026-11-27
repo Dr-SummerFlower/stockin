@@ -20,7 +20,7 @@ export const EXCEL_FIRST_DATA_ROW = EXCEL_HEADER_ROW + 1;
 /** Excel 日期单元格的 numFmt（exceljs 约定），展示格式恒为 YYYY-MM-DD。 */
 export const EXCEL_DATE_NUMFMT = 'yyyy-mm-dd';
 
-/** 10 个业务字段的 Excel 列键。保质期是「数值 + 单位」合并的 1 列。 */
+/** 10 个业务字段的 Excel 列键（外加可选的「单据编号」尾列）。保质期是「数值 + 单位」合并的 1 列。 */
 export type ExcelFieldKey =
   | 'name'
   | 'purchaseDate'
@@ -31,7 +31,8 @@ export type ExcelFieldKey =
   | 'unitPrice'
   | 'quantity'
   | 'amount'
-  | 'remark';
+  | 'remark'
+  | 'orderNo';
 
 export interface ExcelHeaderDef {
   /** 稳定的列键。 */
@@ -48,10 +49,20 @@ export interface ExcelHeaderDef {
   readonly numFmt?: string;
   /** 单元格语义类别。 */
   readonly kind: 'text' | 'date' | 'shelfLife' | 'decimal' | 'money' | 'quantity';
+  /**
+   * 可选列：导入时允许缺失（含表头为空）。
+   *
+   * 用于「单据编号」这类后加的尾列：升级前导出的 10 列文件必须仍能导入，
+   * 缺列按散记处理；写入始终按本数组顺序，缺列补空串。
+   */
+  readonly optional?: boolean;
 }
 
 /**
- * 固定 10 列，列序即导出/导入顺序。禁止在其它模块另写一份表头数组。
+ * 固定列序，列序即导出/导入顺序。禁止在其它模块另写一份表头数组。
+ *
+ * 第 11 列「单据编号」是后加的**可选尾列**：放在最后而不是插进中间，
+ * 否则升级前导出的文件会整体错列。
  */
 export const EXCEL_HEADERS: readonly ExcelHeaderDef[] = [
   {
@@ -130,12 +141,29 @@ export const EXCEL_HEADERS: readonly ExcelHeaderDef[] = [
     column: 10,
     kind: 'text',
   },
+  {
+    key: 'orderNo',
+    header: '单据编号',
+    field: 'orderNo',
+    column: 11,
+    kind: 'text',
+    optional: true,
+  },
 ];
 
 /** 表头文案数组，用于导入时做表头一致性比对。 */
 export const EXCEL_HEADER_TEXTS: readonly string[] = EXCEL_HEADERS.map((def) => def.header);
 
+/** 全部列数（含可选列），模板与导出按此写出。 */
 export const EXCEL_COLUMN_COUNT = EXCEL_HEADERS.length;
+
+/**
+ * 必填列数：导入时表头至少要覆盖到这几位。
+ * 升级前导出的 10 列文件缺的正是可选尾列，因此这里从 11 降为 10。
+ */
+export const EXCEL_REQUIRED_COLUMN_COUNT = EXCEL_HEADERS.filter(
+  (def) => def.optional !== true,
+).length;
 
 /** 取某列的 1-based 列号；未知键返回 0。 */
 export function excelColumnNumber(key: ExcelFieldKey): number {

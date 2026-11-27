@@ -47,9 +47,10 @@ describe('discoverInlineMigrations', () => {
       '003_c.sql': 'SELECT 1;',
       '002_b.sql': 'SELECT 1;',
       '001_a.sql': 'SELECT 1;',
+      '007_g.sql': 'SELECT 1;',
       '006_f.sql': 'SELECT 1;',
     });
-    expect(files.map((file) => file.version)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(files.map((file) => file.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
   it('序号断档直接抛错（新增脚本忘了 import 的现场）', () => {
@@ -72,9 +73,10 @@ describe('discoverInlineMigrations', () => {
       '004_d.sql': 'SELECT 1;',
       '005_e.sql': 'SELECT 1;',
       '006_f.sql': 'SELECT 1;',
+      '007_g.sql': 'SELECT 1;',
       'README.md': '# x',
     });
-    expect(files).toHaveLength(6);
+    expect(files).toHaveLength(7);
   });
 });
 
@@ -87,10 +89,11 @@ describe('createInlineMigrationSource', () => {
       '004_d.sql': 'CREATE TABLE d (id INTEGER);\n',
       '005_e.sql': 'CREATE TABLE e (id INTEGER);\n',
       '006_f.sql': 'CREATE TABLE f (id INTEGER);\n',
+      '007_g.sql': 'CREATE TABLE g (id INTEGER);\n',
     });
     expect(source.kind).toBe('inline');
     const files = source.discover();
-    expect(files).toHaveLength(6);
+    expect(files).toHaveLength(7);
     const first = files[0];
     expect(first).toBeDefined();
     const sql: string = source.read(first!);

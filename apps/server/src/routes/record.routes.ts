@@ -9,6 +9,7 @@ import { zValidator } from '@hono/zod-validator';
 import {
   ErrorCode,
   batchDeleteSchema,
+  productNamesQuerySchema,
   recordFilterSchema,
   recordSaveSchema,
   recordSuggestionQuerySchema,
@@ -83,7 +84,32 @@ export function registerRecordRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
     }),
     (c) => {
       const input = c.req.valid('query');
-      const result = deps.records.suggest(input.field, input.q ?? '', input.limit ?? 10);
+      const result = deps.records.suggest(
+        input.field,
+        input.q ?? '',
+        input.limit ?? 10,
+        input.supplier,
+      );
+      return result.ok
+        ? c.json(result.data, 200)
+        : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+    },
+  );
+
+  // 商品名清单（相似名检测用）：同样必须注册在 `/:id` 之前。
+  api.get(
+    '/api/records/product-names',
+    zValidator('query', productNamesQuerySchema, (result, c) => {
+      if (!result.success) {
+        return errorResponse(ErrorCode.VALID_FAILED, String(c.get('requestId') ?? ''), {
+          issues: result.error.issues,
+        });
+      }
+      return;
+    }),
+    (c) => {
+      const input = c.req.valid('query');
+      const result = deps.records.productNames(input.limit ?? 500);
       return result.ok
         ? c.json(result.data, 200)
         : errorResponse(result.code, c.get('requestId') ?? '', result.details);

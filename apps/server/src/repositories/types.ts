@@ -13,6 +13,7 @@ import {
   decodeFieldSource,
   encodeFieldSource,
   type FieldSource,
+  type OrderView,
   type RecordFields,
   type RecordSources,
   type RecordView,
@@ -61,6 +62,36 @@ export interface RecordRow {
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * 所属进货单；散记（历史数据、单条补录）为 null。
+   * 007 迁移新增，SQLite 加列即 NULL，不需要回填。
+   */
+  order_id: number | null;
+  /**
+   * 单据抬头（`LEFT JOIN purchase_orders` / 相关子查询带出）。
+   * 只有带 join 的查询（列表 / 详情 / 回收站 / 导出）才有值，其余查询为 undefined。
+   */
+  order_no?: string | null;
+  order_supplier?: string | null;
+}
+
+/** `purchase_orders` 行 + 列表聚合出来的三个汇总列。 */
+export interface OrderRow {
+  id: number;
+  order_no: string;
+  supplier: string;
+  purchase_date: string;
+  remark: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+  /** 未删除的明细条数（聚合列）。 */
+  item_count: number;
+  /** 数量合计，×1e3 定点整数（聚合列）。 */
+  total_quantity: number;
+  /** 金额合计，分（聚合列）。 */
+  total_amount_cents: number;
 }
 
 export interface SessionRow {
@@ -232,5 +263,32 @@ export function toRecordView(row: RecordRow, today: string, thresholdDays: numbe
     version: row.version,
     remainingDays: d,
     expiryStatus: classifyExpiry(d, thresholdDays),
+    // 散记恒为 null；只有带 purchase_orders 关联的查询才会填出单号与供货商。
+    order:
+      row.order_id === null
+        ? null
+        : {
+            id: row.order_id,
+            orderNo: row.order_no ?? '',
+            supplier: row.order_supplier ?? '',
+          },
   };
+}
+
+/** `purchase_orders` 行 → 列表/详情抬头视图（汇总字段来自聚合列）。 */
+export function toOrderView(row: OrderRow, duplicatedNo?: boolean): OrderView {
+  const view: OrderView = {
+    id: row.id,
+    orderNo: row.order_no,
+    supplier: row.supplier,
+    purchaseDate: row.purchase_date,
+    remark: nullable(row.remark),
+    itemCount: row.item_count,
+    totalQuantity: row.total_quantity,
+    totalAmountCents: row.total_amount_cents,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    version: row.version,
+  };
+  return duplicatedNo === undefined ? view : { ...view, duplicatedNo };
 }

@@ -324,14 +324,21 @@ describe('GET /api/records/suggestions', () => {
     });
 
     const response = await h.json<{
-      items: { value: string; spec: string | null; unitPrice: number | null }[];
+      items: {
+        value: string;
+        spec: string | null;
+        unitPrice: number | null;
+        lastPurchaseDate: string;
+      }[];
     }>('/api/records/suggestions?field=name&q=工人', { cookie });
     expect(response.status).toBe(200);
     expect(response.body.items).toHaveLength(1);
+    // 未传 supplier 时不下「是否匹配供货商」的结论，只补最近进货日期。
     expect(response.body.items[0]).toEqual({
       value: '工人牌啤酒',
       spec: '330ml',
       unitPrice: 12_500,
+      lastPurchaseDate: '2026-11-12',
     });
   });
 
@@ -348,10 +355,22 @@ describe('GET /api/records/suggestions', () => {
     });
 
     const bySuffix = await h.json<{
-      items: { value: string; spec: string | null; unitPrice: number | null }[];
+      items: {
+        value: string;
+        spec: string | null;
+        unitPrice: number | null;
+        lastPurchaseDate: string;
+      }[];
     }>('/api/records/suggestions?field=name&q=五花', { cookie });
     expect(bySuffix.status).toBe(200);
-    expect(bySuffix.body.items).toEqual([{ value: '鲜猪五花肉', spec: '500g', unitPrice: 10_000 }]);
+    expect(bySuffix.body.items).toEqual([
+      {
+        value: '鲜猪五花肉',
+        spec: '500g',
+        unitPrice: 10_000,
+        lastPurchaseDate: '2026-11-10',
+      },
+    ]);
 
     const byTokens = await h.json<{ items: { value: string }[] }>(
       `/api/records/suggestions?field=name&q=${encodeURIComponent('鲜猪 五花')}`,

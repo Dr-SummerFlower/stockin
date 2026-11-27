@@ -8,10 +8,10 @@
  */
 import {
   EXCEL_HEADERS,
-  EXCEL_HEADER_TEXTS,
   EXCEL_HEADER_ROW,
   EXCEL_FIRST_DATA_ROW,
   EXCEL_COLUMN_COUNT,
+  EXCEL_REQUIRED_COLUMN_COUNT,
   excelPhysicalRow,
   excelColumnNumber,
   parseShelfLifeCell,
@@ -67,21 +67,29 @@ export function makeImportIssue(
   return issue;
 }
 
-/** 表头一致性：列数与逐列文案必须与 EXCEL_HEADERS 完全一致。 */
+/** 表头一致性：必填列逐列文案必须与 EXCEL_HEADERS 一致；可选列缺失即视为空。 */
 export function checkExcelHeader(actual: readonly (string | null | undefined)[]): ImportIssue[] {
   const issues: ImportIssue[] = [];
-  if (actual.length < EXCEL_COLUMN_COUNT) {
+  if (actual.length < EXCEL_REQUIRED_COLUMN_COUNT) {
     issues.push(
       makeImportIssue(
         EXCEL_HEADER_ROW,
         'EXCEL_HEADER_MISMATCH',
-        `表头列数不足：期望 ${EXCEL_COLUMN_COUNT} 列，实际 ${actual.length} 列`,
+        `表头列数不足：期望至少 ${EXCEL_REQUIRED_COLUMN_COUNT} 列，实际 ${actual.length} 列`,
       ),
     );
   }
-  for (let i = 0; i < EXCEL_HEADER_TEXTS.length; i += 1) {
-    const expected: string = EXCEL_HEADER_TEXTS[i] ?? '';
+  for (let i = 0; i < EXCEL_HEADERS.length; i += 1) {
+    const def = EXCEL_HEADERS[i];
+    if (def === undefined) {
+      continue;
+    }
+    const expected: string = def.header;
     const got: string = String(actual[i] ?? '').trim();
+    // 可选尾列（如「单据编号」）缺失时按空处理，保证升级前导出的 10 列文件仍可导入。
+    if (def.optional === true && got === '') {
+      continue;
+    }
     if (got !== expected) {
       issues.push(
         makeImportIssue(
@@ -89,7 +97,7 @@ export function checkExcelHeader(actual: readonly (string | null | undefined)[])
           'EXCEL_HEADER_MISMATCH',
           `第 ${i + 1} 列表头应为「${expected}」，实际为「${got}」`,
           i + 1,
-          EXCEL_HEADERS[i]?.key,
+          def.key,
         ),
       );
     }

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /** 当前代码期望的 schema 版本（与最新迁移脚本末尾的 PRAGMA user_version 一致）。 */
-export const SCHEMA_EXPECTED = 6;
+export const SCHEMA_EXPECTED = 7;
 
 /** 不可回滚下限：低于此版本的库必须先 fix-forward，禁止直接启动。 */
 export const SCHEMA_MIN_USER_VERSION = 1;

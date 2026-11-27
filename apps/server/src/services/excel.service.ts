@@ -354,6 +354,8 @@ export class ExcelService {
         fields.quantity / SCALE.QUANTITY,
         fields.amountCents / SCALE.AMOUNT_CENTS,
         fields.remark ?? '',
+        // 单据编号（散记留空）：列序与 EXCEL_HEADERS 一致，加在最后不影响旧文件。
+        row.order_no ?? '',
       ]);
       if (streaming) {
         (added as unknown as { commit(): void }).commit();
@@ -466,6 +468,9 @@ export class ExcelService {
           parsedRows.push({ row: physicalRow, record: parsed.record });
         }
       }
+      // 第 11 列「单据编号」在导入时**刻意忽略**：Excel 没有供货商列，按单号凭空
+      // 建单据只会造出没有供货商的脏单据。导入一律按散记落库，要成单请在
+      // 「新增进货单」里录（to-do 03-B-14 给出的最保守方案）。
       if (formulaFound) {
         issues.push(
           makeImportIssue(

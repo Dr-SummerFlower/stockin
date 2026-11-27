@@ -105,6 +105,17 @@ export type ImportRowInput = z.infer<typeof importRowSchema>;
 export const recordSuggestionQuerySchema = z.object({
   field: z.enum(['name', 'spec']),
   q: z.string().max(200).optional(),
+  /**
+   * 可选供货商：传了就**优先**取该供货商下的最近一条，
+   * 该供货商没有这个商品时回退为全局最近一条（响应 `matchedSupplier: false`）。
+   */
+  supplier: z.string().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(20).optional(),
 });
 export type RecordSuggestionQuery = z.infer<typeof recordSuggestionQuerySchema>;
+
+/** 商品名清单（相似名检测用）：一个归一化名称只出现一次，按最近进货倒序。 */
+export const productNamesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(1_000).optional(),
+});
+export type ProductNamesQuery = z.infer<typeof productNamesQuerySchema>;

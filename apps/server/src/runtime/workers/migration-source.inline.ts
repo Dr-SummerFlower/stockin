@@ -18,6 +18,7 @@ import adminAccessSql from '../../repositories/migrations/003_admin_access.sql?r
 import logicalBackupSql from '../../repositories/migrations/004_logical_backup.sql?raw';
 import kdfSaltSql from '../../repositories/migrations/005_logical_backup_kdf_salt.sql?raw';
 import backupKeysAndStatsSql from '../../repositories/migrations/006_backup_keys_and_record_stats.sql?raw';
+import purchaseOrdersSql from '../../repositories/migrations/007_purchase_orders.sql?raw';
 import { MIGRATION_FILE_PATTERN, SCHEMA_EXPECTED } from '../../repositories/schema';
 import type { MigrationFile } from '../../repositories/migrations/runner';
 import type { MigrationSource } from '../ports';
@@ -33,6 +34,7 @@ const INLINE_SCRIPTS: Readonly<Record<string, string>> = {
   '004_logical_backup.sql': logicalBackupSql,
   '005_logical_backup_kdf_salt.sql': kdfSaltSql,
   '006_backup_keys_and_record_stats.sql': backupKeysAndStatsSql,
+  '007_purchase_orders.sql': purchaseOrdersSql,
 };
 
 /** 去掉 DO 不允许的 `PRAGMA user_version` 赋值行；其余内容逐字节保留。 */

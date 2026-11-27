@@ -9,10 +9,15 @@ import type { Db } from './db';
 import type { RecordStatsRepository } from './record-stats.repository';
 import type { RestoreTable } from '../lib/backup-format';
 
-/** 可恢复表白名单（顺序即插入顺序；列名以恢复包携带的 columns 为准）。 */
+/**
+ * 可恢复表白名单（顺序即插入顺序：父表在前、子表在后）。
+ * `records.order_id` 引用 `purchase_orders(id)`，所以单据表必须排在 records 之前；
+ * 清空时按本清单**逆序**执行，正好是先子后父。
+ */
 export const RESTORE_TABLES = [
   'credentials',
   'settings',
+  'purchase_orders',
   'records',
   'operation_logs',
   'meta',
@@ -20,14 +25,46 @@ export const RESTORE_TABLES = [
 ] as const;
 
 /**
- * 返回恢复包中缺失的可恢复表名。
- * 全量替换语义要求包覆盖 RESTORE_TABLES 全集：restoreAll 会先 DELETE 全部表，
+ * 逻辑备份包格式版本（写在 `backups.format_version` 与下载文件首行）。
+ *
+ * v2 = 包里多一张 `purchase_orders`。恢复端按包里的版本判定「必须覆盖哪些表」：
+ * v1 旧包允许缺该表（按空表处理，等价于全部散记），否则升级前导出的包
+ * 会在 `missingRestoreTables` 处被判成「缺表包」而永远恢复不了。
+ */
+export const LOGICAL_BACKUP_FORMAT_VERSION = 2;
+
+/** 只有 v2 起的包才必须包含的表。 */
+const FORMAT_V2_REQUIRED_TABLES: readonly string[] = ['purchase_orders'];
+
+/**
+ * 最早支持恢复的包格式版本。
+ * 升级前导出的包（v1，无 `purchase_orders`）与「没有 formatVersion 字段的老恢复包」
+ * 都按此版本判定：能恢复，单据表按空表处理。
+ */
+export const LEGACY_BACKUP_FORMAT_VERSION = 1;
+
+/** 该格式版本的包必须覆盖的可恢复表。 */
+export function requiredRestoreTables(formatVersion: number): readonly string[] {
+  if (formatVersion >= LOGICAL_BACKUP_FORMAT_VERSION) {
+    return RESTORE_TABLES;
+  }
+  return RESTORE_TABLES.filter((name) => !FORMAT_V2_REQUIRED_TABLES.includes(name));
+}
+
+/**
+ * 返回恢复包中缺失的**必需**可恢复表名。
+ * 全量替换语义要求包覆盖必需表全集：restoreAll 会先 DELETE 全部表，
  * 缺失的表清空后不会回填，构成半恢复（违反 CONVENTIONS §4）。
  * 正常脚本在 decrypt 阶段用 ensureAllRestoreTables 补齐，服务端再做一道强制校验。
+ *
+ * @param formatVersion 包格式版本；缺省按当前版本（最严格）处理
  */
-export function missingRestoreTables(tables: readonly { table: string }[]): string[] {
+export function missingRestoreTables(
+  tables: readonly { table: string }[],
+  formatVersion: number = LOGICAL_BACKUP_FORMAT_VERSION,
+): string[] {
   const present = new Set(tables.map((entry) => entry.table));
-  return RESTORE_TABLES.filter((name) => !present.has(name));
+  return requiredRestoreTables(formatVersion).filter((name) => !present.has(name));
 }
 
 /** 恢复窗口内需临时移除、随后重建的触发器定义（名称 + 完整 CREATE 语句）。 */
@@ -123,12 +160,15 @@ export class RestoreRepository {
   /**
    * 全量恢复：单事务内移除触发器 → 清空业务表 → 回填 → 重建触发器 → 清会话。
    * 任何一步抛错都会整体回滚（DbPort.transaction 的契约）。
+   *
+   * @param formatVersion 包格式版本：v1 旧包没有 `purchase_orders`，
+   *   清空后不回填（等价于「全部散记」），不会因此被判成半恢复。
    */
-  restoreAll(tables: readonly RestoreTable[]): void {
+  restoreAll(tables: readonly RestoreTable[], formatVersion: number): void {
     this.db.transaction('immediate', () => {
       // 0) 覆盖校验（服务端强制，防半恢复）：缺表时 DELETE 会清空该表却无法回填。
       //    在任何删除之前校验，抛错由事务契约整体回滚，数据不受影响。
-      const missing: string[] = missingRestoreTables(tables);
+      const missing: string[] = missingRestoreTables(tables, formatVersion);
       if (missing.length > 0) {
         throw new Error(`[restore] 恢复包缺少可恢复表，拒绝半恢复: ${missing.join(', ')}`);
       }

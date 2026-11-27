@@ -30,7 +30,12 @@ import {
   type RestoreTicket,
 } from '../src/lib/backup-format';
 import { SCHEMA_EXPECTED } from '../src/repositories/schema';
-import { RESTORE_TABLES } from '../src/repositories/restore.repository';
+import {
+  RESTORE_TABLES,
+  LEGACY_BACKUP_FORMAT_VERSION,
+  LOGICAL_BACKUP_FORMAT_VERSION,
+  requiredRestoreTables,
+} from '../src/repositories/restore.repository';
 import { createTestBackupKeys, createTestStats } from './support/harness';
 
 const noopBackupPort: BackupPort = {
@@ -129,12 +134,16 @@ async function buildPackageAndTicket(
       ],
     },
   ];
-  // 模拟本地脚本产物：ensureAllRestoreTables 补齐零行表，覆盖全部可恢复表。
-  const tables: RestoreTable[] = ensureAllRestoreTables(filledTables, RESTORE_TABLES);
+  // 模拟本地脚本产物：ensureAllRestoreTables 补齐零行表，覆盖该格式版本必需的全部表。
+  const tables: RestoreTable[] = ensureAllRestoreTables(
+    filledTables,
+    requiredRestoreTables(LOGICAL_BACKUP_FORMAT_VERSION),
+  );
   const lines: string[] = [
     JSON.stringify({
       kind: 'restore-meta',
       version: BACKUP_WIRE_VERSION,
+      formatVersion: LOGICAL_BACKUP_FORMAT_VERSION,
       schemaVersion: SCHEMA_EXPECTED,
       keyId: keyPair.keyId,
       dataSha256: await restoreDataDigest(tables),
@@ -344,13 +353,13 @@ describe('RestoreService', () => {
     expect(String(result.details?.reason)).toMatch(/序号不连续/);
   });
 
-  it('票据 schema 版本与当前不符时返回 BACKUP_RESTORE_FAILED', async () => {
+  it('票据 schema 版本高于当前程序时返回 BACKUP_RESTORE_FAILED', async () => {
     const begun = service.beginBatch();
     const { batchId, issuedAt } = begun.data!;
     const { ticket } = await buildPackageAndTicket(batchId, issuedAt);
     const mismatched: RestoreTicket = {
       ...ticket,
-      payload: { ...ticket.payload, schemaVersion: SCHEMA_EXPECTED - 1 },
+      payload: { ...ticket.payload, schemaVersion: SCHEMA_EXPECTED + 1 },
     };
     // schema 不匹配发生在验签之后，需要重新签名使验签通过，才能触达 schema 分支。
     mismatched.signature = await signRestoreTicket(
@@ -361,6 +370,85 @@ describe('RestoreService', () => {
     expect(result.ok).toBe(false);
     expect(result.code).toBe('BACKUP_RESTORE_FAILED');
     expect(String(result.details?.reason)).toMatch(/schema/);
+  });
+
+  it('升级前导出的 v1 旧包（schema 低一版、无 purchase_orders）仍能恢复', async () => {
+    // 升级前的老包：6 张表、没有单据表、restore-meta 里也没有 formatVersion。
+    const legacyTables: RestoreTable[] = ensureAllRestoreTables(
+      [
+        {
+          kind: 'table',
+          table: 'records',
+          columns: [
+            'id',
+            'name',
+            'name_norm',
+            'purchase_date',
+            'spec_norm',
+            'created_at',
+            'updated_at',
+          ],
+          rows: [
+            [
+              1,
+              '旧包商品',
+              '旧包商品',
+              '2026-02-01',
+              '',
+              '2026-02-01T00:00:00Z',
+              '2026-02-01T00:00:00Z',
+            ],
+          ],
+        },
+      ],
+      requiredRestoreTables(LEGACY_BACKUP_FORMAT_VERSION),
+    );
+    const dataSha256: string = await restoreDataDigest(legacyTables);
+    const begun = service.beginBatch();
+    const { batchId, issuedAt } = begun.data!;
+    const lines: string[] = [
+      JSON.stringify({
+        kind: 'restore-meta',
+        version: BACKUP_WIRE_VERSION,
+        schemaVersion: SCHEMA_EXPECTED - 1,
+        keyId: keyPair.keyId,
+        dataSha256,
+      }),
+      ...legacyTables.map((table) => JSON.stringify(table)),
+    ];
+    for (let i = 0; i < lines.length; i += 2) {
+      const put = await service.putChunk(
+        batchId,
+        i / 2,
+        new TextEncoder().encode(`${lines.slice(i, i + 2).join('\n')}\n`),
+      );
+      expect(put.ok).toBe(true);
+    }
+    const payload = {
+      v: BACKUP_WIRE_VERSION,
+      batchId,
+      issuedAt,
+      dataSha256,
+      schemaVersion: SCHEMA_EXPECTED - 1,
+      keyId: keyPair.keyId,
+    };
+    const ticket: RestoreTicket = {
+      payload,
+      signature: await signRestoreTicket(keyPair.privateKey, encodeTicketPayload(payload)),
+    };
+
+    const result = await service.commit(batchId, ticket);
+    expect(result.ok).toBe(true);
+    const records = db.prepare('SELECT name, order_id FROM records').all() as {
+      name: string;
+      order_id: number | null;
+    }[];
+    expect(records).toHaveLength(1);
+    expect(records[0]?.name).toBe('旧包商品');
+    // 单据表按空表处理，历史记录全部是散记。
+    expect(records[0]?.order_id).toBeNull();
+    const orders = db.prepare('SELECT COUNT(*) AS c FROM purchase_orders').get() as { c: number };
+    expect(orders.c).toBe(0);
   });
 
   it('恢复包未覆盖全部可恢复表时被拒绝（服务端强制防半恢复）', async () => {

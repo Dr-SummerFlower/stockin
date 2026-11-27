@@ -76,6 +76,11 @@ describe('checkExcelHeader 表头一致性', () => {
     const headers: string[] = EXCEL_HEADER_TEXTS.map((text: string) => ` ${text} `);
     expect(checkExcelHeader(headers)).toEqual([]);
   });
+
+  it('旧 10 列表头（缺可选「单据编号」尾列）仍视为合法', () => {
+    const legacy: string[] = EXCEL_HEADER_TEXTS.slice(0, 10);
+    expect(checkExcelHeader(legacy)).toEqual([]);
+  });
 });
 
 describe('checkExcelRowLimit 行数上限', () => {

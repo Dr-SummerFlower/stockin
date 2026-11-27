@@ -43,7 +43,10 @@ import {
   type RestoreTable,
   type RestoreTicket,
 } from '../apps/server/src/lib/backup-format';
-import { RESTORE_TABLES } from '../apps/server/src/repositories/restore.repository';
+import {
+  LOGICAL_BACKUP_FORMAT_VERSION,
+  requiredRestoreTables,
+} from '../apps/server/src/repositories/restore.repository';
 
 function arg(name: string, required = true): string | undefined {
   const idx = process.argv.indexOf(`--${name}`);
@@ -197,8 +200,16 @@ async function cmdDecrypt(): Promise<void> {
     throw new Error('备份文件首行不是 meta');
   }
   const meta = metaLine as BackupFileMeta;
-  if (meta.version !== BACKUP_WIRE_VERSION) {
-    throw new Error(`不支持的备份格式版本: ${meta.version}`);
+  // 包格式版本（v2 起含 purchase_orders）。链路格式本身仍是 v1，两者独立演进：
+  // `meta.version` 是「数据表清单的版本」，chunk 编码看 BACKUP_WIRE_VERSION。
+  if (
+    !Number.isInteger(meta.version) ||
+    meta.version < 1 ||
+    meta.version > LOGICAL_BACKUP_FORMAT_VERSION
+  ) {
+    throw new Error(
+      `不支持的备份格式版本: ${meta.version}（当前支持 1..${LOGICAL_BACKUP_FORMAT_VERSION}）`,
+    );
   }
 
   // 先按 keyId 选私钥：轮换后旧备份仍能解，选错时给出可操作的错误而不是 GCM 认证失败。
@@ -281,15 +292,19 @@ async function cmdDecrypt(): Promise<void> {
     throw new Error('manifest 摘要不匹配，备份可能已被篡改');
   }
 
-  // 全量替换语义要求恢复包恒定覆盖 RESTORE_TABLES 全部表：零行的表不会产生
-  // chunk，若不在包里显式列出，服务端 restoreAll 先清空该表又不会回填，构成
-  // 半恢复。ensureAllRestoreTables 为缺失表补空表条目（rows 为空时服务端跳过插入）。
-  const tables: RestoreTable[] = ensureAllRestoreTables([...byTable.values()], RESTORE_TABLES);
+  // 全量替换语义要求恢复包恒定覆盖该格式版本必需的表：零行的表不会产生 chunk，
+  // 若不在包里显式列出，服务端 restoreAll 先清空该表又不会回填，构成半恢复。
+  // v1 旧包按 v1 的必需清单补齐（不含 purchase_orders），与恢复端判定一致。
+  const tables: RestoreTable[] = ensureAllRestoreTables(
+    [...byTable.values()],
+    requiredRestoreTables(meta.version),
+  );
   const dataSha256 = await restoreDataDigest(tables);
   const restoreLines = [
     JSON.stringify({
       kind: 'restore-meta',
       version: BACKUP_WIRE_VERSION,
+      formatVersion: meta.version,
       schemaVersion: meta.schemaVersion,
       keyId: meta.keyId,
       dataSha256,

@@ -1,0 +1,493 @@
+/**
+ * 进货单（批次）的 HTTP 层集成测试。
+ *
+ * 覆盖 `.tmp/to-do/02-接口实现.md` B-11 的清单：建单、原子性、幂等、单号生成、
+ * 列表筛选、详情 404、软删连带明细、`RecordView.order` 三处带出、
+ * suggestions 的供货商优先、product-names 去重，以及回收站恢复时的单据联动
+ * （B-13 方案 A）。
+ *
+ * 定点数口径：unitPrice ×1e4、quantity ×1e3、amountCents ×1e2，
+ * 因此 12000 / 2000 = 1.2 × 2 = 2.4 元 = 240 分。
+ */
+import { afterEach, describe, expect, it } from 'vitest';
+import { createHarness, type Harness } from '../support/harness';
+
+let harness: Harness | null = null;
+
+afterEach(() => {
+  harness?.close();
+  harness = null;
+});
+
+interface OrderView {
+  readonly id: number;
+  readonly orderNo: string;
+  readonly supplier: string;
+  readonly purchaseDate: string;
+  readonly remark: string | null;
+  readonly itemCount: number;
+  readonly totalQuantity: number;
+  readonly totalAmountCents: number;
+  readonly version: number;
+  readonly duplicatedNo?: boolean;
+}
+
+interface RecordView {
+  readonly id: number;
+  readonly name: string;
+  readonly order?: { id: number; orderNo: string; supplier: string } | null;
+  readonly deletedAt: string | null;
+}
+
+/** 一条合法明细（1.2 元 × 2 件 = 2.4 元 = 240 分）。 */
+function item(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: '整单啤酒',
+    purchaseDate: '2026-11-10',
+    productionDate: null,
+    shelfLifeValue: null,
+    shelfLifeUnit: null,
+    expiryDate: null,
+    spec: null,
+    unitPrice: 12_000,
+    quantity: 2_000,
+    amountCents: 240,
+    remark: null,
+    sources: {
+      productionDateSrc: 'EMPTY',
+      shelfLifeSrc: 'EMPTY',
+      expiryDateSrc: 'EMPTY',
+      unitPriceSrc: 'MANUAL',
+      quantitySrc: 'MANUAL',
+      amountSrc: 'AUTO',
+    },
+    ...overrides,
+  };
+}
+
+let keySeq = 0;
+function nextKey(): string {
+  keySeq += 1;
+  return `order-key-${keySeq}`;
+}
+
+/** 整单载荷；`items` 缺省给一条合法明细。 */
+function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    supplier: '红星批发部',
+    purchaseDate: '2026-11-25',
+    remark: null,
+    items: [item()],
+    idempotencyKey: nextKey(),
+    ...overrides,
+  };
+}
+
+async function ready(): Promise<{ h: Harness; cookie: string }> {
+  harness = await createHarness();
+  const cookie: string = await harness.completeSetup('owner', 'Temp-Pass-2026-11-x9');
+  return { h: harness, cookie };
+}
+
+function scalar(h: Harness, sql: string, ...params: unknown[]): number {
+  const row = h.deps.db.prepare(sql).get(...params) as { c: number } | undefined;
+  return row?.c ?? 0;
+}
+
+describe('建单', () => {
+  it('201 + 单号/汇总正确，明细落在同一张单下', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({
+        orderNo: '20261125001',
+        items: [
+          item({ name: '整单甲' }),
+          item({ name: '整单乙', quantity: 1_000, amountCents: 120 }),
+        ],
+      }),
+      cookie,
+    });
+
+    expect(created.status).toBe(201);
+    expect(created.body.orderNo).toBe('20261125001');
+    expect(created.body.supplier).toBe('红星批发部');
+    expect(created.body.itemCount).toBe(2);
+    expect(created.body.totalQuantity).toBe(3_000);
+    expect(created.body.totalAmountCents).toBe(360);
+    expect(created.body.version).toBe(1);
+
+    const sameOrder: number = scalar(
+      h,
+      'SELECT COUNT(*) AS c FROM records WHERE order_id = ? AND deleted_at IS NULL',
+      created.body.id,
+    );
+    expect(sameOrder).toBe(2);
+  });
+
+  it('明细第 2 条不合法时 422 带 index，且库里不留半张单', async () => {
+    const { h, cookie } = await ready();
+    const rejected = await h.json<{ code: string; details: { index: number } }>('/api/orders', {
+      json: payload({
+        items: [item({ name: '好的' }), item({ name: '错的', amountCents: 999 })],
+      }),
+      cookie,
+    });
+
+    expect(rejected.status).toBe(422);
+    expect(rejected.body.code).toBe('VALID_FAILED');
+    expect(rejected.body.details.index).toBe(1);
+    expect(scalar(h, 'SELECT COUNT(*) AS c FROM purchase_orders')).toBe(0);
+    expect(scalar(h, 'SELECT COUNT(*) AS c FROM records')).toBe(0);
+  });
+
+  it('明细条数超上限时 422', async () => {
+    const { h, cookie } = await ready();
+    const items = Array.from({ length: 201 }, (_, i) => item({ name: `商品${i}` }));
+    const rejected = await h.json<{ code: string }>('/api/orders', {
+      json: payload({ items }),
+      cookie,
+    });
+    expect(rejected.status).toBe(422);
+    expect(scalar(h, 'SELECT COUNT(*) AS c FROM purchase_orders')).toBe(0);
+  });
+
+  it('同一幂等键重复提交只建一张单，两次响应一致', async () => {
+    const { h, cookie } = await ready();
+    const body = payload({ idempotencyKey: 'same-key-1' });
+    const first = await h.json<OrderView>('/api/orders', { json: body, cookie });
+    const second = await h.json<OrderView>('/api/orders', { json: body, cookie });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body.id).toBe(first.body.id);
+    expect(second.body.orderNo).toBe(first.body.orderNo);
+    expect(scalar(h, 'SELECT COUNT(*) AS c FROM purchase_orders')).toBe(1);
+  });
+
+  it('单号重复允许保存，但回带 duplicatedNo', async () => {
+    const { h, cookie } = await ready();
+    const first = await h.json<OrderView>('/api/orders', {
+      json: payload({ orderNo: '纸-001' }),
+      cookie,
+    });
+    const second = await h.json<OrderView>('/api/orders', {
+      json: payload({ orderNo: '纸-001', items: [item({ name: '重复号商品' })] }),
+      cookie,
+    });
+
+    expect(first.body.duplicatedNo).toBe(false);
+    expect(second.status).toBe(201);
+    expect(second.body.duplicatedNo).toBe(true);
+    expect(scalar(h, 'SELECT COUNT(*) AS c FROM purchase_orders')).toBe(2);
+  });
+});
+
+describe('单号生成', () => {
+  it('同日三张单依次 001/002/003，删掉中间一张后不复用已删号', async () => {
+    const { h, cookie } = await ready();
+    const first = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
+    const second = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
+    const third = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
+
+    expect([first.body.orderNo, second.body.orderNo, third.body.orderNo]).toEqual([
+      '20261125001',
+      '20261125002',
+      '20261125003',
+    ]);
+
+    const next = await h.json<{ orderNo: string }>('/api/orders/next-no?date=2026-11-25', {
+      cookie,
+    });
+    expect(next.body.orderNo).toBe('20261125004');
+
+    // 删掉最后一张（003）：序号取「含回收站」的最大值 + 1，所以 003 不会被复用。
+    await h.json(`/api/orders/${third.body.id}`, { method: 'DELETE', cookie });
+    const fourth = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
+    expect(fourth.body.orderNo).toBe('20261125004');
+
+    const fifth = await h.json<OrderView>('/api/orders', { json: payload(), cookie });
+    expect(fifth.body.orderNo).toBe('20261125005');
+  });
+
+  it('非法日期返回 422', async () => {
+    const { h, cookie } = await ready();
+    const bad = await h.json<{ code: string }>('/api/orders/next-no?date=2026-02-30', { cookie });
+    expect(bad.status).toBe(422);
+    expect(bad.body.code).toBe('VALID_FAILED');
+  });
+});
+
+describe('列表与详情', () => {
+  it('按供货商 / 日期 / 商品名筛选，汇总字段与明细一致', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: '红星批发部',
+        purchaseDate: '2026-11-20',
+        items: [item({ name: '龙口粉丝' }), item({ name: '飞天粉丝' })],
+      }),
+      cookie,
+    });
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: '蓝天批发部',
+        purchaseDate: '2026-11-24',
+        items: [item({ name: '矿泉水' })],
+      }),
+      cookie,
+    });
+
+    const bySupplier = await h.json<{ total: number; items: OrderView[] }>(
+      '/api/orders?supplier=红星',
+      { cookie },
+    );
+    expect(bySupplier.body.total).toBe(1);
+    expect(bySupplier.body.items[0]?.itemCount).toBe(2);
+    expect(bySupplier.body.items[0]?.totalAmountCents).toBe(480);
+
+    const byDate = await h.json<{ total: number; items: OrderView[] }>(
+      '/api/orders?purchaseDateFrom=2026-11-21&purchaseDateTo=2026-11-30',
+      { cookie },
+    );
+    expect(byDate.body.total).toBe(1);
+    expect(byDate.body.items[0]?.supplier).toBe('蓝天批发部');
+
+    const byProduct = await h.json<{ total: number; items: OrderView[] }>('/api/orders?q=粉丝', {
+      cookie,
+    });
+    expect(byProduct.body.total).toBe(1);
+    // 同一张单里两条明细都命中时不能被 join 放大成两行。
+    expect(byProduct.body.items).toHaveLength(1);
+    expect(byProduct.body.items[0]?.itemCount).toBe(2);
+
+    const byNo = await h.json<{ total: number }>('/api/orders?q=20261124001', { cookie });
+    expect(byNo.body.total).toBe(1);
+  });
+
+  it('详情包含明细，已软删单据返回 404', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({
+        remark: '含赠品 2 箱',
+        items: [item({ name: '甲货' }), item({ name: '乙货' })],
+      }),
+      cookie,
+    });
+
+    const detail = await h.json<OrderView & { items: RecordView[] }>(
+      `/api/orders/${created.body.id}`,
+      { cookie },
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.body.remark).toBe('含赠品 2 箱');
+    expect(detail.body.items.map((row) => row.name)).toEqual(['甲货', '乙货']);
+    // 明细自身也带所属单据引用。
+    expect(detail.body.items[0]?.order?.orderNo).toBe(created.body.orderNo);
+
+    await h.json(`/api/orders/${created.body.id}`, { method: 'DELETE', cookie });
+    const gone = await h.json<{ code: string }>(`/api/orders/${created.body.id}`, { cookie });
+    expect(gone.status).toBe(404);
+    expect(gone.body.code).toBe('COMMON_NOT_FOUND');
+  });
+});
+
+describe('删除与回收站', () => {
+  it('软删整单连带明细进回收站，回收站里能看到所属单据', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({
+        items: [item({ name: '甲货' }), item({ name: '乙货' }), item({ name: '丙货' })],
+      }),
+      cookie,
+    });
+
+    const removed = await h.json<{ id: number; deletedRecords: number }>(
+      `/api/orders/${created.body.id}`,
+      { method: 'DELETE', cookie },
+    );
+    expect(removed.status).toBe(200);
+    expect(removed.body.deletedRecords).toBe(3);
+
+    const trash = await h.json<{ total: number; items: RecordView[] }>('/api/trash', { cookie });
+    expect(trash.body.total).toBe(3);
+    expect(trash.body.items[0]?.order?.orderNo).toBe(created.body.orderNo);
+    expect(trash.body.items[0]?.order?.supplier).toBe('红星批发部');
+
+    // 再次删除已删单据 → 404。
+    const again = await h.json<{ code: string }>(`/api/orders/${created.body.id}`, {
+      method: 'DELETE',
+      cookie,
+    });
+    expect(again.status).toBe(404);
+  });
+
+  it('恢复其中 1 条明细时，所属单据自动复活（方案 A）', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({ items: [item({ name: '甲货' }), item({ name: '乙货' })] }),
+      cookie,
+    });
+    await h.json(`/api/orders/${created.body.id}`, { method: 'DELETE', cookie });
+
+    const trash = await h.json<{ items: RecordView[] }>('/api/trash', { cookie });
+    const one = trash.body.items[0];
+    expect(one).toBeDefined();
+    const restored = await h.json<{ id: number }>(`/api/trash/${one?.id}/restore`, {
+      method: 'POST',
+      cookie,
+    });
+    expect(restored.status).toBe(200);
+
+    const detail = await h.json<OrderView & { items: RecordView[] }>(
+      `/api/orders/${created.body.id}`,
+      { cookie },
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.body.items).toHaveLength(1);
+    // 汇总随明细变化（聚合查询，不需要额外维护）。
+    expect(detail.body.itemCount).toBe(1);
+
+    // 另一条仍在回收站。
+    const stillTrash = await h.json<{ total: number }>('/api/trash', { cookie });
+    expect(stillTrash.body.total).toBe(1);
+  });
+
+  it('单条删除明细后单据还在，品种数变小', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({ items: [item({ name: '甲货' }), item({ name: '乙货' })] }),
+      cookie,
+    });
+    const detail = await h.json<{ items: RecordView[] }>(`/api/orders/${created.body.id}`, {
+      cookie,
+    });
+    const firstItemId: number = detail.body.items[0]?.id ?? 0;
+    const removed = await h.json(`/api/records/${firstItemId}`, { method: 'DELETE', cookie });
+    expect(removed.status).toBe(200);
+
+    const after = await h.json<OrderView>(`/api/orders/${created.body.id}`, { cookie });
+    expect(after.body.itemCount).toBe(1);
+  });
+});
+
+describe('记录视图带出单据', () => {
+  it('列表 / 详情带出 order，散记不带', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({ items: [item({ name: '单内商品' })] }),
+      cookie,
+    });
+    const loose = await h.json<RecordView>('/api/records', {
+      json: item({ name: '散记商品' }),
+      cookie,
+    });
+
+    const list = await h.json<{ items: RecordView[] }>('/api/records?pageSize=50', { cookie });
+    const inOrder = list.body.items.find((row) => row.name === '单内商品');
+    const scattered = list.body.items.find((row) => row.name === '散记商品');
+    expect(inOrder?.order?.orderNo).toBe(created.body.orderNo);
+    expect(inOrder?.order?.supplier).toBe('红星批发部');
+    expect(scattered?.order ?? null).toBeNull();
+
+    const one = await h.json<RecordView>(`/api/records/${loose.body.id}`, { cookie });
+    expect(one.body.order ?? null).toBeNull();
+  });
+});
+
+describe('建议与商品名清单', () => {
+  it('suggestions 传 supplier 时优先该供货商的价，没有则回退全局', async () => {
+    const { h, cookie } = await ready();
+    // A 家更早更便宜，B 家更晚更贵。
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: 'A 家',
+        purchaseDate: '2026-11-01',
+        items: [item({ name: '可口可乐', unitPrice: 10_000, amountCents: 200 })],
+      }),
+      cookie,
+    });
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: 'B 家',
+        purchaseDate: '2026-11-05',
+        items: [item({ name: '可口可乐', unitPrice: 20_000, amountCents: 400 })],
+      }),
+      cookie,
+    });
+
+    interface SuggestionResponse {
+      items: {
+        value: string;
+        unitPrice: number | null;
+        lastPurchaseDate?: string | null;
+        matchedSupplier?: boolean;
+      }[];
+    }
+
+    const fromA = await h.json<SuggestionResponse>(
+      '/api/records/suggestions?field=name&q=可乐&supplier=A 家',
+      { cookie },
+    );
+    expect(fromA.body.items).toHaveLength(1);
+    expect(fromA.body.items[0]?.unitPrice).toBe(10_000);
+    expect(fromA.body.items[0]?.matchedSupplier).toBe(true);
+    expect(fromA.body.items[0]?.lastPurchaseDate).toBe('2026-11-01');
+
+    const fromC = await h.json<SuggestionResponse>(
+      '/api/records/suggestions?field=name&q=可乐&supplier=C 家',
+      { cookie },
+    );
+    expect(fromC.body.items[0]?.unitPrice).toBe(20_000);
+    expect(fromC.body.items[0]?.matchedSupplier).toBe(false);
+  });
+
+  it('product-names 一个名称只出现一次，按最近进货倒序', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/records', {
+      json: item({ name: '龙口粉丝', purchaseDate: '2026-11-10' }),
+      cookie,
+    });
+    await h.json('/api/records', {
+      json: item({ name: '龙口粉丝', purchaseDate: '2026-11-18', spec: '200g/袋' }),
+      cookie,
+    });
+    await h.json('/api/records', {
+      json: item({ name: '矿泉水', purchaseDate: '2026-11-12' }),
+      cookie,
+    });
+
+    const names = await h.json<{
+      items: { name: string; spec: string | null; lastPurchaseDate: string | null }[];
+    }>('/api/records/product-names?limit=10', { cookie });
+
+    expect(names.status).toBe(200);
+    expect(names.body.items.map((row) => row.name)).toEqual(['龙口粉丝', '矿泉水']);
+    expect(names.body.items[0]?.spec).toBe('200g/袋');
+    expect(names.body.items[0]?.lastPurchaseDate).toBe('2026-11-18');
+  });
+});
+
+describe('统计口径', () => {
+  it('建单与删单让仪表盘笔数同步增减，不额外改变口径', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<OrderView>('/api/orders', {
+      json: payload({ items: [item({ name: '统计甲' }), item({ name: '统计乙' })] }),
+      cookie,
+    });
+
+    const before = await h.json<{ metrics: { totalRecords: number; totalAmountCents: number } }>(
+      '/api/dashboard',
+      { cookie },
+    );
+    expect(before.body.metrics.totalRecords).toBe(2);
+    expect(before.body.metrics.totalAmountCents).toBe(480);
+
+    await h.json(`/api/orders/${created.body.id}`, { method: 'DELETE', cookie });
+    const after = await h.json<{ metrics: { totalRecords: number; totalAmountCents: number } }>(
+      '/api/dashboard',
+      { cookie },
+    );
+    expect(after.body.metrics.totalRecords).toBe(0);
+    expect(after.body.metrics.totalAmountCents).toBe(0);
+  });
+});

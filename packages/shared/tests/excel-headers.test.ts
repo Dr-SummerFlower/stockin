@@ -8,6 +8,7 @@ import {
   EXCEL_HEADER_ROW,
   EXCEL_HEADER_TEXTS,
   EXCEL_HEADERS,
+  EXCEL_REQUIRED_COLUMN_COUNT,
   FieldSource,
   excelColumnNumber,
   excelPhysicalRow,
@@ -23,8 +24,10 @@ import {
  * 导入校验、模板下载、导出三处都读它，改动必须同步。
  */
 describe('EXCEL_HEADERS 单一真源', () => {
-  it('固定 10 列且文案与顺序锁定', () => {
-    expect(EXCEL_COLUMN_COUNT).toBe(10);
+  it('固定 11 列（10 业务列 + 可选的单据编号尾列）且文案与顺序锁定', () => {
+    expect(EXCEL_COLUMN_COUNT).toBe(11);
+    // 必填列仍是 10：升级前导出的 10 列文件必须继续可导入。
+    expect(EXCEL_REQUIRED_COLUMN_COUNT).toBe(10);
     expect(EXCEL_HEADER_TEXTS).toEqual([
       '商品名称',
       '进货日期',
@@ -36,7 +39,15 @@ describe('EXCEL_HEADERS 单一真源', () => {
       '数量',
       '金额',
       '备注',
+      '单据编号',
     ]);
+  });
+
+  it('单据编号是可选的尾列，缺失不影响其余列序', () => {
+    const last = EXCEL_HEADERS[EXCEL_HEADERS.length - 1];
+    expect(last?.key).toBe('orderNo');
+    expect(last?.optional).toBe(true);
+    expect(last?.column).toBe(11);
   });
 
   it('列号连续且与数组顺序一致', () => {

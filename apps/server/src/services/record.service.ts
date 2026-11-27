@@ -17,15 +17,18 @@ import {
   type PageResult,
   type RecordFields,
   type RecordFilter,
+  type ProductNameItem,
+  type ProductNameListResponse,
   type RecordSaveInput,
   type RecordSources,
   type RecordSuggestionResponse,
   type RecordView,
 } from '@stockin/shared';
-import { fixedMul, isValidISODate } from '@stockin/domain';
+import { fixedMul, isValidISODate, normalizeName } from '@stockin/domain';
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
-import type { RecordRepository } from '../repositories/record.repository';
+import type { RecordRepository, SuggestionRow } from '../repositories/record.repository';
+import type { OrderRepository } from '../repositories/order.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { SettingsRepository } from '../repositories/settings.repository';
 import { toRecordView, type RecordRow, type WriteContext } from '../repositories/types';
@@ -36,6 +39,8 @@ import type { ServiceResult } from '../app';
 export interface RecordServiceDeps {
   readonly db: Db;
   readonly records: RecordRepository;
+  /** 单据仓储：回收站恢复时把所属单据一并复活（B-13 方案 A）。 */
+  readonly orders: OrderRepository;
   readonly logs: OperationLogRepository;
   readonly settings: SettingsRepository;
 }
@@ -146,33 +151,67 @@ export class RecordService {
   }
 
   /**
-   * GET /api/records：分页筛选，恒排除软删。
+   * GET /api/records/suggestions
    *
-   * `_requestId` 同 `get()`：保持服务方法参数位置一致，本方法自身不落日志。
+   * `supplier` 可选：传了就**优先**取该供货商下的最近一条（避免把别家的价带进来），
+   * 该供货商没有这个商品时回退为全局最近一条，并在该条上标 `matchedSupplier: false`。
+   * 返回仍保证「一个名称一行」。
    */
   suggest(
     field: 'name' | 'spec',
     q: string,
     limit: number = 10,
+    supplier?: string,
   ): ServiceResult<RecordSuggestionResponse> {
     if (field === 'name') {
       const rows = this.deps.records.suggestNames(q, limit);
-      return {
-        ok: true,
-        data: {
-          items: rows.map((row) => ({
-            value: row.name,
-            spec: row.spec,
-            unitPrice: row.unit_price,
-          })),
-        },
-      };
+      const normalizedSupplier: string = normalizeName(supplier ?? '');
+      const preferred: Map<string, SuggestionRow> =
+        normalizedSupplier === ''
+          ? new Map()
+          : new Map(
+              this.deps.records
+                .suggestNamesBySupplier(
+                  rows.map((row) => row.name_norm),
+                  normalizedSupplier,
+                )
+                .map((row): [string, SuggestionRow] => [row.name_norm, row]),
+            );
+      const items = rows.map((row) => {
+        const hit: SuggestionRow | undefined = preferred.get(row.name_norm);
+        const source: SuggestionRow = hit ?? row;
+        return {
+          value: source.name,
+          spec: source.spec,
+          unitPrice: source.unit_price,
+          lastPurchaseDate: source.purchase_date,
+          // 未传供货商时不下结论，字段保持缺省。
+          ...(normalizedSupplier === '' ? {} : { matchedSupplier: hit !== undefined }),
+        };
+      });
+      return { ok: true, data: { items } };
     }
     const specs: string[] = this.deps.records.suggestSpecs(q, limit);
     return {
       ok: true,
       data: { items: specs.map((spec) => ({ value: spec, spec: null, unitPrice: null })) },
     };
+  }
+
+  /**
+   * GET /api/records/product-names
+   *
+   * 前端在浏览器本地做「编辑距离 ≤1 / 互为子串」判断，服务端只负责给出
+   * 「一个名称一行 + 最近一次的规格/单价/进货日期」的干净清单。
+   */
+  productNames(limit: number = 500): ServiceResult<ProductNameListResponse> {
+    const items: ProductNameItem[] = this.deps.records.listProductNames(limit).map((row) => ({
+      name: row.name,
+      spec: row.spec,
+      unitPrice: row.unit_price,
+      lastPurchaseDate: row.purchase_date,
+    }));
+    return { ok: true, data: { items } };
   }
 
   list(filter: RecordFilter, _requestId: string): ServiceResult<PageResult<RecordView>> {
@@ -317,12 +356,19 @@ export class RecordService {
     };
   }
 
-  /** POST /api/trash/:id/restore */
+  /**
+   * POST /api/trash/:id/restore
+   *
+   * 恢复规则（B-13 方案 A）：若这条明细所属的单据已软删，**把单据一起复活**。
+   * 理由：用户的心智是「把这张单里的货捡回来」，只恢复明细会留下
+   * 「记录有 order_id、单据却 404」的悬空引用。单据复活时 version +1、updated_at 更新。
+   */
   restore(id: number, requestId: string, actor: string): ServiceResult<{ id: number }> {
     const ctx: WriteContext = ctxOf(requestId, actor);
     const restored: boolean = immediateTransaction(this.deps.db, () => {
       const changed: boolean = this.deps.records.restore(id, ctx);
       if (changed) {
+        this.deps.orders.restoreDeleted(this.deps.records.orderIdsOf([id]), ctx);
         this.deps.logs.append({
           action: Action.RECORD_RESTORE,
           targetType: TARGET_TYPE.RECORD,
@@ -366,6 +412,10 @@ export class RecordService {
     const ctx: WriteContext = ctxOf(requestId, actor);
     const restored: number = immediateTransaction(this.deps.db, () => {
       const count: number = this.deps.records.restoreMany(ids, ctx);
+      // 与单条恢复同一规则：批量捡回来的明细，其所属单据也一起复活（方案 A）。
+      if (count > 0) {
+        this.deps.orders.restoreDeleted(this.deps.records.orderIdsOf(ids), ctx);
+      }
       this.deps.logs.append({
         action: Action.RECORD_RESTORE,
         targetType: TARGET_TYPE.RECORD,

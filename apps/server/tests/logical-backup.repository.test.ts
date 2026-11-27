@@ -121,6 +121,8 @@ describe('LogicalBackupRepository', () => {
     expect(tables).toEqual([
       'credentials',
       'settings',
+      // 007 起的单据抬头：父表必须排在 records 之前（恢复时先插父后插子）。
+      'purchase_orders',
       'records',
       'operation_logs',
       'meta',

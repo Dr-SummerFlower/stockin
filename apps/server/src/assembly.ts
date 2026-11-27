@@ -33,6 +33,7 @@ import { DashboardService } from './services/dashboard.service';
 import { ExcelService, EXCEL_EXPORT_MAX_ROWS_WORKERS } from './services/excel.service';
 import { HealthService } from './services/health.service';
 import { RecordService } from './services/record.service';
+import { OrderService } from './services/order.service';
 import { heavyTaskGate } from './services/heavy-task';
 
 export interface AssemblyInput {
@@ -153,6 +154,14 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
   const records = new RecordService({
     db,
     records: repositories.records,
+    orders: repositories.orders,
+    logs: repositories.logs,
+    settings: repositories.settings,
+  });
+  const orders = new OrderService({
+    db,
+    orders: repositories.orders,
+    records: repositories.records,
     logs: repositories.logs,
     settings: repositories.settings,
   });
@@ -186,6 +195,7 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     adminAuth,
     admin,
     records,
+    orders,
     dashboard,
     excel,
     backup,

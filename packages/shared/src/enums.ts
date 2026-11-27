@@ -128,6 +128,9 @@ export const Action = {
   RECORD_BATCH_DELETE: 'RECORD_BATCH_DELETE',
   RECORD_RESTORE: 'RECORD_RESTORE',
   RECORD_PURGE: 'RECORD_PURGE',
+  /** 进货单（批次）的建单与删单：整单写入 / 连带 N 条明细进回收站，属关键操作。 */
+  ORDER_CREATE: 'ORDER_CREATE',
+  ORDER_DELETE: 'ORDER_DELETE',
   EXCEL_IMPORT: 'EXCEL_IMPORT',
   SETTINGS_UPDATE: 'SETTINGS_UPDATE',
   BACKUP_CREATE: 'BACKUP_CREATE',
@@ -151,6 +154,8 @@ export type Action = (typeof Action)[keyof typeof Action];
 /** 操作日志 target_type。 */
 export const TARGET_TYPE = {
   RECORD: 'record',
+  /** 进货单（批次）抬头。 */
+  ORDER: 'order',
   CREDENTIAL: 'credential',
   SETTINGS: 'settings',
   SESSION: 'session',

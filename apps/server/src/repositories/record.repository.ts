@@ -29,6 +29,18 @@ export interface RecordPage {
 }
 
 /**
+ * 名称建议 / 商品名清单共用的行形状：
+ * 一个 `name_norm` 一行，带该名称最近一次的规格、单价与进货日期。
+ */
+export interface SuggestionRow {
+  name: string;
+  name_norm: string;
+  spec: string | null;
+  unit_price: number;
+  purchase_date: string;
+}
+
+/**
  * B3：排序字段白名单（与 shared 的 RECORD_SORT_FIELDS 一一对应）。
  * `remainingDays` 与 `expiry_date` 单调等价，空到期日统一沉底；
  * `expiryStatus` 需要注入 today / nearEnd 常量，在 listActive 里单独构造 CASE 表达式。
@@ -46,6 +58,18 @@ const SORT_COLUMNS: Readonly<Record<string, string>> = {
 
 /** 导出分页的页大小：500 行 ≈ 150KB 原始行数据，跨运行时都远低于内存上限。 */
 export const EXPORT_PAGE_SIZE = 500;
+
+/**
+ * 记录行 + 所属单据抬头的统一选择列表（`RecordView.order` 的数据来源）。
+ *
+ * 刻意用两个相关子查询而不是 `LEFT JOIN purchase_orders`：两张表有大量同名
+ * 可空列（`id` / `deleted_at` / `created_at` / `updated_at` / `remark` / `version`），
+ * join 之后既有 WHERE / ORDER BY 里的裸列名全部要加表前缀，改动面大且容易漏；
+ * 子查询按主键命中，单页 20 行（导出 500 行）的代价可忽略。
+ */
+const RECORD_SELECT_WITH_ORDER = `records.*,
+  (SELECT po.order_no FROM purchase_orders po WHERE po.id = records.order_id) AS order_no,
+  (SELECT po.supplier FROM purchase_orders po WHERE po.id = records.order_id) AS order_supplier`;
 
 function clampPageSize(raw: number | undefined): number {
   if (raw === undefined || !Number.isInteger(raw) || raw < 1) {
@@ -183,8 +207,15 @@ export class RecordRepository {
   /**
    * 新建记录。name_norm / spec_norm 由 domain 归一化真源生成；
    * created_at / updated_at 由 WriteContext 注入 UTC ISO 8601 文本。
+   *
+   * @param orderId 所属进货单；散记（单条补录、Excel 导入）传 null。
    */
-  create(fields: RecordFields, sources: RecordSources, ctx: WriteContext): number {
+  create(
+    fields: RecordFields,
+    sources: RecordSources,
+    ctx: WriteContext,
+    orderId: number | null = null,
+  ): number {
     const flags: DbSourceFlags = toDbSourceFlags(sources);
     const sql = `INSERT INTO records (
       name, name_norm, purchase_date, production_date,
@@ -192,8 +223,8 @@ export class RecordRepository {
       spec, spec_norm, unit_price, quantity, amount_cents, remark,
       production_date_src, shelf_life_src, expiry_date_src,
       unit_price_src, quantity_src, amount_src,
-      version, deleted_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)`;
+      version, deleted_at, created_at, updated_at, order_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)`;
     const result = this.db
       .prepare(sql)
       .run(
@@ -218,16 +249,26 @@ export class RecordRepository {
         flags.amount_src,
         ctx.occurredAt,
         ctx.occurredAt,
+        orderId,
       );
     return Number(result.lastInsertRowid);
   }
 
-  /** 按 id 查询；常规路径显式排除软删。 */
+  /** 按 id 查询；常规路径显式排除软删，并带出所属单据抬头。 */
   findById(id: number, includeDeleted: boolean = false): RecordRow | null {
     const sql: string = includeDeleted
-      ? 'SELECT * FROM records WHERE id = ?'
-      : 'SELECT * FROM records WHERE id = ? AND deleted_at IS NULL';
+      ? `SELECT ${RECORD_SELECT_WITH_ORDER} FROM records WHERE id = ?`
+      : `SELECT ${RECORD_SELECT_WITH_ORDER} FROM records WHERE id = ? AND deleted_at IS NULL`;
     return this.row(sql, id);
+  }
+
+  /** 某张单据下的有效明细，按 id 升序（详情页口径）。 */
+  listByOrder(orderId: number): RecordRow[] {
+    return this.rows(
+      `SELECT ${RECORD_SELECT_WITH_ORDER} FROM records
+        WHERE order_id = ? AND deleted_at IS NULL ORDER BY id ASC`,
+      orderId,
+    );
   }
 
   /** 乐观锁 CAS 更新；返回 false 表示版本冲突或记录已软删。 */
@@ -285,6 +326,31 @@ export class RecordRepository {
     const sql = `UPDATE records SET deleted_at = ?, updated_at = ?, version = version + 1
       WHERE deleted_at IS NULL AND id IN (${placeholders})`;
     return this.db.prepare(sql).run(ctx.occurredAt, ctx.occurredAt, ...ids).changes;
+  }
+
+  /** 删整单时连带软删其下全部有效明细，返回实际软删条数。 */
+  softDeleteByOrder(orderId: number, ctx: WriteContext): number {
+    const sql = `UPDATE records SET deleted_at = ?, updated_at = ?, version = version + 1
+      WHERE order_id = ? AND deleted_at IS NULL`;
+    return this.db.prepare(sql).run(ctx.occurredAt, ctx.occurredAt, orderId).changes;
+  }
+
+  /**
+   * 指定记录 id 所属的单据 id（去重、忽略散记）。
+   * 回收站恢复时用来判断「这张单要不要一起复活」（不区分记录是否已软删）。
+   */
+  orderIdsOf(ids: readonly number[]): number[] {
+    if (ids.length === 0) {
+      return [];
+    }
+    const placeholders: string = ids.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT order_id FROM records
+          WHERE order_id IS NOT NULL AND id IN (${placeholders})`,
+      )
+      .all(...ids) as { order_id: number }[];
+    return rows.map((row) => row.order_id);
   }
 
   /** 回收站恢复：保留原字段与来源标记，只清 deleted_at。 */
@@ -348,7 +414,7 @@ export class RecordRepository {
     );
     // sortExpr / direction 来自白名单，不是外部输入，可安全拼接。
     const rows: RecordRow[] = this.rows(
-      `SELECT * FROM records WHERE ${where} ORDER BY ${sortExpr} ${direction}, id ${direction} LIMIT ? OFFSET ?`,
+      `SELECT ${RECORD_SELECT_WITH_ORDER} FROM records WHERE ${where} ORDER BY ${sortExpr} ${direction}, id ${direction} LIMIT ? OFFSET ?`,
       ...params,
       ...orderParams,
       pageSize,
@@ -365,7 +431,7 @@ export class RecordRepository {
       'SELECT COUNT(*) AS c FROM records WHERE deleted_at IS NOT NULL',
     );
     const rows: RecordRow[] = this.rows(
-      `SELECT * FROM records WHERE deleted_at IS NOT NULL
+      `SELECT ${RECORD_SELECT_WITH_ORDER} FROM records WHERE deleted_at IS NOT NULL
        ORDER BY deleted_at DESC, id DESC LIMIT ? OFFSET ?`,
       safeSize,
       (safePage - 1) * safeSize,
@@ -379,15 +445,12 @@ export class RecordRepository {
 
   /**
    * 商品名称建议：按 `name_norm` 任意位置包含匹配，每个名称只取**最近一次**记录，
-   * 附带该次的规格与单价，供前端选择后联动带出。空白分隔的多个词按 AND 连接。
+   * 附带该次的规格、单价与进货日期，供前端选择后联动带出。空白分隔的多个词按 AND 连接。
    *
    * 用相关子查询取 `MAX(purchase_date), MAX(id)`，避免同一名称多次进货时
    * 返回重复行；单用户数据量下全表扫描可接受。
    */
-  suggestNames(
-    query: string,
-    limit: number,
-  ): { name: string; spec: string | null; unit_price: number }[] {
+  suggestNames(query: string, limit: number): SuggestionRow[] {
     const patterns: string[] = containsPatterns(query, normalizeName);
     const searchClauses: string =
       patterns.length > 0
@@ -395,7 +458,8 @@ export class RecordRepository {
         : '';
     return this.db
       .prepare(
-        `SELECT r.name AS name, r.spec AS spec, r.unit_price AS unit_price
+        `SELECT r.name AS name, r.name_norm AS name_norm, r.spec AS spec,
+                r.unit_price AS unit_price, r.purchase_date AS purchase_date
            FROM records r
           WHERE r.deleted_at IS NULL
             ${searchClauses}
@@ -408,7 +472,64 @@ export class RecordRepository {
           ORDER BY r.purchase_date DESC, r.id DESC
           LIMIT ?`,
       )
-      .all(...patterns, limit) as { name: string; spec: string | null; unit_price: number }[];
+      .all(...patterns, limit) as SuggestionRow[];
+  }
+
+  /**
+   * 同一批商品名在该供货商下的最近一条（B-08 的「优先取该供货商」）。
+   *
+   * 与 `suggestNames` 一样按 `name_norm` 去重、一个名称一行，只是「最近」的
+   * 比较范围收窄到该供货商的单据内；返回行按 `name_norm` 供调用方覆盖默认结果。
+   */
+  suggestNamesBySupplier(nameNorms: readonly string[], supplier: string): SuggestionRow[] {
+    if (nameNorms.length === 0) {
+      return [];
+    }
+    const placeholders: string = nameNorms.map(() => '?').join(', ');
+    return this.db
+      .prepare(
+        `SELECT r.name AS name, r.name_norm AS name_norm, r.spec AS spec,
+                r.unit_price AS unit_price, r.purchase_date AS purchase_date
+           FROM records r
+           JOIN purchase_orders o ON o.id = r.order_id AND o.supplier_norm = ?
+          WHERE r.deleted_at IS NULL
+            AND r.name_norm IN (${placeholders})
+            AND r.id = (
+              SELECT r2.id FROM records r2
+                JOIN purchase_orders o2 ON o2.id = r2.order_id
+               WHERE r2.deleted_at IS NULL
+                 AND o2.supplier_norm = ?
+                 AND r2.name_norm = r.name_norm
+               ORDER BY r2.purchase_date DESC, r2.id DESC
+               LIMIT 1
+            )`,
+      )
+      .all(supplier, ...nameNorms, supplier) as SuggestionRow[];
+  }
+
+  /**
+   * 商品名清单（相似名检测用，B-09）：每个 `name_norm` 只出现一次，
+   * 附带最近一次的规格 / 单价 / 进货日期，按最近进货倒序。
+   *
+   * 服务端不做模糊匹配 —— 编辑距离与互为子串判断在前端本地做，不占 CPU。
+   */
+  listProductNames(limit: number): SuggestionRow[] {
+    return this.db
+      .prepare(
+        `SELECT r.name AS name, r.name_norm AS name_norm, r.spec AS spec,
+                r.unit_price AS unit_price, r.purchase_date AS purchase_date
+           FROM records r
+          WHERE r.deleted_at IS NULL
+            AND r.id = (
+              SELECT r2.id FROM records r2
+               WHERE r2.deleted_at IS NULL AND r2.name_norm = r.name_norm
+               ORDER BY r2.purchase_date DESC, r2.id DESC
+               LIMIT 1
+            )
+          ORDER BY r.purchase_date DESC, r.id DESC
+          LIMIT ?`,
+      )
+      .all(limit) as SuggestionRow[];
   }
 
   /** 规格建议：按出现频次降序，空规格不参与；支持任意位置包含匹配。 */
@@ -579,7 +700,7 @@ export class RecordRepository {
   ): IterableIterator<RecordRow> {
     const { where, params } = buildFilter(filter, today, thresholdDays);
     const stmt = this.db.prepare(
-      `SELECT * FROM records
+      `SELECT ${RECORD_SELECT_WITH_ORDER} FROM records
         WHERE ${where} AND (purchase_date > ? OR (purchase_date = ? AND id > ?))
         ORDER BY purchase_date ASC, id ASC
         LIMIT ?`,

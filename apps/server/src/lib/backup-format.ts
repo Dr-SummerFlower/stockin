@@ -148,6 +148,13 @@ export interface RestorePackageMeta {
   readonly kind: 'restore-meta';
   readonly version: number;
   readonly schemaVersion: number;
+  /**
+   * 备份包格式版本（对应 `backups.format_version`）。
+   *
+   * 由 decrypt 脚本从下载文件 meta 透传；升级前生成的老恢复包没有这个字段，
+   * 服务端按 v1 处理（不要求包含 `purchase_orders`）。
+   */
+  readonly formatVersion?: number;
   readonly keyId: string;
   readonly dataSha256: string;
 }

@@ -195,7 +195,11 @@ describe('ensureQueryPlannerStats', () => {
     for (const row of ordered) {
       restore.run(row.tbl, row.idx, row.stat);
     }
-    expect(Number.parseInt(ordered[0]!.stat, 10)).toBe(2); // 首行是活跃行数的部分索引
+    // 活跃行数的部分索引必须排在最前（stat 首列 = 2 条活跃行）。
+    // 007 之后 records 上还有 `idx_records_order`（order_id IS NOT NULL），
+    // 空表部分是 0 条，所以不能直接断言 `ordered[0]`；按索引名取更稳。
+    const activePartial = ordered.find((row) => row.idx === 'idx_records_active_purchase_date');
+    expect(Number.parseInt(activePartial?.stat ?? '-1', 10)).toBe(2);
 
     expect(needsQueryPlannerStats(db)).toBe(false);
     expect(ensureQueryPlannerStats(db)).toBe(false);

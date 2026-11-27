@@ -37,6 +37,7 @@ import type { AuthService } from './services/auth.service';
 import type { AdminAuthService } from './services/admin-auth.service';
 import type { AdminService } from './services/admin.service';
 import type { RecordService } from './services/record.service';
+import type { OrderService } from './services/order.service';
 import type { DashboardService } from './services/dashboard.service';
 import type { ExcelService } from './services/excel.service';
 import type { BackupService } from './services/backup.service';
@@ -65,6 +66,8 @@ export interface AppDeps {
   /** 管理员维护能力（备份 / 导出 / 重置店主凭据）。 */
   readonly admin: AdminService;
   readonly records: RecordService;
+  /** 进货单（批次）：整单录入 / 列表 / 详情 / 软删。 */
+  readonly orders: OrderService;
   readonly dashboard: DashboardService;
   readonly excel: ExcelService;
   readonly backup: BackupService;

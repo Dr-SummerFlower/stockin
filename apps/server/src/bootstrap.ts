@@ -35,6 +35,7 @@ import { seedDefaultBackupKey } from './services/backup-key.service';
 import { CredentialRepository } from './repositories/credential.repository';
 import { MetaRepository } from './repositories/meta.repository';
 import { RecordRepository } from './repositories/record.repository';
+import { OrderRepository } from './repositories/order.repository';
 import { RecordStatsRepository } from './repositories/record-stats.repository';
 import { SessionRepository } from './repositories/session.repository';
 import { SettingsRepository } from './repositories/settings.repository';
@@ -132,6 +133,8 @@ export interface BootstrapOptions {
 
 export interface BootstrapRepositories {
   readonly records: RecordRepository;
+  /** 进货单（批次）抬头；明细仍走 records。 */
+  readonly orders: OrderRepository;
   /** 仪表盘增量统计（触发器维护的派生表）。 */
   readonly stats: RecordStatsRepository;
   readonly sessions: SessionRepository;
@@ -314,6 +317,8 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
     const recordStats = new RecordStatsRepository(db, recordRepository);
     const repositories: BootstrapRepositories = {
       records: recordRepository,
+      // 单据仓储复用 records 仓储写明细：order_id 只在 records.insert 一处出现。
+      orders: new OrderRepository(db, recordRepository),
       stats: recordStats,
       sessions: new SessionRepository(db),
       credentials,

@@ -10,6 +10,7 @@ import type { AppEnv } from '../types/hono';
 import type { AppDeps } from '../app';
 import { registerAuthRoutes } from './auth.routes';
 import { registerRecordRoutes } from './record.routes';
+import { registerOrderRoutes } from './order.routes';
 import { registerTrashRoutes } from './trash.routes';
 import { registerLogRoutes } from './log.routes';
 import { registerDashboardRoutes } from './dashboard.routes';
@@ -22,6 +23,7 @@ export function createApiRouter(deps: AppDeps): Hono<AppEnv> {
   const api = new Hono<AppEnv>();
   registerAuthRoutes(api, deps);
   registerRecordRoutes(api, deps);
+  registerOrderRoutes(api, deps);
   registerTrashRoutes(api, deps);
   registerLogRoutes(api, deps);
   registerDashboardRoutes(api, deps);

@@ -22,7 +22,11 @@ import type { RecordStatsRepository } from '../repositories/record-stats.reposit
 import type { BackupKeySource } from './backup-key.service';
 import type { RestoreStagingPort } from '../runtime/ports';
 import type { BackupService } from './backup.service';
-import { missingRestoreTables, RestoreRepository } from '../repositories/restore.repository';
+import {
+  LEGACY_BACKUP_FORMAT_VERSION,
+  missingRestoreTables,
+  RestoreRepository,
+} from '../repositories/restore.repository';
 import { verifyRestoreTicketWithAnyKey } from '../lib/backup-crypto';
 import {
   BACKUP_WIRE_VERSION,
@@ -98,6 +102,12 @@ export interface BeginBatchResult {
   readonly windowMs: number;
 }
 
+/** 恢复包解析结果：各表明细 + 包格式版本（决定 `purchase_orders` 是否必需）。 */
+export interface RestorePackageRead {
+  readonly tables: RestoreTable[];
+  readonly formatVersion: number;
+}
+
 export interface CommitResult {
   readonly backupId: string;
   readonly restoredTables: number;
@@ -148,9 +158,11 @@ export class RestoreService {
   private async readRestoreTables(
     batchId: string,
     seqs: readonly number[],
-  ): Promise<ServiceResult<RestoreTable[]>> {
+  ): Promise<ServiceResult<RestorePackageRead>> {
     const decoder = new TextDecoder();
     const tables: RestoreTable[] = [];
+    // 首行 restore-meta 里的包格式版本；老包没有该字段，按 v1 处理。
+    let formatVersion: number = LEGACY_BACKUP_FORMAT_VERSION;
     let pending = '';
     let total = 0;
 
@@ -161,6 +173,11 @@ export class RestoreService {
       const parsed = parseRestoreLine(line);
       if (parsed.kind === 'table') {
         tables.push(parsed);
+        return;
+      }
+      const version: number = Number(parsed.formatVersion);
+      if (Number.isInteger(version) && version >= LEGACY_BACKUP_FORMAT_VERSION) {
+        formatVersion = version;
       }
     };
 
@@ -192,7 +209,7 @@ export class RestoreService {
     if (pending.trim() !== '') {
       consumeLine(pending);
     }
-    return { ok: true, data: tables };
+    return { ok: true, data: { tables, formatVersion } };
   }
 
   /**
@@ -274,15 +291,21 @@ export class RestoreService {
     ) {
       return { ok: false, code: ErrorCode.BACKUP_TICKET_EXPIRED };
     }
-    // schema 版本必须与当前一致，避免半恢复（用户拍板）。
-    // 用 SCHEMA_EXPECTED（当前代码期望版本）而非 meta.schema_version（历史初始版本）。
+    // schema 版本只拒绝「比当前新」的包：用 SCHEMA_EXPECTED（当前代码期望版本）而非
+    // meta.schema_version（历史初始版本）。
+    //
+    // 为什么允许旧包（schemaVersion < 当前）：本项目的迁移只做「加表 / 加可空列」
+    // （见 schema.ts 的 BREAKING_MIGRATIONS 约定），恢复按**包内列清单**插入，
+    // 新增列自然取默认值 —— 于是升级前导出的备份仍能恢复，这正是恢复能力存在的
+    // 意义（否则每次 schema 升级都会让所有历史备份一次性作废）。
+    // 反向（包比程序新）必须拒绝：把新版列写进旧结构只会静默丢数据。
     const currentSchema = SCHEMA_EXPECTED;
-    if (ticket.payload.schemaVersion !== currentSchema) {
+    if (ticket.payload.schemaVersion > currentSchema) {
       return {
         ok: false,
         code: ErrorCode.BACKUP_RESTORE_FAILED,
         details: {
-          reason: `备份 schema 版本 ${ticket.payload.schemaVersion} 与当前 ${currentSchema} 不一致`,
+          reason: `备份 schema 版本 ${ticket.payload.schemaVersion} 高于当前程序支持的 ${currentSchema}，请先升级应用`,
         },
       };
     }
@@ -328,7 +351,7 @@ export class RestoreService {
       if (!read.ok) {
         return await fail(read);
       }
-      const tables: RestoreTable[] = read.data;
+      const { tables, formatVersion } = read.data;
 
       // 5) 摘要校验：恢复包内容必须与票据签名的数据哈希一致。
       const digest: string = await restoreDataDigest(tables);
@@ -336,10 +359,11 @@ export class RestoreService {
         return await fail({ ok: false, code: ErrorCode.BACKUP_INVALID_TICKET });
       }
 
-      // 5.1) 覆盖校验（服务端强制，防半恢复）：恢复包必须覆盖全部可恢复表。
-      //      正常脚本已在 decrypt 阶段补齐空表；这里挡住「持有私钥者构造缺表包」
+      // 5.1) 覆盖校验（服务端强制，防半恢复）：恢复包必须覆盖**该格式版本要求**的
+      //      全部可恢复表。v1 旧包不含 purchase_orders，按空表处理即可；
+      //      正常脚本已在 decrypt 阶段补齐空表。这里挡住「持有私钥者构造缺表包」
       //      导致的「清空某表却不回填」。放在消费前，失败只清理分块、不消费票据。
-      const missing: string[] = missingRestoreTables(tables);
+      const missing: string[] = missingRestoreTables(tables, formatVersion);
       if (missing.length > 0) {
         return await fail({
           ok: false,
@@ -392,7 +416,7 @@ export class RestoreService {
 
       // 8) 全量恢复（单事务）。
       this.repo.assertSchemaCompatible();
-      this.repo.restoreAll(tables);
+      this.repo.restoreAll(tables, formatVersion);
 
       // 8.1) 全量替换后行数与分布整体变了，旧统计会误导规划器（曾把列表页
       //      判成全表扫描 + 临时 B 树排序）。强制重算一次，代价约百毫秒级。

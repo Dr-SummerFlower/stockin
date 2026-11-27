@@ -20,6 +20,7 @@ export * from './dto/admin.dto';
 export * from './dto/backup.dto';
 
 export * from './schema/record.schema';
+export * from './schema/order.schema';
 export * from './schema/auth.schema';
 export * from './schema/excel.schema';
 export * from './schema/settings.schema';

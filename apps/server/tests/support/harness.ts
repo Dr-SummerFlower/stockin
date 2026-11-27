@@ -30,6 +30,7 @@ import { nodeRuntime } from '../../src/runtime/node';
 import { createFilesystemMigrationSource } from '../../src/runtime/node/migration-source.filesystem';
 import { resetLoginRateLimit, resetSecurityRateLimit } from '../../src/middleware/rate-limit';
 import { resetIdempotencyStore } from '../../src/services/record.service';
+import { resetOrderIdempotencyStore } from '../../src/services/order.service';
 
 /** 测试台固定端口：`env.ts` 要求 http 来源的端口与 PORT 相同。 */
 const TEST_PORT = 18090;
@@ -172,6 +173,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
   resetLoginRateLimit();
   resetSecurityRateLimit();
   resetIdempotencyStore();
+  resetOrderIdempotencyStore();
 
   const request = async (pathname: string, init: HarnessRequestInit = {}): Promise<Response> => {
     const method: string = (

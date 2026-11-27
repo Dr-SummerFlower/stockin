@@ -31,6 +31,11 @@ export interface OrderView {
   createdAt: string;
   updatedAt: string;
   version: number;
+  /**
+   * 建单响应专用：该单号当天已存在另一张单据（照抄纸质单号）。
+   * 不阻断保存，仅用于前端提示；列表行不返回此字段。
+   */
+  duplicatedNo?: boolean;
 }
 
 /** 详情：抬头 + 明细（按 id 升序）。 */

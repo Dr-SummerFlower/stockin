@@ -5,9 +5,13 @@
  * 表名来自 sqlite_master 的白名单过滤，不直接使用用户输入。
  */
 import type { Db } from './db';
-import { RESTORE_TABLES } from './restore.repository';
+import { LOGICAL_BACKUP_FORMAT_VERSION, RESTORE_TABLES } from './restore.repository';
 
-export const LOGICAL_BACKUP_FORMAT_VERSION = 1;
+/**
+ * 备份包格式版本（真源在 `restore.repository`，与恢复端的兼容判定同一个数）。
+ * v2 起备份包含 `purchase_orders`，恢复端按包内版本决定该表是否必需。
+ */
+export { LOGICAL_BACKUP_FORMAT_VERSION };
 export const LOGICAL_BACKUP_KEEP_COUNT = 5;
 export const LOGICAL_BACKUP_CHUNK_ROWS = 200;
 /**
