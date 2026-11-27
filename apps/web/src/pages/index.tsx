@@ -101,9 +101,9 @@ const DashboardPage: React.FC = () => {
           <Button
             type="primary"
             icon={<Icon name="plus" size="sm" />}
-            onClick={(): void => navigate(ROUTES.recordNew)}
+            onClick={(): void => navigate(ROUTES.orderNew)}
           >
-            新增记录
+            新增进货单
           </Button>
         </div>
       </div>

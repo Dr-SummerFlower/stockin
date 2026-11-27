@@ -109,6 +109,11 @@ const RecordCard: React.FC<CardProps> = ({
         </span>
       </div>
 
+      {record.order !== null && record.order !== undefined ? (
+        <div className="stockin-record-card-sub">
+          {record.order.supplier} · <span className="stockin-mono">{record.order.orderNo}</span>
+        </div>
+      ) : null}
       <div className="stockin-simple-card-value">{formatMoney(record.amountCents)}</div>
       <div className="stockin-simple-card-meta">
         到期 {formatDate(record.expiryDate)}

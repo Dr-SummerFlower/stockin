@@ -2564,3 +2564,628 @@ a.stockin-touch {
     content: '加载中…';
   }
 }
+
+/* ==========================================================================
+   进货单（批次录入）：列表卡片 / 录入网格 / 带入面板
+   设计依据：.tmp/UI/进货单v2-设计稿.html（手机优先）+ v1（PC 网格）
+   ========================================================================== */
+
+/* ---------- 小工具 ---------- */
+.stockin-page-sub {
+  margin: 4px 0 0;
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+}
+.stockin-mono-strong {
+  font-family: var(--stockin-font-num);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stockin-num-strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.stockin-text-muted {
+  color: var(--stockin-color-muted);
+  font-size: var(--stockin-fs-caption);
+}
+.stockin-cell-name {
+  font-weight: 600;
+  color: var(--stockin-color-text);
+}
+.stockin-cell-sub {
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  margin-top: 1px;
+}
+.stockin-dot-sep {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--stockin-color-control-border);
+  display: inline-block;
+}
+
+/* ---------- 单据列表筛选 ---------- */
+.stockin-filter-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--stockin-s3);
+}
+.stockin-filter-fields > .stockin-field-wrap {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.stockin-filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--stockin-s2);
+  margin-top: var(--stockin-s3);
+}
+
+/* ---------- 手机：条件 chip ---------- */
+.stockin-mfilter {
+  display: flex;
+  gap: var(--stockin-s2);
+  overflow-x: auto;
+  padding: 0 0 var(--stockin-s3);
+}
+.stockin-mfilter-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--stockin-color-control-border);
+  border-radius: 20px;
+  background: var(--stockin-color-surface);
+  color: var(--stockin-color-muted);
+  font-size: var(--stockin-fs-caption);
+}
+.stockin-mfilter-chip.is-on {
+  border-color: var(--stockin-color-primary);
+  background: var(--stockin-color-primary-bg);
+  color: var(--stockin-color-primary-text);
+  font-weight: 600;
+}
+
+/* ---------- 单据卡片（手机列表） ---------- */
+.stockin-order-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--stockin-color-surface);
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+}
+.stockin-order-card:active {
+  background: var(--stockin-color-subtle);
+}
+.stockin-order-card__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.stockin-order-card__no {
+  font-family: var(--stockin-font-num);
+  font-size: 13px;
+  font-weight: 600;
+}
+.stockin-order-card__money {
+  margin-left: auto;
+  font-size: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.stockin-order-card__supplier {
+  margin-top: 3px;
+  font-size: var(--stockin-fs-body);
+  font-weight: 600;
+}
+.stockin-order-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--stockin-color-border-visible);
+  font-size: 11px;
+  color: var(--stockin-color-muted);
+  flex-wrap: wrap;
+}
+
+/* ---------- 录入：抬头 ---------- */
+.stockin-order-head-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) 180px 170px minmax(0, 1.15fr);
+  gap: var(--stockin-s4);
+}
+.stockin-form-section-count {
+  font-size: var(--stockin-fs-micro);
+  font-weight: 400;
+  color: var(--stockin-color-faint);
+  margin-left: 4px;
+}
+.stockin-form-section-body.is-flush {
+  padding: 0;
+}
+
+/* ---------- 录入：桌面网格 ---------- */
+.stockin-order-table {
+  overflow-x: auto;
+}
+.stockin-order-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(190px, 1.5fr) minmax(140px, 1.1fr) 148px 164px 118px 96px 86px 100px 42px;
+  min-width: 1084px;
+  align-items: start;
+}
+.stockin-order-grid--head {
+  background: var(--stockin-color-subtle);
+  border-bottom: 1px solid var(--stockin-color-control-border);
+}
+.stockin-order-grid--head > span {
+  padding: 9px 10px;
+  font-size: var(--stockin-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--stockin-color-muted);
+  border-right: 1px solid var(--stockin-color-border-visible);
+  white-space: nowrap;
+}
+.stockin-order-grid--head > span:last-child {
+  border-right: 0;
+}
+.stockin-order-grid--head > span.is-num {
+  text-align: right;
+}
+.stockin-order-grid--row {
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+}
+.stockin-order-grid--row:last-child {
+  border-bottom: 0;
+}
+.stockin-order-cell {
+  padding: 8px 8px;
+  border-right: 1px solid var(--stockin-color-border-visible);
+  min-width: 0;
+}
+.stockin-order-grid--row > .stockin-order-cell:last-child {
+  border-right: 0;
+}
+.stockin-order-cell__label {
+  display: none;
+}
+.stockin-order-cell--num .ant-input,
+.stockin-order-cell--num input {
+  text-align: right;
+}
+/* 单元格内空间有限：日期字号降到 12，占位符不再是「请选择日期」的长串 */
+.stockin-order-cell .ant-picker input,
+.stockin-order-cell .ant-picker {
+  font-size: 12px;
+}
+.stockin-order-cell .ant-picker input::placeholder {
+  font-size: 11px;
+}
+/* 保质期：数值占满剩余，单位固定 72，避免把数值压成一个字 */
+.stockin-order-cell--shelf .stockin-shelf-unit {
+  width: 72px;
+  min-width: 72px;
+}
+.stockin-order-cell--shelf .stockin-input-group {
+  gap: 6px;
+}
+.stockin-order-cell--del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+}
+.stockin-order-cell.is-changed input {
+  border-bottom: 1px dotted var(--stockin-color-primary);
+  border-radius: 6px 6px 0 0;
+}
+.stockin-order-auto {
+  display: flex;
+  align-items: center;
+  min-height: var(--stockin-touch);
+  padding: 0 10px;
+  border-radius: var(--stockin-radius);
+  background: var(--stockin-color-auto-bg);
+  color: var(--stockin-color-auto);
+  font-family: var(--stockin-font-num);
+  font-size: 12px;
+  font-weight: 600;
+}
+.stockin-order-del {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--stockin-radius);
+  background: transparent;
+  color: var(--stockin-color-faint);
+}
+.stockin-order-del:hover {
+  background: var(--stockin-color-expired-bg);
+  color: var(--stockin-color-expired);
+}
+
+/* ---------- 相似商品提示 ---------- */
+.stockin-similar {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--stockin-color-near);
+  border-radius: var(--stockin-radius);
+  background: var(--stockin-color-near-bg);
+}
+.stockin-similar__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--stockin-color-near);
+}
+.stockin-similar__opts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+}
+.stockin-similar__opt {
+  border: 1px solid var(--stockin-color-near);
+  background: var(--stockin-color-surface);
+  color: var(--stockin-color-text);
+  border-radius: 20px;
+  padding: 4px 10px;
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+}
+.stockin-similar__opt small {
+  font-weight: 400;
+  color: var(--stockin-color-faint);
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+/* ---------- 录入：合计条 ---------- */
+.stockin-order-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--stockin-s4);
+  flex-wrap: wrap;
+  padding: 12px var(--stockin-s6);
+  border-top: 1px solid var(--stockin-color-control-border);
+  background: var(--stockin-color-subtle);
+}
+.stockin-order-foot__meta {
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+}
+.stockin-order-foot__total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.stockin-order-foot__total span {
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+}
+.stockin-order-foot__total b {
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 带入面板 ---------- */
+.stockin-pick-meta {
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--stockin-color-border-visible);
+  margin-bottom: 4px;
+}
+.stockin-pick-list {
+  display: flex;
+  flex-direction: column;
+}
+.stockin-pick-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: center;
+  padding: 10px 2px;
+  border-bottom: 1px dashed var(--stockin-color-border-visible);
+  cursor: pointer;
+}
+.stockin-pick-row input[type='checkbox'] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--stockin-color-primary);
+}
+.stockin-pick-row__name {
+  font-weight: 600;
+  font-size: var(--stockin-fs-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stockin-pick-row__meta {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--stockin-color-muted);
+}
+
+/* ---------- 手机：录入卡片 ---------- */
+.stockin-order-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.stockin-order-card-item {
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+  background: var(--stockin-color-surface);
+  padding: 12px;
+}
+.stockin-order-card-item.is-copied {
+  border-left: 3px solid var(--stockin-color-primary);
+}
+.stockin-order-card-item__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.stockin-order-card-item__head > .stockin-order-cell {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border-right: 0;
+}
+.stockin-order-card-item__row3 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 10px;
+}
+.stockin-order-card-item__row2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 128px;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--stockin-color-border-visible);
+}
+.stockin-order-card-item .stockin-order-cell {
+  padding: 0;
+  border-right: 0;
+}
+.stockin-order-card-item .stockin-order-cell__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--stockin-color-muted);
+  margin-bottom: 4px;
+}
+.stockin-order-card-item .stockin-order-cell--auto {
+  margin-top: 8px;
+}
+.stockin-order-card-item .stockin-order-auto {
+  min-height: 32px;
+  font-size: 11px;
+}
+.stockin-order-card-item__head .stockin-order-cell__label {
+  display: none;
+}
+
+/* ---------- 详情：手机卡片与合计 ---------- */
+.stockin-order-item-card {
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--stockin-color-surface);
+  border: 1px solid var(--stockin-color-border-visible);
+  border-radius: var(--stockin-radius-md);
+}
+.stockin-order-item-card__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--stockin-fs-body);
+}
+.stockin-order-item-card__top b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stockin-order-item-card__spec {
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  margin-top: 2px;
+}
+.stockin-order-item-card__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--stockin-color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.stockin-order-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 4px 0;
+}
+.stockin-order-total span {
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+}
+.stockin-order-total b {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.stockin-order-total.is-panel {
+  padding: 12px var(--stockin-s6);
+  border-top: 1px solid var(--stockin-color-control-border);
+  background: var(--stockin-color-subtle);
+  border-radius: 0 0 var(--stockin-radius-md) var(--stockin-radius-md);
+}
+.stockin-order-remark {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: var(--stockin-radius);
+  background: var(--stockin-color-subtle);
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+}
+.stockin-order-remark b {
+  color: var(--stockin-color-text);
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 1199px) {
+  .stockin-order-head-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .stockin-order-head-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* 分组头在手机上换行：标题与按钮各占一行，按钮等宽铺满 */
+  .stockin-form-section-head {
+    flex-wrap: wrap;
+    padding: var(--stockin-s3) var(--stockin-s4);
+  }
+  .stockin-form-section-heading {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .stockin-form-section .stockin-btn-row {
+    width: 100%;
+  }
+  .stockin-form-section .stockin-btn-row .ant-btn {
+    flex: 1;
+  }
+  .stockin-order-foot {
+    padding: 12px;
+  }
+  .stockin-order-foot__total b {
+    font-size: 20px;
+  }
+  .stockin-drawer .ant-drawer-content-wrapper {
+    border-radius: 18px 18px 0 0;
+  }
+}
+
+/* 只有分页、没有左侧汇总时的脚注：靠右排列 */
+.stockin-panel-foot.is-plain {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 记录列表：名称下的所属单据副行（没有单据的散记不显示，避免整列噪音） */
+.stockin-record-name-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.stockin-record-name-cell .stockin-cell-sub {
+  font-weight: 400;
+}
+.stockin-cell-sub__sep {
+  color: var(--stockin-color-border-visible);
+}
+.stockin-record-card-sub {
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+  margin-top: 2px;
+}
+
+/* ---------- 手机档底部导航：4 项 + 中央「记一笔」 ---------- */
+.stockin-nav--mobile {
+  display: none;
+}
+.stockin-nav-fab {
+  justify-content: flex-start !important;
+}
+.stockin-nav-fab__btn {
+  width: 46px;
+  height: 46px;
+  margin-top: -14px;
+  border-radius: 16px;
+  background: var(--stockin-color-primary);
+  color: var(--stockin-color-on-primary);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 6px 16px rgba(31, 107, 82, 0.32);
+}
+.stockin-more-list {
+  display: flex;
+  flex-direction: column;
+}
+.stockin-more-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 1px solid var(--stockin-color-border-visible);
+  background: transparent;
+  color: var(--stockin-color-text);
+  font-size: var(--stockin-fs-body);
+  text-align: left;
+  width: 100%;
+  text-decoration: none;
+}
+.stockin-more-item:last-child {
+  border-bottom: 0;
+}
+.stockin-more-item span {
+  flex: 1;
+}
+
+@media (max-width: 767px) {
+  .stockin-nav--mobile {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: end;
+    width: 100%;
+    gap: 0;
+  }
+  /* 首页风险优先：把风险栏提到预警清单之前（DOM 不变，仅移动端改顺序） */
+  .stockin-dashboard-grid {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .stockin-risk-column {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    order: -1;
+  }
+  .stockin-risk-column .stockin-note-panel {
+    grid-column: 1 / -1;
+  }
+}

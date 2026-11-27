@@ -9,7 +9,7 @@
  * - 导入 / 导出通过全局 `heavyBusy` 互斥，避免服务端信号量冲突产生 503。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { App as AntdApp, Button } from 'antd';
+import { App as AntdApp, Button, Drawer } from 'antd';
 import { useModel, useNavigate } from 'umi';
 import {
   DEFAULT_PAGE_SIZE,
@@ -35,6 +35,7 @@ import Icon from '@/components/Icon';
 import WorkbenchModal from '@/components/WorkbenchModal';
 import { downloadTemplateFile } from '@/services/api/excel';
 import { ROUTES, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
+import { describeRecordFilter } from '@/utils/format';
 
 type DeleteState = { kind: 'one'; record: RecordView } | { kind: 'batch' } | null;
 
@@ -54,6 +55,7 @@ const RecordsPage: React.FC = () => {
   const [deleteState, setDeleteState] = useState<DeleteState>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [reloadToken, setReloadToken] = useState<number>(0);
+  const [filterSheetOpen, setFilterSheetOpen] = useState<boolean>(false);
 
   useEffect((): (() => void) => {
     let active = true;
@@ -229,7 +231,28 @@ const RecordsPage: React.FC = () => {
         </div>
       </div>
 
-      <FilterBar filter={filter} onChange={onFilterChange} onReset={onFilterReset} />
+      {useCardList ? (
+        <div className="stockin-mfilter">
+          <button
+            type="button"
+            className={`stockin-mfilter-chip${describeRecordFilter(filter).length > 0 ? ' is-on' : ''}`}
+            onClick={(): void => setFilterSheetOpen(true)}
+          >
+            <Icon name="search" size="sm" />
+            筛选
+            {describeRecordFilter(filter).length > 0
+              ? ` · ${describeRecordFilter(filter).length}`
+              : ''}
+          </button>
+          {describeRecordFilter(filter).length > 0 ? (
+            <button type="button" className="stockin-mfilter-chip" onClick={onFilterReset}>
+              清除
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <FilterBar filter={filter} onChange={onFilterChange} onReset={onFilterReset} />
+      )}
 
       {error !== null ? (
         <ErrorView error={error} onRetry={retry} />
@@ -294,6 +317,27 @@ const RecordsPage: React.FC = () => {
         onConfirm={onConfirmDelete}
         onCancel={(): void => setDeleteState(null)}
       />
+
+      <Drawer
+        placement="bottom"
+        open={filterSheetOpen}
+        onClose={(): void => setFilterSheetOpen(false)}
+        height="auto"
+        title="筛选记录"
+        className="stockin-drawer"
+      >
+        <FilterBar filter={filter} onChange={onFilterChange} onReset={onFilterReset} />
+        <div className="stockin-btn-row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+          <Button onClick={onFilterReset}>重置</Button>
+          <Button
+            type="primary"
+            onClick={(): void => setFilterSheetOpen(false)}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+          >
+            查看结果
+          </Button>
+        </div>
+      </Drawer>
 
       <WorkbenchModal onImported={onImported} baseFilter={baseExportFilter} />
     </div>

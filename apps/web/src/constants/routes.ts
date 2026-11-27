@@ -14,6 +14,10 @@ export const ROUTES = {
   records: '/records',
   recordNew: '/records/new',
   recordEdit: (id: number | string): string => `/records/${id}/edit`,
+  /** 进货单（批次）：列表 / 新建 / 详情。 */
+  orders: '/orders',
+  orderNew: '/orders/new',
+  orderDetail: (id: number | string): string => `/orders/${id}`,
   settings: '/settings',
   trash: '/trash',
   logs: '/logs',
@@ -28,12 +32,13 @@ export interface NavItem {
   readonly path: string;
   readonly label: string;
   /** 导航图标标识，由 MainLayout 映射到内联 SVG（components/Icon）。 */
-  readonly icon: 'dashboard' | 'list' | 'setting' | 'delete' | 'file';
+  readonly icon: 'dashboard' | 'list' | 'setting' | 'delete' | 'file' | 'receipt';
 }
 
 /** 侧栏导航项（顺序即展示顺序）。 */
 export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'dashboard', path: ROUTES.dashboard, label: '统计大屏', icon: 'dashboard' },
+  { key: 'orders', path: ROUTES.orders, label: '进货单', icon: 'receipt' },
   { key: 'records', path: ROUTES.records, label: '进货记录', icon: 'list' },
   { key: 'trash', path: ROUTES.trash, label: '回收站', icon: 'delete' },
   { key: 'logs', path: ROUTES.logs, label: '操作日志', icon: 'file' },

@@ -7,6 +7,7 @@
 import type {
   BatchDeleteRequest,
   PageResult,
+  ProductNameListResponse,
   RecordDraft,
   RecordFilter,
   RecordSuggestionField,
@@ -38,13 +39,28 @@ export function listRecords(filter: RecordFilter): Promise<PageResult<RecordView
   return request<PageResult<RecordView>>('/api/records', { query: toRecordQuery(filter) });
 }
 
-/** 输入建议：商品名称（附最近一次规格/单价）或规格；失败静默，不打扰录入。 */
+/**
+ * 输入建议：商品名称（附最近一次规格/单价）或规格；失败静默，不打扰录入。
+ * `supplier` 可选：传了就优先取该供货商下的最近一条，避免把别家的价带进来。
+ */
 export function getRecordSuggestions(
   field: RecordSuggestionField,
   q: string,
+  supplier?: string,
 ): Promise<RecordSuggestionResponse> {
   return request<RecordSuggestionResponse>('/api/records/suggestions', {
-    query: { field, q },
+    query: { field, q, supplier },
+    silent: true,
+  });
+}
+
+/**
+ * 商品名清单：录入页打开时拉一次，本地做「疑似重复商品」检测。
+ * 失败静默 —— 检测是增强项，不能因此挡住录入。
+ */
+export function getProductNames(limit = 500): Promise<ProductNameListResponse> {
+  return request<ProductNameListResponse>('/api/records/product-names', {
+    query: { limit },
     silent: true,
   });
 }

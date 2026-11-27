@@ -324,7 +324,6 @@ const AdminPage: React.FC = () => {
       <LogicalBackupPanel />
       <BackupKeysPanel />
       <BackupSettingsPanel />
-      <RestorePanel />
 
       <Card title="数据导出" style={{ marginBottom: 20 }}>
         <Paragraph type="secondary">
@@ -351,6 +350,9 @@ const AdminPage: React.FC = () => {
           </Button>
         </Space>
       </Card>
+
+      {/* 危险操作放最后：恢复与凭据重置相邻，滚到底才看得到，避免浏览时误触。 */}
+      <RestorePanel />
 
       <Card title="店主凭据">
         <Paragraph type="secondary">

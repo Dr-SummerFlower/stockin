@@ -12,6 +12,7 @@ export * from './security';
 
 export * from './dto/common.dto';
 export * from './dto/record.dto';
+export * from './dto/order.dto';
 export * from './dto/auth.dto';
 export * from './dto/dashboard.dto';
 export * from './dto/excel.dto';

@@ -121,6 +121,10 @@ export default defineConfig({
       component: '@/layouts/MainLayout',
       routes: [
         { path: '/', component: 'index' },
+        { path: '/orders', component: 'orders/index' },
+        { path: '/orders/new', component: 'orders/new' },
+        // 详情放在 new 之后：umi 按声明顺序匹配，'new' 必须先命中。
+        { path: '/orders/:id', component: 'orders/detail' },
         { path: '/records', component: 'records/index' },
         { path: '/records/new', component: 'records/new' },
         { path: '/records/:id/edit', component: 'records/edit' },

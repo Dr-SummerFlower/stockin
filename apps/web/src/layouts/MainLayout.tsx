@@ -8,16 +8,33 @@
  * 顶栏不做面包屑：侧栏选中项已表明当前位置，重复一遍只是噪声。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { App as AntdApp } from 'antd';
+import { App as AntdApp, Drawer } from 'antd';
 import { Link, Outlet, useLocation, useModel, useNavigate } from 'umi';
 import Icon, { type IconName } from '@/components/Icon';
 import OnboardingTour from '@/components/OnboardingTour';
 import { getSettings } from '@/services/api/settings';
 import { NAV_ITEMS, ROUTES, type NavItem } from '@/constants/routes';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+
+/**
+ * 手机档底部导航：4 个高频入口 + 中央「记一笔」。
+ * 回收站 / 操作日志 / 设置收进「更多」，功能不隐藏，只是不再和主操作抢位置。
+ */
+const MOBILE_TABS: readonly NavItem[] = [
+  { key: 'dashboard', path: ROUTES.dashboard, label: '大屏', icon: 'dashboard' },
+  { key: 'orders', path: ROUTES.orders, label: '进货单', icon: 'receipt' },
+  { key: 'records', path: ROUTES.records, label: '记录', icon: 'list' },
+];
+const MOBILE_MORE: readonly NavItem[] = [
+  { key: 'trash', path: ROUTES.trash, label: '回收站', icon: 'delete' },
+  { key: 'logs', path: ROUTES.logs, label: '操作日志', icon: 'file' },
+  { key: 'settings', path: ROUTES.settings, label: '设置', icon: 'setting' },
+];
 
 /** NavItem.icon → 内联 SVG 名；保持 routes.ts 的既有取值以免扩散改动。 */
 const NAV_ICONS: Readonly<Record<NavItem['icon'], IconName>> = {
   dashboard: 'grid',
+  receipt: 'receipt',
   list: 'list',
   setting: 'setting',
   delete: 'trash',
@@ -48,6 +65,8 @@ const AppLayout: React.FC = () => {
   const { username, refresh, signOut } = useModel('session');
   const { message: holderMessage } = AntdApp.useApp();
   const [shopName, setShopName] = useState<string>('');
+  const [moreOpen, setMoreOpen] = useState<boolean>(false);
+  const { isMobile } = useBreakpoint();
 
   useEffect((): void => {
     void refresh();
@@ -91,21 +110,70 @@ const AppLayout: React.FC = () => {
         </div>
 
         <div className="stockin-nav-group">
-          <nav className="stockin-nav" aria-label="主导航">
-            {NAV_ITEMS.map((item) => (
+          {isMobile ? (
+            <nav className="stockin-nav stockin-nav--mobile" aria-label="主导航">
+              {MOBILE_TABS.slice(0, 2).map((item) => (
+                <Link
+                  key={item.key}
+                  to={item.path}
+                  className={`stockin-nav-item${selected === item.path ? ' is-active' : ''}`}
+                  aria-current={selected === item.path ? 'page' : undefined}
+                >
+                  <Icon name={NAV_ICONS[item.icon]} />
+                  <span>{item.label}</span>
+                </Link>
+              ))}
               <Link
-                key={item.key}
-                to={item.path}
-                className={`stockin-nav-item${selected === item.path ? ' is-active' : ''}`}
-                aria-current={selected === item.path ? 'page' : undefined}
-                title={item.label}
-                data-tour-id={`nav-${item.key}`}
+                to={ROUTES.orderNew}
+                className="stockin-nav-item stockin-nav-fab"
+                aria-label="记一笔进货"
+                data-tour-id="nav-order-new"
               >
-                <Icon name={NAV_ICONS[item.icon]} />
-                <span>{item.label}</span>
+                <span className="stockin-nav-fab__btn">
+                  <Icon name="plus" />
+                </span>
+                <span>记一笔</span>
               </Link>
-            ))}
-          </nav>
+              {MOBILE_TABS.slice(2).map((item) => (
+                <Link
+                  key={item.key}
+                  to={item.path}
+                  className={`stockin-nav-item${selected === item.path ? ' is-active' : ''}`}
+                  aria-current={selected === item.path ? 'page' : undefined}
+                >
+                  <Icon name={NAV_ICONS[item.icon]} />
+                  <span>{item.label}</span>
+                </Link>
+              ))}
+              <button
+                type="button"
+                className={`stockin-nav-item${
+                  MOBILE_MORE.some((item: NavItem): boolean => item.path === selected) ? ' is-active' : ''
+                }`}
+                onClick={(): void => setMoreOpen(true)}
+                aria-label="更多入口"
+              >
+                <Icon name="setting" />
+                <span>更多</span>
+              </button>
+            </nav>
+          ) : (
+            <nav className="stockin-nav" aria-label="主导航">
+              {NAV_ITEMS.map((item) => (
+                <Link
+                  key={item.key}
+                  to={item.path}
+                  className={`stockin-nav-item${selected === item.path ? ' is-active' : ''}`}
+                  aria-current={selected === item.path ? 'page' : undefined}
+                  title={item.label}
+                  data-tour-id={`nav-${item.key}`}
+                >
+                  <Icon name={NAV_ICONS[item.icon]} />
+                  <span>{item.label}</span>
+                </Link>
+              ))}
+            </nav>
+          )}
         </div>
 
         <div className="stockin-sidebar-foot">
@@ -157,6 +225,42 @@ const AppLayout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+      <Drawer
+        placement="bottom"
+        open={moreOpen}
+        onClose={(): void => setMoreOpen(false)}
+        height="auto"
+        title="更多"
+        className="stockin-drawer"
+      >
+        <div className="stockin-more-list">
+          {MOBILE_MORE.map((item) => (
+            <Link
+              key={item.key}
+              to={item.path}
+              className="stockin-more-item"
+              onClick={(): void => setMoreOpen(false)}
+            >
+              <Icon name={NAV_ICONS[item.icon]} />
+              <span>{item.label}</span>
+              <Icon name="chevron" size="sm" />
+            </Link>
+          ))}
+          <button
+            type="button"
+            className="stockin-more-item"
+            onClick={(): void => {
+              setMoreOpen(false);
+              void onSignOut();
+            }}
+          >
+            <Icon name="logout" />
+            <span>退出登录</span>
+            <Icon name="chevron" size="sm" />
+          </button>
+        </div>
+      </Drawer>
+
       <OnboardingTour />
     </div>
   );

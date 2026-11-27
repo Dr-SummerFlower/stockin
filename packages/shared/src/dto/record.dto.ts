@@ -6,6 +6,7 @@
  * §10.1 裁决 11 / 14。
  */
 import type { FieldSource, ShelfLifeUnit } from '../enums';
+import type { RecordOrderRef } from './order.dto';
 
 /**
  * 数值输入的 raw/parsed 双态：`"0."` / `"-"` 等中间态 parsed 为 null，
@@ -93,6 +94,11 @@ export interface RecordView extends RecordFields {
   /** 派生展示属性，不落库；到期日为空时为 null。 */
   remainingDays: number | null;
   expiryStatus: 'near' | 'expired' | 'none';
+  /**
+   * 所属进货单；散记（历史数据、单条补录）为 null 或缺省。
+   * 后端 `LEFT JOIN purchase_orders` 带出，契约见 `.tmp/接口契约-进货单.md` §3.1。
+   */
+  order?: RecordOrderRef | null;
 }
 
 /**
@@ -155,6 +161,13 @@ export interface RecordSuggestion {
   spec: string | null;
   /** 单价（×1e4 定点整数）；规格建议或历史无值时按 0 处理由前端决定是否填充。 */
   unitPrice: number | null;
+  /** 最近一次进货日期（YYYY-MM-DD），供提示条显示「11-24 进过」。 */
+  lastPurchaseDate?: string | null;
+  /**
+   * 传入 `supplier` 时：该建议的价是否来自该供货商。
+   * false 表示该供货商没有这个商品，价取自全局最近一次。
+   */
+  matchedSupplier?: boolean;
 }
 
 export interface RecordSuggestionResponse {

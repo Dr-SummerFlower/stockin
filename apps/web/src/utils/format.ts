@@ -181,9 +181,24 @@ export function formatUnitPrice(scaled: number): string {
   return formatFixed(Math.trunc(scaled), SCALE.UNIT_PRICE);
 }
 
+/** 单价展示（去尾零）：`34.8000 → 34.8`，用于卡片等「念给人听」的位置。 */
+export function formatUnitPriceShort(scaled: number): string {
+  const text: string = formatUnitPrice(scaled);
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+}
+
 /** 数量展示（×1e3 定点整数 → 3 位小数文本）。 */
 export function formatQuantity(scaled: number): string {
   return formatFixed(Math.trunc(scaled), SCALE.QUANTITY);
+}
+
+/**
+ * 数量展示（去掉无意义的尾零）：`6.000 → 6`、`2.500 → 2.5`。
+ * 单据合计、品种件数这类「念给人听」的位置用它，表格列仍用 formatQuantity 保持对齐。
+ */
+export function formatQuantityShort(scaled: number): string {
+  const text: string = formatQuantity(scaled);
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
 }
 
 /** 整数（笔数 / 种类数 / 数量汇总）千分位展示。 */

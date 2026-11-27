@@ -114,6 +114,12 @@ function renderExpanded(record: RecordView): React.ReactNode {
     ['保质期', formatShelfLife(record.shelfLifeValue, record.shelfLifeUnit)],
     ['备注', record.remark === null || record.remark === '' ? '—' : record.remark],
     ['创建时间', formatDateTime(record.createdAt)],
+    [
+      '所属单据',
+      record.order !== null && record.order !== undefined
+        ? `${record.order.orderNo}（${record.order.supplier}）`
+        : '未关联单据',
+    ],
   ];
   const sourcePairs: readonly (readonly [string, string])[] = [
     ['生产日期', s.productionDateSrc],
@@ -170,10 +176,19 @@ function buildColumns(
       /* 关掉 antd 的原生 title（会与主题 Tooltip 同时出现两套提示），
          改用主题化 Tooltip 给出完整值；单元格 DOM 里始终是完整文本。 */
       ellipsis: { showTitle: false },
-      render: (value: string): React.ReactNode => (
-        <Tooltip title={value} placement="topLeft" trigger={['hover', 'focus']}>
-          <span className="stockin-alert-row-name">{value}</span>
-        </Tooltip>
+      render: (value: string, record: RecordView): React.ReactNode => (
+        <div className="stockin-record-name-cell">
+          <Tooltip title={value} placement="topLeft" trigger={['hover', 'focus']}>
+            <span className="stockin-alert-row-name">{value}</span>
+          </Tooltip>
+          {record.order !== null && record.order !== undefined ? (
+            <div className="stockin-cell-sub">
+              {record.order.supplier}
+              <span className="stockin-cell-sub__sep"> · </span>
+              <span className="stockin-mono">{record.order.orderNo}</span>
+            </div>
+          ) : null}
+        </div>
       ),
     },
     {

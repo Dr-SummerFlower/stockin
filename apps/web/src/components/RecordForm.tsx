@@ -87,7 +87,7 @@ function baseFrom(view: RecordView | null): BaseFields {
 }
 
 /** 由持久化视图恢复联动状态；`locked` 不落库，编辑初始一律按 false 处理。 */
-function linkageFrom(view: RecordView | null): LinkageState {
+export function linkageFrom(view: RecordView | null): LinkageState {
   if (view === null) {
     return createInitialLinkageState();
   }
