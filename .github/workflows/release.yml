@@ -3,8 +3,8 @@ name: 构建与发布
 # 发布流程：
 #  - 本地 `pnpm release` 完成版本号 + CHANGELOG 提交、打 v* tag、push main / tag；
 #  - 本地 `pnpm pre` 打并推送 `pre-<sha7>` tag；
-#  - tag push：verify → 构建 / Release / GHCR；pre-* 只部署 Worker Preview，
-#    v* 才部署生产 Worker。Actions 内不计算版本、不生成 CHANGELOG、不调用 gh CLI 触发。
+#  - tag push：verify → 构建 / Release / GHCR；pre-* 每个 tag 生成一个独立预发布
+#    Release + Worker Preview，v* 才部署生产 Worker。Actions 内不计算版本、不改 CHANGELOG。
 #
 # 所有 `uses:` 均锁定到完整 commit SHA（对应 lightweight tag）：
 #   actions/checkout v6.1.0 / actions/setup-node v6.5.0
@@ -112,9 +112,9 @@ jobs:
           if [[ "${GITHUB_REF_NAME}" == pre-* ]]; then
             CHANNEL="pre"
             VERSION="${GITHUB_REF_NAME}"
-            RELEASE_TAG="pre"
-            # 预发布资产名固定，pre Release 是滚动覆盖，不随 commit 无限累积。
-            ASSET_PREFIX="stockin-pre"
+            # 每个 pre-<sha7> tag 对应一个独立预发布 Release，资产名也带版本号。
+            RELEASE_TAG="${VERSION}"
+            ASSET_PREFIX="stockin-${VERSION}"
             IMAGE_TAGS="${IMAGE_BASE}:${VERSION}"$'\n'"${IMAGE_BASE}:pre"
           else
             CHANNEL="stable"
@@ -267,9 +267,14 @@ jobs:
           if [[ "${CHANNEL}" == "stable" ]]; then
             SEGMENT="$(pnpm exec git-cliff --config cliff.toml --tag "${RELEASE_TAG}" --latest --strip all 2>/dev/null || true)"
           else
-            # pre 是滚动 Release，取尚未归档的提交；标题替换为 pre-<sha7>。
-            SEGMENT="$(pnpm exec git-cliff --config cliff.toml --unreleased --strip all 2>/dev/null || true)"
-            SEGMENT="$(printf '%s' "${SEGMENT}" | sed "s/^## \[Unreleased\]/## [${VERSION}]/")"
+            # 每个预发布只列上一个 tag（pre-* 或 v*）到本次 tag 之间的提交。
+            PREV_TAG="$(git describe --tags --abbrev=0 --match 'v*' --match 'pre-*' "${VERSION}^" 2>/dev/null || true)"
+            if [[ -n "${PREV_TAG}" ]]; then
+              RANGE="${PREV_TAG}..${VERSION}"
+            else
+              RANGE="${VERSION}"
+            fi
+            SEGMENT="$(pnpm exec git-cliff --config cliff.toml --tag-pattern '^(v[0-9]|pre-)' --tag "${VERSION}" --strip all "${RANGE}" 2>/dev/null || true)"
           fi
           if ! printf '%s' "${SEGMENT}" | grep -qE '^(### |[-*] )'; then
             SEGMENT=""
@@ -284,21 +289,16 @@ jobs:
               --verify-tag \
               --title "进货统计 v${VERSION}" \
               --notes "${NOTES}"
-          elif gh release view pre >/dev/null 2>&1; then
-            STALE="$(gh release view pre --json assets --jq '.assets[].name' \
-              | grep -E '^stockin-pre-[0-9a-f]{7}-' || true)"
-            if [[ -n "${STALE}" ]]; then
-              while IFS= read -r name; do
-                [[ -z "${name}" ]] && continue
-                gh release delete-asset pre "${name}" --yes \
-                  || echo "::warning::删除旧预发布资产失败：${name}"
-              done <<< "${STALE}"
-            fi
-            gh release upload pre "${ASSETS[@]}" --clobber
-            gh release edit pre --prerelease --title "预发布 · ${VERSION}" --notes "${NOTES}"
+          elif gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            # 同一 tag 重跑 CI 时覆盖资产与正文，不新建重复 Release。
+            gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --prerelease \
+              --title "预发布 · ${VERSION}" \
+              --notes "${NOTES}"
           else
-            gh release create pre "${ASSETS[@]}" \
-              --target "${GITHUB_SHA}" \
+            gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
+              --verify-tag \
               --prerelease \
               --title "预发布 · ${VERSION}" \
               --notes "${NOTES}"
@@ -306,7 +306,7 @@ jobs:
 
           echo "### Release ${RELEASE_TAG} 已发布" >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${CHANNEL}" == "pre" ]]; then
-            echo '- 预发布不部署生产 Worker；下载 `stockin-pre-workers.zip` 后本地执行 `npx wrangler dev` 验证。' >> "${GITHUB_STEP_SUMMARY}"
+            echo "- 预发布不部署生产 Worker；下载 \`stockin-${VERSION}-workers.zip\` 后本地执行 \`npx wrangler dev\` 验证。" >> "${GITHUB_STEP_SUMMARY}"
           fi
 
   # Worker 部署放在境外 runner 上执行：中国大陆访问不到 *.workers.dev
