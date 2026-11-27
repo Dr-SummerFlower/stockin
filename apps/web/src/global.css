@@ -3305,3 +3305,149 @@ a.stockin-touch {
   color: var(--stockin-color-muted);
   font-size: 12px;
 }
+
+/* ---------- 进货单：数量步进器 / 差异面板 / 带入第二组 ---------- */
+
+/* 手机档的数量步进：− 6 +，按钮 44px 满足触控目标 */
+.stockin-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stockin-stepper button {
+  width: var(--stockin-touch);
+  height: var(--stockin-touch);
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--stockin-color-control-border);
+  border-radius: var(--stockin-radius);
+  background: var(--stockin-color-subtle);
+  color: var(--stockin-color-text);
+  font-size: 18px;
+  line-height: 1;
+}
+.stockin-stepper button:active {
+  background: var(--stockin-color-surface-3);
+}
+.stockin-stepper .ant-input {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+/* 合计条：差异展开入口 */
+.stockin-order-foot__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--stockin-s3);
+  flex-wrap: wrap;
+}
+.stockin-order-foot__calm {
+  color: var(--stockin-color-faint);
+}
+.stockin-diff-toggle {
+  border: 1px solid var(--stockin-color-primary);
+  background: var(--stockin-color-primary-bg);
+  color: var(--stockin-color-primary-text);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+  min-height: 28px;
+}
+
+/* 差异面板：每一处改动都能单独还原 */
+.stockin-diff-panel {
+  border-top: 1px dashed var(--stockin-color-border-visible);
+  background: var(--stockin-color-surface);
+  padding: 6px var(--stockin-s6) 12px;
+  max-height: 280px;
+  overflow: auto;
+}
+.stockin-diff-group {
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--stockin-color-border-visible);
+}
+.stockin-diff-group:last-child {
+  border-bottom: 0;
+}
+.stockin-diff-group__name {
+  font-weight: 600;
+  font-size: var(--stockin-fs-caption);
+  margin-bottom: 4px;
+}
+.stockin-diff-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: var(--stockin-fs-caption);
+  color: var(--stockin-color-muted);
+}
+.stockin-diff-row__label {
+  width: 56px;
+  flex: none;
+  color: var(--stockin-color-faint);
+}
+.stockin-diff-row__old {
+  text-decoration: line-through;
+  color: var(--stockin-color-faint);
+  font-variant-numeric: tabular-nums;
+}
+.stockin-diff-row__arrow {
+  color: var(--stockin-color-border-visible);
+}
+.stockin-diff-row__new {
+  color: var(--stockin-color-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stockin-diff-row__undo {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--stockin-color-primary);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  min-height: 28px;
+}
+.stockin-diff-row__undo:hover {
+  background: var(--stockin-color-primary-bg);
+}
+
+/* 带入面板第二组 */
+.stockin-pick-extra {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--stockin-color-border-visible);
+}
+.stockin-pick-extra__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--stockin-fs-caption);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.stockin-pick-extra__head span {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--stockin-color-faint);
+}
+
+@media (max-width: 767px) {
+  /* 手机上「数量」独占一行，避免和单价、金额挤成三列 */
+  .stockin-order-card-item__row3 {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .stockin-order-card-item__row3 > .stockin-order-cell--qty {
+    grid-column: 1 / -1;
+  }
+  .stockin-diff-panel {
+    padding-left: var(--stockin-s4);
+    padding-right: var(--stockin-s4);
+  }
+}

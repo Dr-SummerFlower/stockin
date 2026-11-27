@@ -146,6 +146,12 @@ export class OrderRepository {
     return { rows, total, page, pageSize };
   }
 
+  /** 命中条件的单据数：导出前判平台上限用，不取行。 */
+  count(filter: OrderFilter): number {
+    const { where, params } = buildWhere(filter);
+    return this.scalar(`SELECT COUNT(*) AS c FROM purchase_orders o WHERE ${where}`, ...params);
+  }
+
   /** 单据抬头 + 汇总（未软删）；不存在返回 null。 */
   findView(id: number): OrderRow | null {
     const row = this.db

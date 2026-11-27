@@ -57,10 +57,16 @@ export function getRecordSuggestions(
 /**
  * 商品名清单：录入页打开时拉一次，本地做「疑似重复商品」检测。
  * 失败静默 —— 检测是增强项，不能因此挡住录入。
+ *
+ * `supplier` 可选：传了就只返回该供货商进过的名称（服务端按 `supplier_norm`
+ * 严格过滤，**不回退全局**）。用于「从上次带入」的第二组候选。
  */
-export function getProductNames(limit = 500): Promise<ProductNameListResponse> {
+export function getProductNames(
+  limit = 500,
+  supplier?: string,
+): Promise<ProductNameListResponse> {
   return request<ProductNameListResponse>('/api/records/product-names', {
-    query: { limit },
+    query: { limit, supplier },
     silent: true,
   });
 }

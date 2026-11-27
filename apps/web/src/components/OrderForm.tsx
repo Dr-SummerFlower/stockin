@@ -24,6 +24,7 @@ import {
   SHELF_LIFE_UNITS,
   type OrderView,
   type ProductNameItem,
+  type ProductNameListResponse,
   type RecordDraft,
   type RecordView,
   type ShelfLifeUnit,
@@ -32,6 +33,7 @@ import {
   applyFieldEvent,
   createInitialLinkageState,
   isValidISODate,
+  parseFixed,
   type FieldEvent,
   type LinkageState,
 } from '@stockin/domain';
@@ -49,6 +51,7 @@ import {
   formatMoney,
   formatQuantity,
   formatQuantityShort,
+  formatShelfLife,
   formatUnitPrice,
   isDateString,
   SHORT_UNIT_LABELS,
@@ -67,6 +70,18 @@ interface LineBase {
 interface OriginSnapshot {
   readonly quantity: string;
   readonly unitPrice: string;
+  readonly spec: string;
+  readonly productionDate: string | null;
+  readonly shelfLifeValue: number | null;
+  readonly shelfLifeUnit: ShelfLifeUnit | null;
+}
+
+/** 一条明细上与「上一张单」的差异项。 */
+interface LineChange {
+  readonly field: 'quantity' | 'unitPrice' | 'spec' | 'productionDate' | 'shelfLife';
+  readonly label: string;
+  readonly from: string;
+  readonly to: string;
 }
 
 interface OrderLine {
@@ -100,8 +115,118 @@ function lineFromRecord(view: RecordView): OrderLine {
     origin: {
       quantity: formatQuantity(view.quantity),
       unitPrice: formatUnitPrice(view.unitPrice),
+      spec: view.spec ?? '',
+      productionDate: view.productionDate,
+      shelfLifeValue: view.shelfLifeValue,
+      shelfLifeUnit: view.shelfLifeUnit,
     },
   };
+}
+
+/**
+ * 历史商品（只有名称/规格/上次单价）→ 一行。
+ * 数量与日期留空：这两项每批都不同，宁可让用户填，也不要带错。
+ */
+function lineFromProductName(item: ProductNameItem): OrderLine {
+  const linkage: LinkageState =
+    item.unitPrice !== null && item.unitPrice > 0
+      ? applyFieldEvent(createInitialLinkageState(), {
+          type: 'userInput',
+          slot: 'unitPrice',
+          raw: formatUnitPrice(item.unitPrice),
+          parsed: item.unitPrice,
+        })
+      : createInitialLinkageState();
+  return {
+    key: nextKey(),
+    base: { name: item.name, spec: item.spec ?? '', remark: '' },
+    linkage,
+    /* 不是从上一张单复制的行，不参与「与上一张单相比」 */
+    origin: null,
+  };
+}
+
+/** 去掉定点小数多余的尾零：`"5.000"` → `"5"`、`"34.8000"` → `"34.8"`。 */
+function trimZeros(text: string): string {
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+}
+
+/** 数值文本归一化：`"6"` 与 `"6.000"` 视为同一个值。 */
+function sameNumber(a: string, b: string): boolean {
+  const na: number = Number.parseFloat(a);
+  const nb: number = Number.parseFloat(b);
+  if (!Number.isFinite(na) && !Number.isFinite(nb)) return true;
+  if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
+  return Math.abs(na - nb) < 1e-9;
+}
+
+/** 逐字段比对：只报「从上一张单带过来、且被改过」的项。 */
+function lineChanges(line: OrderLine): LineChange[] {
+  const o: OriginSnapshot | null = line.origin;
+  if (o === null) return [];
+  const changes: LineChange[] = [];
+
+  if (!sameNumber(line.linkage.amount.quantity.raw, o.quantity)) {
+    changes.push({
+      field: 'quantity',
+      label: '数量',
+      from: o.quantity === '' ? '—' : trimZeros(o.quantity),
+      to:
+        line.linkage.amount.quantity.raw === ''
+          ? '—'
+          : trimZeros(line.linkage.amount.quantity.raw),
+    });
+  }
+  if (!sameNumber(line.linkage.amount.unitPrice.raw, o.unitPrice)) {
+    changes.push({
+      field: 'unitPrice',
+      label: '单价',
+      from: o.unitPrice === '' ? '—' : trimZeros(o.unitPrice),
+      to:
+        line.linkage.amount.unitPrice.raw === ''
+          ? '—'
+          : trimZeros(line.linkage.amount.unitPrice.raw),
+    });
+  }
+  if ((line.base.spec ?? '') !== o.spec) {
+    changes.push({
+      field: 'spec',
+      label: '规格',
+      from: o.spec === '' ? '—' : o.spec,
+      to: line.base.spec === '' ? '—' : line.base.spec,
+    });
+  }
+  const currentProd: string = line.linkage.date.productionDate.value ?? '';
+  if (currentProd !== (o.productionDate ?? '')) {
+    changes.push({
+      field: 'productionDate',
+      label: '生产日期',
+      from: o.productionDate ?? '—',
+      to: currentProd === '' ? '—' : currentProd,
+    });
+  }
+  const currentShelf: { value: string; unit: ShelfLifeUnit } = {
+    value:
+      line.linkage.date.shelfLife.value === null
+        ? ''
+        : String(line.linkage.date.shelfLife.value.value),
+    unit: line.linkage.date.shelfLife.value?.unit ?? 'month',
+  };
+  if (
+    !sameNumber(currentShelf.value, o.shelfLifeValue === null ? '' : String(o.shelfLifeValue)) ||
+    (currentShelf.value !== '' && currentShelf.unit !== (o.shelfLifeUnit ?? 'month'))
+  ) {
+    changes.push({
+      field: 'shelfLife',
+      label: '保质期',
+      from: formatShelfLife(o.shelfLifeValue, o.shelfLifeUnit),
+      to:
+        currentShelf.value === ''
+          ? '—'
+          : formatShelfLife(Number(currentShelf.value), currentShelf.unit),
+    });
+  }
+  return changes;
 }
 
 /* --------------------------------------------------------- 疑似重复商品检测 */
@@ -245,6 +370,13 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
   const [pickItems, setPickItems] = useState<readonly RecordView[]>([]);
   const [pickChecked, setPickChecked] = useState<readonly number[]>([]);
   const [pickSource, setPickSource] = useState<OrderView | null>(null);
+  /** 第二组：这家供货商进过、但上一张单里没有的商品（按供货商取的商品名清单）。 */
+  const [extraPicks, setExtraPicks] = useState<readonly ProductNameItem[]>([]);
+  const [extraChecked, setExtraChecked] = useState<readonly string[]>([]);
+  /** 底部「与上一张单相比」是否展开。 */
+  const [diffOpen, setDiffOpen] = useState<boolean>(false);
+  /** 新追加行的 key：渲染完成后把焦点移到它的商品名（Tab 续行）。 */
+  const [focusKey, setFocusKey] = useState<string | null>(null);
 
   /** 保存前的「新商品」确认（或清单失败时的未校验提示）。 */
   const [confirmNewNames, setConfirmNewNames] = useState<NewNameConfirm | null>(null);
@@ -302,9 +434,30 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
     });
   }, []);
 
-  const addLine = useCallback((): void => {
-    setLines((prev: OrderLine[]): OrderLine[] => [...prev, emptyLine()]);
+  /**
+   * 追加一行并返回新行 key。
+   * key 必须同步拿到，才能在下一帧把焦点放过去（Tab 续行靠它）。
+   */
+  const appendLine = useCallback((): string => {
+    const line: OrderLine = emptyLine();
+    setLines((prev: OrderLine[]): OrderLine[] => [...prev, line]);
+    return line.key;
   }, []);
+
+  /** 「添加一行」按钮：追加并聚焦新行商品名，省一次点击。 */
+  const addLine = useCallback((): void => {
+    setFocusKey(appendLine());
+  }, [appendLine]);
+
+  /* 焦点转移必须在 DOM 提交之后做，否则新行还不存在。 */
+  useEffect((): void => {
+    if (focusKey === null) return;
+    const input: HTMLInputElement | null = document.querySelector<HTMLInputElement>(
+      `[data-line-key="${focusKey}"] .stockin-order-cell--name input`,
+    );
+    input?.focus();
+    setFocusKey(null);
+  }, [focusKey, lines]);
 
   const clearSimilar = useCallback((key: string): void => {
     setSimilarOf((prev) => {
@@ -313,6 +466,66 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
       return next;
     });
   }, []);
+
+  /** 单字段还原到「上一张单」的值。 */
+  const restoreField = useCallback(
+    (line: OrderLine, field: LineChange['field']): void => {
+      const o: OriginSnapshot | null = line.origin;
+      if (o === null) return;
+      if (field === 'quantity') {
+        dispatch(line.key, {
+          type: 'userInput',
+          slot: 'quantity',
+          raw: trimZeros(o.quantity),
+          parsed: parseFixed(o.quantity, SCALE.QUANTITY),
+        });
+        return;
+      }
+      if (field === 'unitPrice') {
+        dispatch(line.key, {
+          type: 'userInput',
+          slot: 'unitPrice',
+          raw: trimZeros(o.unitPrice),
+          parsed: parseFixed(o.unitPrice, SCALE.UNIT_PRICE),
+        });
+        return;
+      }
+      if (field === 'spec') {
+        patchBase(line.key, { spec: o.spec });
+        return;
+      }
+      if (field === 'productionDate') {
+        dispatch(line.key, {
+          type: 'userInput',
+          slot: 'productionDate',
+          raw: o.productionDate ?? '',
+        });
+        return;
+      }
+      dispatch(line.key, {
+        type: 'userInput',
+        slot: 'shelfLife',
+        raw: o.shelfLifeValue === null ? '' : String(o.shelfLifeValue),
+        unit: o.shelfLifeUnit ?? 'month',
+      });
+    },
+    [dispatch, patchBase],
+  );
+
+  /** 手机档步进：按「1 件」为步长，负数钳到 0。 */
+  const stepQuantity = useCallback(
+    (line: OrderLine, delta: number): void => {
+      const current: number = line.linkage.amount.quantity.parsed ?? 0;
+      const next: number = Math.max(0, current + delta * SCALE.QUANTITY);
+      dispatch(line.key, {
+        type: 'userInput',
+        slot: 'quantity',
+        raw: formatQuantityShort(next),
+        parsed: next,
+      });
+    },
+    [dispatch],
+  );
 
   /* -------- 合计 -------- */
   const totals = useMemo((): { count: number; quantity: number; cents: number } => {
@@ -328,16 +541,29 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
     return { count, quantity, cents };
   }, [lines]);
 
-  /** 与带入来源相比改了几处（只统计数量和单价这两项高频修改）。 */
-  const changedCount: number = useMemo((): number => {
-    let n = 0;
-    for (const line of lines) {
-      if (line.origin === null) continue;
-      if (line.linkage.amount.quantity.raw !== line.origin.quantity) n += 1;
-      if (line.linkage.amount.unitPrice.raw !== line.origin.unitPrice) n += 1;
-    }
-    return n;
-  }, [lines]);
+  /** 与上一张单相比的逐行、逐字段差异（数量/单价/规格/生产日期/保质期）。 */
+  const changeGroups = useMemo(
+    (): { line: OrderLine; name: string; items: LineChange[] }[] =>
+      lines
+        .map(
+          (line: OrderLine): { line: OrderLine; name: string; items: LineChange[] } => ({
+            line,
+            name: line.base.name,
+            items: lineChanges(line),
+          }),
+        )
+        /* 名称被清空的行视为已删除，不参与差异统计 */
+        .filter(
+          (group): boolean => group.items.length > 0 && group.name.trim() !== '',
+        ),
+    [lines],
+  );
+
+  const changedCount: number = useMemo(
+    (): number =>
+      changeGroups.reduce((sum: number, group): number => sum + group.items.length, 0),
+    [changeGroups],
+  );
 
   const copiedCount: number = useMemo(
     (): number => lines.filter((line: OrderLine): boolean => line.origin !== null).length,
@@ -423,25 +649,59 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         setPickSource(null);
         setPickItems([]);
         setPickChecked([]);
+        setExtraPicks([]);
+        setExtraChecked([]);
         return;
       }
+      /*
+       * 候选清单按供货商取：只列这家进过的，别家的货不进候选。
+       * 拉不到就当没有候选（静默降级）——它只是补货提示，不该挡住「带入上次」。
+       */
       const detail = await getOrder(last.id);
+      const historyNames: ProductNameListResponse = await getProductNames(500, name).catch(
+        (): ProductNameListResponse => ({ items: [] }),
+      );
       setPickSource(last);
       setPickItems(detail.items);
       setPickChecked(detail.items.map((item: RecordView): number => item.id));
+
+      /*
+       * 第二组：这家进过、但上一张单里没有的商品。
+       * 数量与日期一律留空 —— 这两项每批都不同，宁可让人填也不要带错。
+       */
+      const inLastOrder = new Set(detail.items.map((item: RecordView): string => item.name));
+      const inForm = new Set(
+        lines
+          .map((line: OrderLine): string => line.base.name.trim())
+          .filter((item: string): boolean => item !== ''),
+      );
+      setExtraPicks(
+        historyNames.items
+          .filter(
+            (item: ProductNameItem): boolean =>
+              !inLastOrder.has(item.name) && !inForm.has(item.name),
+          )
+          .slice(0, 8),
+      );
+      setExtraChecked([]);
     } catch (cause) {
       holderMessage.error(errorMessage(cause, '读取上一张单失败'));
       setPickItems([]);
+      setExtraPicks([]);
+      setExtraChecked([]);
     } finally {
       setPickLoading(false);
     }
-  }, [holderMessage, supplier]);
+  }, [holderMessage, lines, supplier]);
 
   const applyPick = useCallback((): void => {
     const picked: RecordView[] = pickItems.filter((item: RecordView): boolean =>
       pickChecked.includes(item.id),
     );
-    if (picked.length === 0) {
+    const pickedExtras: ProductNameItem[] = extraPicks.filter(
+      (item: ProductNameItem): boolean => extraChecked.includes(item.name),
+    );
+    if (picked.length === 0 && pickedExtras.length === 0) {
       setPickOpen(false);
       return;
     }
@@ -451,10 +711,14 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
       const kept: OrderLine[] = prev.filter(
         (line: OrderLine): boolean => line.base.name.trim() !== '',
       );
-      return [...kept, ...picked.map(lineFromRecord)];
+      return [
+        ...kept,
+        ...picked.map(lineFromRecord),
+        ...pickedExtras.map(lineFromProductName),
+      ];
     });
     setPickOpen(false);
-  }, [pickChecked, pickItems]);
+  }, [extraChecked, extraPicks, pickChecked, pickItems]);
 
   /* -------- 提交 -------- */
   const buildItems = useCallback((): { drafts: RecordDraft[]; error: string | null } => {
@@ -648,7 +912,10 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                     >
                       {item.name}
                       <small>
-                        {item.unitPrice !== null ? ` ¥${formatUnitPrice(item.unitPrice)}` : ''}
+                        {/* 候选 chip 是「念给人听」的位置，两位小数即可；定长 4 位只用于表格对齐 */}
+                        {item.unitPrice !== null
+                          ? ` ¥${(item.unitPrice / 10000).toFixed(2)}`
+                          : ''}
                         {item.lastPurchaseDate !== null && item.lastPurchaseDate !== undefined
                           ? ` · ${String(item.lastPurchaseDate).slice(5)} 进过`
                           : ''}
@@ -750,17 +1017,56 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         </div>
       ),
       quantity: (
-        <div className={`stockin-order-cell stockin-order-cell--num${qtyChanged ? ' is-changed' : ''}`}>
+        <div
+          className={`stockin-order-cell stockin-order-cell--num stockin-order-cell--qty${qtyChanged ? ' is-changed' : ''}`}
+          onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>): void => {
+            /* 末行数量按 Tab：补一行并把焦点送到新行的商品名。
+               数量是这一行的最后一个可编辑字段（金额只读），所以它是最自然的续行点。 */
+            if (event.key !== 'Tab' || event.shiftKey) return;
+            if (index !== lines.length - 1) return;
+            if (line.base.name.trim() === '') return;
+            event.preventDefault();
+            setFocusKey(appendLine());
+          }}
+        >
           <span className="stockin-order-cell__label">数量</span>
-          <NumericInput
-            raw={line.linkage.amount.quantity.raw}
-            scale={SCALE.QUANTITY}
-            ariaLabel={`第 ${index + 1} 行数量`}
-            placeholder="0.000"
-            onRawChange={(raw: string, parsed: number | null): void =>
-              dispatch(line.key, { type: 'userInput', slot: 'quantity', raw, parsed })
-            }
-          />
+          {isMobile ? (
+            <div className="stockin-stepper">
+              <button
+                type="button"
+                aria-label={`第 ${index + 1} 行数量减一`}
+                onClick={(): void => stepQuantity(line, -1)}
+              >
+                −
+              </button>
+              <NumericInput
+                raw={line.linkage.amount.quantity.raw}
+                scale={SCALE.QUANTITY}
+                ariaLabel={`第 ${index + 1} 行数量`}
+                placeholder="0"
+                onRawChange={(raw: string, parsed: number | null): void =>
+                  dispatch(line.key, { type: 'userInput', slot: 'quantity', raw, parsed })
+                }
+              />
+              <button
+                type="button"
+                aria-label={`第 ${index + 1} 行数量加一`}
+                onClick={(): void => stepQuantity(line, 1)}
+              >
+                +
+              </button>
+            </div>
+          ) : (
+            <NumericInput
+              raw={line.linkage.amount.quantity.raw}
+              scale={SCALE.QUANTITY}
+              ariaLabel={`第 ${index + 1} 行数量`}
+              placeholder="0.000"
+              onRawChange={(raw: string, parsed: number | null): void =>
+                dispatch(line.key, { type: 'userInput', slot: 'quantity', raw, parsed })
+              }
+            />
+          )}
         </div>
       ),
       amount: (
@@ -800,6 +1106,7 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                   rowRefs.current[line.key] = node;
                 }}
                 className={`stockin-order-card-item${changed ? ' is-copied' : ''}${isError ? ' is-error' : ''}`}
+                data-line-key={line.key}
               >
                 <div className="stockin-order-card-item__head">
                   {c.name}
@@ -845,6 +1152,7 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                 rowRefs.current[line.key] = node;
               }}
               className={`stockin-order-grid stockin-order-grid--row${isError ? ' is-error' : ''}`}
+              data-line-key={line.key}
             >
               {c.name}
               {c.spec}
@@ -983,10 +1291,21 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         <div className="stockin-order-foot">
           <div className="stockin-order-foot__meta">
             {copiedCount > 0 ? (
-              <span>
-                含 {copiedCount} 行来自上一张单
-                {changedCount > 0 ? ` · 已改 ${changedCount} 处` : ' · 未改动'}
-              </span>
+              <>
+                <span>含 {copiedCount} 行来自上一张单</span>
+                {changedCount > 0 ? (
+                  <button
+                    type="button"
+                    className="stockin-diff-toggle"
+                    aria-expanded={diffOpen}
+                    onClick={(): void => setDiffOpen((open: boolean): boolean => !open)}
+                  >
+                    已改 {changedCount} 处 · {diffOpen ? '收起' : '看改了什么'}
+                  </button>
+                ) : (
+                  <span className="stockin-order-foot__calm">未改动</span>
+                )}
+              </>
             ) : (
               <span>还没带入历史商品时，逐行新增即可</span>
             )}
@@ -996,6 +1315,34 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
             <b>{formatMoney(totals.cents)}</b>
           </div>
         </div>
+        {diffOpen && changeGroups.length > 0 ? (
+          <div className="stockin-diff-panel">
+            {changeGroups.map(
+              (group): React.ReactNode => (
+                <div key={group.line.key} className="stockin-diff-group">
+                  <div className="stockin-diff-group__name">{group.name}</div>
+                  {group.items.map(
+                    (item): React.ReactNode => (
+                      <div key={item.field} className="stockin-diff-row">
+                        <span className="stockin-diff-row__label">{item.label}</span>
+                        <span className="stockin-diff-row__old">{item.from}</span>
+                        <span className="stockin-diff-row__arrow" aria-hidden="true">→</span>
+                        <span className="stockin-diff-row__new">{item.to}</span>
+                        <button
+                          type="button"
+                          className="stockin-diff-row__undo"
+                          onClick={(): void => restoreField(group.line, item.field)}
+                        >
+                          还原
+                        </button>
+                      </div>
+                    ),
+                  )}
+                </div>
+              ),
+            )}
+          </div>
+        ) : null}
       </section>
 
       <div className="stockin-submit-bar" style={{ justifyContent: 'flex-end' }}>
@@ -1026,14 +1373,22 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         className="stockin-drawer"
         footer={
           <div className="stockin-btn-row" style={{ justifyContent: 'flex-end' }}>
-            <Button onClick={(): void => setPickChecked([])}>全不选</Button>
+            <Button
+              onClick={(): void => {
+                /* 两组都要清：只清第一组会留下已勾的候选，主按钮仍可点，容易带进没打算要的行 */
+                setPickChecked([]);
+                setExtraChecked([]);
+              }}
+            >
+              全不选
+            </Button>
             <Button
               type="primary"
-              disabled={pickChecked.length === 0}
+              disabled={pickChecked.length + extraChecked.length === 0}
               onClick={applyPick}
               style={{ minHeight: TOUCH_TARGET_MIN_PX }}
             >
-              带入所选 {pickChecked.length} 行
+              带入所选 {pickChecked.length + extraChecked.length} 行
             </Button>
           </div>
         }
@@ -1065,8 +1420,9 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                     />
                     <span className="stockin-pick-row__name">{item.name}</span>
                     <span className="stockin-pick-row__meta">
-                      {item.spec ?? '无规格'} · {formatQuantity(item.quantity)} 件 · ¥
-                      {formatUnitPrice(item.unitPrice)}
+                      {/* 与第二组、详情页同一口径：数量去尾零、单价两位，别在这里出现 6.000 / ¥34.8000 */}
+                      {item.spec ?? '无规格'} · {formatQuantityShort(item.quantity)} 件 · ¥
+                      {(item.unitPrice / 10000).toFixed(2)}
                     </span>
                   </label>
                 ),
@@ -1075,6 +1431,42 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
             <p className="stockin-hint" style={{ marginTop: 12 }}>
               这次没进的货，把勾去掉就不会进本单；日期不会跟着复制，请按实际填写。
             </p>
+            {extraPicks.length > 0 ? (
+              <div className="stockin-pick-extra">
+                <div className="stockin-pick-extra__head">
+                  这家上次没带、以前进过
+                  <span>勾上一起带入，数量留空</span>
+                </div>
+                {extraPicks.map(
+                  (item: ProductNameItem): React.ReactNode => (
+                    <label key={item.name} className="stockin-pick-row">
+                      <input
+                        type="checkbox"
+                        checked={extraChecked.includes(item.name)}
+                        onChange={(event): void => {
+                          const checked: boolean = event.target.checked;
+                          setExtraChecked((prev: readonly string[]): readonly string[] =>
+                            checked
+                              ? [...prev, item.name]
+                              : prev.filter((name: string): boolean => name !== item.name),
+                          );
+                        }}
+                      />
+                      <span className="stockin-pick-row__name">{item.name}</span>
+                      <span className="stockin-pick-row__meta">
+                        {item.spec ?? '无规格'}
+                        {item.unitPrice !== null
+                          ? ` · ¥${(item.unitPrice / 10000).toFixed(2)}`
+                          : ''}
+                        {item.lastPurchaseDate !== null && item.lastPurchaseDate !== undefined
+                          ? ` · ${item.lastPurchaseDate.slice(5)} 进过`
+                          : ''}
+                      </span>
+                    </label>
+                  ),
+                )}
+              </div>
+            ) : null}
           </>
         )}
       </Drawer>

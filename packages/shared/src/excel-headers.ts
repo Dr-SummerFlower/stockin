@@ -154,6 +154,43 @@ export const EXCEL_HEADERS: readonly ExcelHeaderDef[] = [
 /** 表头文案数组，用于导入时做表头一致性比对。 */
 export const EXCEL_HEADER_TEXTS: readonly string[] = EXCEL_HEADERS.map((def) => def.header);
 
+/**
+ * 进货单汇总导出（`GET /api/orders/export`）的列。
+ *
+ * **这不是 `EXCEL_HEADERS` 的第二份**：上面那份是「一条记录一行」的明细表，
+ * 这张是「一张单一行」的汇总表，两者列集与语义都不同，因此各自成一份常量，
+ * 但同样只在这里定义一次，Service 不得另写列名数组。
+ */
+export interface OrderExportHeaderDef {
+  readonly key:
+    | 'orderNo'
+    | 'supplier'
+    | 'purchaseDate'
+    | 'itemCount'
+    | 'totalQuantity'
+    | 'totalAmount'
+    | 'createdAt';
+  readonly header: string;
+  /** 列宽（exceljs 字符宽度）。 */
+  readonly width: number;
+  readonly kind: 'text' | 'date' | 'integer' | 'quantity' | 'money' | 'datetime';
+}
+
+export const ORDER_EXPORT_HEADERS: readonly OrderExportHeaderDef[] = [
+  { key: 'orderNo', header: '单据编号', width: 18, kind: 'text' },
+  { key: 'supplier', header: '供货商', width: 22, kind: 'text' },
+  { key: 'purchaseDate', header: '进货日期', width: 14, kind: 'date' },
+  { key: 'itemCount', header: '品种数', width: 10, kind: 'integer' },
+  { key: 'totalQuantity', header: '数量合计', width: 12, kind: 'quantity' },
+  { key: 'totalAmount', header: '金额合计', width: 14, kind: 'money' },
+  { key: 'createdAt', header: '录入时间', width: 20, kind: 'datetime' },
+];
+
+/** 进货单汇总表的表头文案。 */
+export const ORDER_EXPORT_HEADER_TEXTS: readonly string[] = ORDER_EXPORT_HEADERS.map(
+  (def) => def.header,
+);
+
 /** 全部列数（含可选列），模板与导出按此写出。 */
 export const EXCEL_COLUMN_COUNT = EXCEL_HEADERS.length;
 

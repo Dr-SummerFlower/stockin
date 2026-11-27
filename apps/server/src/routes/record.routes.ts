@@ -109,7 +109,7 @@ export function registerRecordRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
     }),
     (c) => {
       const input = c.req.valid('query');
-      const result = deps.records.productNames(input.limit ?? 500);
+      const result = deps.records.productNames(input.limit ?? 500, input.supplier);
       return result.ok
         ? c.json(result.data, 200)
         : errorResponse(result.code, c.get('requestId') ?? '', result.details);

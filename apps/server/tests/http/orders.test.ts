@@ -9,6 +9,7 @@
  * 定点数口径：unitPrice ×1e4、quantity ×1e3、amountCents ×1e2，
  * 因此 12000 / 2000 = 1.2 × 2 = 2.4 元 = 240 分。
  */
+import * as ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from '../support/harness';
 import { RecordRepository } from '../../src/repositories/record.repository';
@@ -509,6 +510,150 @@ describe('建议与商品名清单', () => {
     expect(names.body.items[0]?.spec).toBe('200g/袋');
     expect(names.body.items[0]?.lastPurchaseDate).toBe('2026-11-18');
   });
+
+  it('product-names 传 supplier：只给该供货商的货，价/日期取该供货商最近一次', async () => {
+    const { h, cookie } = await ready();
+    // 同一商品两家都进过；A 家自己还有两条，近的一条更贵；散记里有一条更晚的。
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: 'A 家',
+        orderNo: '20261110001',
+        purchaseDate: '2026-11-10',
+        items: [
+          item({ name: '龙口粉丝', spec: '100g/袋', unitPrice: 10_000, amountCents: 200 }),
+          item({ name: '只有A有的货', unitPrice: 30_000, amountCents: 600 }),
+        ],
+      }),
+      cookie,
+    });
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: 'A 家',
+        orderNo: '20261118001',
+        purchaseDate: '2026-11-18',
+        items: [item({ name: '龙口粉丝', spec: '200g/袋', unitPrice: 11_000, amountCents: 220 })],
+      }),
+      cookie,
+    });
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: 'B 家',
+        orderNo: '20261120001',
+        purchaseDate: '2026-11-20',
+        items: [item({ name: '龙口粉丝', spec: '500g/袋', unitPrice: 20_000, amountCents: 400 })],
+      }),
+      cookie,
+    });
+    await h.json('/api/records', {
+      json: item({
+        name: '龙口粉丝',
+        spec: '散装',
+        purchaseDate: '2026-11-25',
+        unitPrice: 99_000,
+        amountCents: 1_980,
+      }),
+      cookie,
+    });
+
+    interface NamesResponse {
+      items: {
+        name: string;
+        spec: string | null;
+        unitPrice: number | null;
+        lastPurchaseDate: string | null;
+      }[];
+    }
+
+    const fromA = await h.json<NamesResponse>(
+      `/api/records/product-names?limit=10&supplier=${encodeURIComponent('A 家')}`,
+      { cookie },
+    );
+    expect(fromA.status).toBe(200);
+    expect(fromA.body.items.map((row) => row.name)).toEqual(['龙口粉丝', '只有A有的货']);
+    // 去重按该供货商范围内取最近一次，不能被 B 家或散记的价覆盖。
+    expect(fromA.body.items[0]?.spec).toBe('200g/袋');
+    expect(fromA.body.items[0]?.unitPrice).toBe(11_000);
+    expect(fromA.body.items[0]?.lastPurchaseDate).toBe('2026-11-18');
+
+    const fromB = await h.json<NamesResponse>(
+      `/api/records/product-names?limit=10&supplier=${encodeURIComponent('B 家')}`,
+      { cookie },
+    );
+    expect(fromB.status).toBe(200);
+    // B 家没进过的名称不回退全局；散记同名也不算 B 家的货。
+    expect(fromB.body.items).toHaveLength(1);
+    expect(fromB.body.items[0]?.name).toBe('龙口粉丝');
+    expect(fromB.body.items[0]?.unitPrice).toBe(20_000);
+    expect(fromB.body.items[0]?.lastPurchaseDate).toBe('2026-11-20');
+
+    const noSupplier = await h.json<NamesResponse>('/api/records/product-names?limit=10', {
+      cookie,
+    });
+    expect(noSupplier.status).toBe(200);
+    // 不传参数仍是全局最近一条（散记 11-25 的价），行为不变。
+    expect(noSupplier.body.items[0]?.unitPrice).toBe(99_000);
+    expect(noSupplier.body.items[0]?.lastPurchaseDate).toBe('2026-11-25');
+
+    const nobody = await h.json<NamesResponse>(
+      `/api/records/product-names?supplier=${encodeURIComponent('C 家')}`,
+      { cookie },
+    );
+    expect(nobody.status).toBe(200);
+    expect(nobody.body.items).toEqual([]);
+  });
+
+  it('product-names 的 supplier 归一化与查询边界', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: 'A 家',
+        orderNo: '20261110001',
+        purchaseDate: '2026-11-10',
+        items: [item({ name: '归一化测试商品' })],
+      }),
+      cookie,
+    });
+    await h.json('/api/records', {
+      json: item({ name: '归一化测试商品', purchaseDate: '2026-11-20' }),
+      cookie,
+    });
+
+    interface NamesResponse {
+      items: { name: string; lastPurchaseDate: string | null }[];
+    }
+    // 与 suggestions 共用 normalizeName：全角/空白归一后命中同一张单。
+    const normalized = await h.json<NamesResponse>(
+      `/api/records/product-names?supplier=${encodeURIComponent(' Ａ 家 ')}`,
+      { cookie },
+    );
+    expect(normalized.body.items[0]?.lastPurchaseDate).toBe('2026-11-10');
+
+    // 空白串按未传处理，仍取全局最近一条。
+    const blank = await h.json<NamesResponse>(
+      `/api/records/product-names?supplier=${encodeURIComponent('   ')}`,
+      { cookie },
+    );
+    expect(blank.body.items[0]?.lastPurchaseDate).toBe('2026-11-20');
+
+    const tooMany = await h.json<{ code: string }>('/api/records/product-names?limit=1001', {
+      cookie,
+    });
+    expect(tooMany.status).toBe(422);
+    expect(tooMany.body.code).toBe('VALID_FAILED');
+
+    const upperBound = await h.json<NamesResponse>(
+      `/api/records/product-names?limit=1000&supplier=${encodeURIComponent('A 家')}`,
+      { cookie },
+    );
+    expect(upperBound.status).toBe(200);
+
+    const tooLong = await h.json<{ code: string }>(
+      `/api/records/product-names?supplier=${encodeURIComponent('x'.repeat(101))}`,
+      { cookie },
+    );
+    expect(tooLong.status).toBe(422);
+    expect(tooLong.body.code).toBe('VALID_FAILED');
+  });
 });
 
 describe('路由边界', () => {
@@ -576,5 +721,69 @@ describe('统计口径', () => {
       dashboard.body.thresholdDays,
     );
     expect(dashboard.body.metrics).toEqual(expected);
+  });
+});
+
+describe('单据导出', () => {
+  it('导出汇总 xlsx：7 列、一单一行、金额换算成元', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/orders', {
+      json: payload({
+        supplier: '导出甲',
+        items: [
+          item({ quantity: 2000, unitPrice: 12000, amountCents: 240 }),
+          item({ name: '整单啤酒乙', quantity: 3000, unitPrice: 5000, amountCents: 150 }),
+        ],
+      }),
+      cookie,
+    });
+
+    const response: Response = await h.request('/api/orders/export', { cookie });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('spreadsheetml');
+    expect(response.headers.get('content-disposition')).toContain('stockin-orders.xlsx');
+
+    const buffer: Buffer = Buffer.from(await response.arrayBuffer());
+    expect(buffer.byteLength).toBeGreaterThan(1000);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+    const sheet = workbook.worksheets[0];
+    expect(sheet.name).toBe('进货单');
+    expect(sheet.getRow(1).values).toMatchObject([
+      undefined,
+      '单据编号',
+      '供货商',
+      '进货日期',
+      '品种数',
+      '数量合计',
+      '金额合计',
+      '录入时间',
+    ]);
+    // 只建了一张单，所以是表头 + 1 行
+    expect(sheet.rowCount).toBe(2);
+    const row = sheet.getRow(2);
+    expect(row.getCell(2).value).toBe('导出甲');
+    expect(row.getCell(4).value).toBe(2);
+    // 2 件 + 3 件 = 5；2.40 + 1.50 = 3.90 元
+    expect(row.getCell(5).value).toBe(5);
+    expect(row.getCell(6).value).toBe(3.9);
+  });
+
+  it('导出的行受筛选条件约束（供货商）', async () => {
+    const { h, cookie } = await ready();
+    await h.json('/api/orders', { json: payload({ supplier: '导出甲' }), cookie });
+    await h.json('/api/orders', { json: payload({ supplier: '导出乙' }), cookie });
+
+    const response: Response = await h.request(
+      `/api/orders/export?supplier=${encodeURIComponent('导出乙')}`,
+      { cookie },
+    );
+    expect(response.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()) as unknown as ArrayBuffer);
+    const sheet = workbook.worksheets[0];
+    expect(sheet.rowCount).toBe(2);
+    expect(sheet.getRow(2).getCell(2).value).toBe('导出乙');
   });
 });

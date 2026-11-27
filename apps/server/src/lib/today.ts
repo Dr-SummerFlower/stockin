@@ -79,3 +79,32 @@ export function utcAfterHoursIso(hours: number): string {
 export function epochSeconds(): number {
   return Math.floor(Date.now() / 1_000);
 }
+
+/**
+ * UTC ISO 时间戳 → 服务器时区的 `YYYY-MM-DD HH:mm`。
+ *
+ * 只做格式化，不读时钟，因此仍符合「本模块是唯一时间来源」的约束；
+ * 用于导出、报表这类需要人读字符串的位置。
+ */
+export function formatServerDateTime(iso: string): string {
+  const date: Date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  const parts: Intl.DateTimeFormatPart[] = new Intl.DateTimeFormat('en-CA', {
+    timeZone: serverTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const values: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') {
+      values[part.type] = part.value;
+    }
+  }
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`;
+}

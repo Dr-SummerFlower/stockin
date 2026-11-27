@@ -12,8 +12,8 @@ import { App as AntdApp, Button, Drawer, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate } from 'umi';
 import type { OrderFilter, OrderView } from '@stockin/shared';
-import { deleteOrder, listOrders } from '@/services/api/order';
-import { errorMessage } from '@/services/request';
+import { deleteOrder, listOrders, toOrderQuery } from '@/services/api/order';
+import { download, errorMessage } from '@/services/request';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { ImeInput as Input } from '@/components/ImeInput';
 import { DateRangeInput } from '@/components/DateInput';
@@ -49,6 +49,7 @@ const OrdersPage: React.FC = () => {
   const [sheetOpen, setSheetOpen] = useState<boolean>(false);
   const [pendingDelete, setPendingDelete] = useState<OrderView | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
+  const [exporting, setExporting] = useState<boolean>(false);
 
   useEffect((): (() => void) => {
     let active = true;
@@ -79,6 +80,19 @@ const OrdersPage: React.FC = () => {
     (filter.q ?? '') !== '' ||
     (filter.purchaseDateFrom ?? '') !== '' ||
     (filter.purchaseDateTo ?? '') !== '';
+
+  /** 导出当前筛选命中的单据汇总（xlsx，服务端生成）。 */
+  const doExport = async (): Promise<void> => {
+    setExporting(true);
+    try {
+      const result = await download('/api/orders/export', { query: toOrderQuery(filter) });
+      holderMessage.success(`已开始下载 ${result.filename}`);
+    } catch (cause) {
+      holderMessage.error(errorMessage(cause, '导出失败'));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const doDelete = async (): Promise<void> => {
     if (pendingDelete === null) return;
@@ -202,6 +216,15 @@ const OrdersPage: React.FC = () => {
           <h1 className="stockin-page-title">进货单</h1>
         </div>
         <div className="stockin-page-actions">
+          <Button
+            icon={<Icon name="download" size="sm" />}
+            loading={exporting}
+            disabled={total === 0}
+            onClick={(): void => void doExport()}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+          >
+            导出
+          </Button>
           <Button
             type="primary"
             icon={<Icon name="plus" size="sm" />}

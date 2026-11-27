@@ -512,24 +512,56 @@ export class RecordRepository {
    * 附带最近一次的规格 / 单价 / 进货日期，按最近进货倒序。
    *
    * 服务端不做模糊匹配 —— 编辑距离与互为子串判断在前端本地做，不占 CPU。
+   *
+   * `supplier`（已归一化的 `supplier_norm`）非空时只取该供货商单据下的明细：
+   * 去重与「最近一次」都在该供货商范围内比较，散记（`order_id IS NULL`）不参与。
+   * 与 `suggestNamesBySupplier` 的「优先但回退全局」不同，这里刻意不回退。
+   * 传 `null` 时走原来的全局 SQL，保证老调用方逐字节不变。
    */
-  listProductNames(limit: number): SuggestionRow[] {
+  listProductNames(limit: number, supplier: string | null = null): SuggestionRow[] {
+    if (supplier === null) {
+      return this.db
+        .prepare(
+          `SELECT r.name AS name, r.name_norm AS name_norm, r.spec AS spec,
+                  r.unit_price AS unit_price, r.purchase_date AS purchase_date
+             FROM records r
+            WHERE r.deleted_at IS NULL
+              AND r.id = (
+                SELECT r2.id FROM records r2
+                 WHERE r2.deleted_at IS NULL AND r2.name_norm = r.name_norm
+                 ORDER BY r2.purchase_date DESC, r2.id DESC
+                 LIMIT 1
+              )
+            ORDER BY r.purchase_date DESC, r.id DESC
+            LIMIT ?`,
+        )
+        .all(limit) as SuggestionRow[];
+    }
     return this.db
       .prepare(
         `SELECT r.name AS name, r.name_norm AS name_norm, r.spec AS spec,
                 r.unit_price AS unit_price, r.purchase_date AS purchase_date
            FROM records r
           WHERE r.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM purchase_orders o
+               WHERE o.id = r.order_id AND o.supplier_norm = ?
+            )
             AND r.id = (
               SELECT r2.id FROM records r2
-               WHERE r2.deleted_at IS NULL AND r2.name_norm = r.name_norm
+               WHERE r2.deleted_at IS NULL
+                 AND r2.name_norm = r.name_norm
+                 AND EXISTS (
+                   SELECT 1 FROM purchase_orders o2
+                    WHERE o2.id = r2.order_id AND o2.supplier_norm = ?
+                 )
                ORDER BY r2.purchase_date DESC, r2.id DESC
                LIMIT 1
             )
           ORDER BY r.purchase_date DESC, r.id DESC
           LIMIT ?`,
       )
-      .all(limit) as SuggestionRow[];
+      .all(supplier, supplier, limit) as SuggestionRow[];
   }
 
   /** 规格建议：按出现频次降序，空规格不参与；支持任意位置包含匹配。 */

@@ -206,14 +206,20 @@ export class RecordService {
    *
    * 前端在浏览器本地做「编辑距离 ≤1 / 互为子串」判断，服务端只负责给出
    * 「一个名称一行 + 最近一次的规格/单价/进货日期」的干净清单。
+   *
+   * `supplier` 可选：与 `suggest` 用同一套 `normalizeName` 归一化，空白串按未传处理；
+   * 传了就只给该供货商进过的名称（不回退全局）。
    */
-  productNames(limit: number = 500): ServiceResult<ProductNameListResponse> {
-    const items: ProductNameItem[] = this.deps.records.listProductNames(limit).map((row) => ({
-      name: row.name,
-      spec: row.spec,
-      unitPrice: row.unit_price,
-      lastPurchaseDate: row.purchase_date,
-    }));
+  productNames(limit: number = 500, supplier?: string): ServiceResult<ProductNameListResponse> {
+    const normalizedSupplier: string = normalizeName(supplier ?? '');
+    const items: ProductNameItem[] = this.deps.records
+      .listProductNames(limit, normalizedSupplier === '' ? null : normalizedSupplier)
+      .map((row) => ({
+        name: row.name,
+        spec: row.spec,
+        unitPrice: row.unit_price,
+        lastPurchaseDate: row.purchase_date,
+      }));
     return { ok: true, data: { items } };
   }
 

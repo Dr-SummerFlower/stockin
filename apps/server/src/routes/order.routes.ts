@@ -87,6 +87,23 @@ export function registerOrderRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   });
 
   // 必须注册在 `/:id` 之前，否则会被当成 id 解析。
+  /**
+   * 单据汇总导出（xlsx）。
+   *
+   * 必须注册在 `/api/orders/:id` **之前**：Hono 按声明顺序匹配，
+   * 晚于 `:id` 时 `export` 会被当成 id 解析。
+   */
+  api.get('/api/orders/export', (c) => {
+    const filter: OrderFilter | null = parseOrderFilterQuery(c);
+    if (filter === null) {
+      return errorResponse(ErrorCode.VALID_FAILED, c.get('requestId') ?? '');
+    }
+    return deps.excel.createOrderExportResponse(c, filter, {
+      requestId: c.get('requestId') ?? '',
+      actor: c.get('actor') ?? 'user',
+    });
+  });
+
   api.get('/api/orders/next-no', (c) => {
     const result = deps.orders.nextNo(c.req.query('date'));
     return result.ok

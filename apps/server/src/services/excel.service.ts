@@ -33,8 +33,12 @@ import {
   importRowSchema,
   formatShelfLifeCell,
   excelPhysicalRow,
+  ORDER_EXPORT_HEADER_TEXTS,
+  ORDER_EXPORT_HEADERS,
   type ImportIssue,
   type ImportReport,
+  MAX_PAGE_SIZE,
+  type OrderFilter,
   type RecordFilter,
   type RecordSources,
 } from '@stockin/shared';
@@ -50,11 +54,12 @@ import {
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
 import type { RecordRepository } from '../repositories/record.repository';
+import type { OrderRepository } from '../repositories/order.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { SettingsRepository } from '../repositories/settings.repository';
 import { toRecordFields, toRecordView, type WriteContext } from '../repositories/types';
 import type { Env } from '../env';
-import { serverToday, utcNowIso } from '../lib/today';
+import { formatServerDateTime, serverToday, utcNowIso } from '../lib/today';
 import { logger } from '../lib/logger';
 import { errorResponse } from '../lib/response';
 import type { HeavyTaskGate } from './heavy-task';
@@ -67,6 +72,8 @@ export interface ExcelServiceDeps {
   readonly db: Db;
   readonly env: Env;
   readonly records: RecordRepository;
+  /** 单据汇总导出用（只读，不参与导入）。 */
+  readonly orders: OrderRepository;
   readonly logs: OperationLogRepository;
   readonly settings: SettingsRepository;
   readonly gate: HeavyTaskGate;
@@ -288,6 +295,103 @@ export class ExcelService {
     );
   }
 
+  /**
+   * GET /api/orders/export：按筛选导出**单据级汇总**（一张单一行）。
+   *
+   * 与记录导出的区别：这里不列明细，只给对账需要的抬头与合计；
+   * 列定义在 shared 的 `ORDER_EXPORT_HEADERS`，不在这里另写一份。
+   * 上限判定与记录导出一致：`buffer` 路径先数一下，超限 413，不写半个文件。
+   */
+  createOrderExportResponse(
+    c: Context,
+    filter: OrderFilter,
+    ctx: ExcelContext,
+  ): Response | Promise<Response> {
+    const maxRows: number | undefined = this.deps.exportMaxRows;
+    if (maxRows !== undefined) {
+      const total: number = this.deps.orders.count(filter);
+      if (total > maxRows) {
+        return errorResponse(ErrorCode.EXCEL_EXPORT_TOO_LARGE, ctx.requestId, {
+          total,
+          limit: maxRows,
+          reason: `命中 ${total} 张单据，超过当前平台单次导出上限 ${maxRows} 张；请缩小进货日期范围后分批导出`,
+        });
+      }
+    }
+
+    this.setDownloadHeaders(c, 'stockin-orders.xlsx');
+
+    if (this.deps.excelWrite === 'buffer') {
+      return this.writeWhole(
+        c,
+        ctx,
+        '单据导出',
+        async (sheet): Promise<void> => {
+          await this.fillOrderSheet(sheet, filter, false);
+        },
+        '进货单',
+      );
+    }
+    return stream(
+      c,
+      async (s): Promise<void> => {
+        const writer = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: writableFrom(s) });
+        const sheet = writer.addWorksheet('进货单');
+        await this.fillOrderSheet(sheet, filter, true);
+        await sheet.commit();
+        await writer.commit();
+      },
+      async (error: Error, s): Promise<void> => {
+        logger.error({ err: error.message, requestId: ctx.requestId }, '[excel] 单据导出写出失败');
+        s.abort();
+      },
+    );
+  }
+
+  /** 单据汇总表：一页 200 张单，写一行 commit 一行，内存与总单据数无关。 */
+  private async fillOrderSheet(
+    sheet: ExcelJS.Worksheet,
+    filter: OrderFilter,
+    streaming: boolean,
+  ): Promise<void> {
+    const headerRow = sheet.addRow([...ORDER_EXPORT_HEADER_TEXTS]);
+    ORDER_EXPORT_HEADERS.forEach((def, index): void => {
+      sheet.getColumn(index + 1).width = def.width;
+    });
+    if (streaming) {
+      (headerRow as unknown as { commit(): void }).commit();
+    }
+
+    let page = 1;
+    let written = 0;
+    for (;;) {
+      const result = this.deps.orders.list({ ...filter, page, pageSize: MAX_PAGE_SIZE });
+      if (result.rows.length === 0) break;
+      for (const row of result.rows) {
+        const added = sheet.addRow([
+          row.order_no,
+          row.supplier,
+          row.purchase_date,
+          row.item_count,
+          row.total_quantity / SCALE.QUANTITY,
+          row.total_amount_cents / SCALE.AMOUNT_CENTS,
+          formatServerDateTime(row.created_at),
+        ]);
+        if (streaming) {
+          (added as unknown as { commit(): void }).commit();
+        }
+        written += 1;
+        await this.deps.gate.yieldIfNeeded(written);
+      }
+      if (result.rows.length < MAX_PAGE_SIZE) break;
+      page += 1;
+    }
+
+    /* 金额两位、数量三位：与页面展示口径一致，不做本地化千分位（Excel 自己会格式化）。 */
+    sheet.getColumn(5).numFmt = '0.000';
+    sheet.getColumn(6).numFmt = '0.00';
+  }
+
   /** 下载响应的三个公共头（两种写出方式共用，避免两处漂移）。 */
   private setDownloadHeaders(c: Context, filename: string): void {
     c.header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -307,10 +411,11 @@ export class ExcelService {
     ctx: ExcelContext,
     label: string,
     fill: (sheet: ExcelJS.Worksheet) => void | Promise<void>,
+    sheetName: string = '进货记录',
   ): Promise<Response> {
     try {
       const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet('进货记录');
+      const sheet = workbook.addWorksheet(sheetName);
       await fill(sheet);
       const bytes = await workbook.xlsx.writeBuffer();
       return c.body(bytes as unknown as ArrayBuffer, 200);

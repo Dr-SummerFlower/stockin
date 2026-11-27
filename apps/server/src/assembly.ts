@@ -175,6 +175,7 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     db,
     env,
     records: repositories.records,
+    orders: repositories.orders,
     logs: repositories.logs,
     settings: repositories.settings,
     gate,
