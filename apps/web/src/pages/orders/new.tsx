@@ -46,7 +46,6 @@ const NewOrderPage: React.FC = () => {
       <div className="stockin-page-head">
         <div>
           <h1 className="stockin-page-title">新增进货单</h1>
-          <p className="stockin-page-sub">一张单一个供货商：抬头写一次，明细里连续录，一次保存。</p>
         </div>
         <div className="stockin-page-actions">
           <Button

@@ -940,7 +940,7 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
             field="spec"
             value={line.base.spec}
             ariaLabel={`第 ${index + 1} 行规格`}
-            placeholder="规格"
+            placeholder="如：500g/袋、1箱=12瓶"
             maxLength={200}
             onChange={(value: string): void => patchBase(line.key, { spec: value })}
           />
@@ -1002,9 +1002,15 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         </div>
       ),
       expiry: (
-        <div className="stockin-order-cell stockin-order-cell--auto">
-          <span className="stockin-order-cell__label">到期日 · 自动</span>
-          <span className="stockin-order-auto">{line.linkage.date.expiryDate.value ?? '—'}</span>
+        <div className="stockin-order-cell">
+          <span className="stockin-order-cell__label">到期日</span>
+          <DateInput
+            value={line.linkage.date.expiryDate.value ?? ''}
+            ariaLabel={`第 ${index + 1} 行到期日`}
+            onChange={(next: string): void =>
+              dispatch(line.key, { type: 'userInput', slot: 'expiryDate', raw: next })
+            }
+          />
         </div>
       ),
       unitPrice: (
@@ -1026,7 +1032,7 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
           className={`stockin-order-cell stockin-order-cell--num stockin-order-cell--qty${qtyChanged ? ' is-changed' : ''}`}
           onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>): void => {
             /* 末行数量按 Tab：补一行并把焦点送到新行的商品名。
-               数量是这一行的最后一个可编辑字段（金额只读），所以它是最自然的续行点。 */
+               数量是金额组里最常被连续录入的字段，保留它作为快捷续行点。 */
             if (event.key !== 'Tab' || event.shiftKey) return;
             if (index !== lines.length - 1) return;
             if (line.base.name.trim() === '') return;
@@ -1075,11 +1081,18 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         </div>
       ),
       amount: (
-        <div className="stockin-order-cell stockin-order-cell--num stockin-order-cell--auto">
-          <span className="stockin-order-cell__label">金额 · 自动</span>
-          <span className="stockin-order-auto">
-            {formatMoney(line.linkage.amount.amount.parsed ?? 0)}
-          </span>
+        <div className="stockin-order-cell stockin-order-cell--num">
+          <span className="stockin-order-cell__label">金额</span>
+          <NumericInput
+            raw={line.linkage.amount.amount.raw}
+            scale={SCALE.AMOUNT_CENTS}
+            ariaLabel={`第 ${index + 1} 行金额`}
+            placeholder="0.00"
+            addonBefore="¥"
+            onRawChange={(raw: string, parsed: number | null): void =>
+              dispatch(line.key, { type: 'userInput', slot: 'amount', raw, parsed })
+            }
+          />
         </div>
       ),
       remove: (
@@ -1118,16 +1131,20 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                   {c.remove}
                 </div>
                 {c.spec}
-                <div className="stockin-order-card-item__row3">
+                <div className="stockin-order-card-item__amounts">
+                  <div className="stockin-order-card-item__row2">
+                    {c.unitPrice}
+                    {c.amount}
+                  </div>
                   {c.quantity}
-                  {c.unitPrice}
-                  {c.amount}
                 </div>
-                <div className="stockin-order-card-item__row2">
-                  {c.productionDate}
+                <div className="stockin-order-card-item__dates">
+                  <div className="stockin-order-card-item__row2">
+                    {c.productionDate}
+                    {c.expiry}
+                  </div>
                   {c.shelf}
                 </div>
-                {c.expiry}
               </div>
             );
           })}
@@ -1141,10 +1158,10 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
           <span>规格</span>
           <span>生产日期</span>
           <span>保质期</span>
-          <span>到期日 · 自动</span>
+          <span>到期日</span>
           <span className="is-num">单价</span>
           <span className="is-num">数量</span>
-          <span className="is-num">金额 · 自动</span>
+          <span className="is-num">金额</span>
           <span />
         </div>
         {filled.map((line: OrderLine, index: number): React.ReactNode => {
@@ -1242,7 +1259,6 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                   setOrderNo(next);
                 }}
               />
-              <div className="stockin-hint">日期 + 当日序号，可改成纸质单上的号码</div>
             </div>
             <div className="stockin-field-wrap">
               <div className="stockin-field-label">
@@ -1313,9 +1329,7 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
                   <span className="stockin-order-foot__calm">未改动</span>
                 )}
               </>
-            ) : (
-              <span>还没带入历史商品时，逐行新增即可</span>
-            )}
+            ) : null}
           </div>
           <div className="stockin-order-foot__total">
             <span>合计</span>

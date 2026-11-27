@@ -2722,8 +2722,8 @@ a.stockin-touch {
 .stockin-order-grid {
   display: grid;
   grid-template-columns:
-    minmax(190px, 1.5fr) minmax(140px, 1.1fr) 148px 164px 118px 96px 86px 100px 42px;
-  min-width: 1084px;
+    minmax(190px, 1.5fr) minmax(140px, 1.1fr) 148px 164px 148px 100px 96px 124px 42px;
+  min-width: 1152px;
   align-items: start;
 }
 .stockin-order-grid--head {
@@ -2802,17 +2802,9 @@ a.stockin-touch {
   border-bottom: 1px dotted var(--stockin-color-primary);
   border-radius: 6px 6px 0 0;
 }
-.stockin-order-auto {
-  display: flex;
-  align-items: center;
-  min-height: var(--stockin-touch);
-  padding: 0 10px;
-  border-radius: var(--stockin-radius);
-  background: var(--stockin-color-auto-bg);
-  color: var(--stockin-color-auto);
-  font-family: var(--stockin-font-num);
-  font-size: 12px;
-  font-weight: 600;
+/* 到期日 / 金额改为可编辑后不再有只读展示块；金额带 ¥ 前缀，保持数字右对齐 */
+.stockin-order-cell--num .ant-input-affix-wrapper input {
+  text-align: right;
 }
 .stockin-order-del {
   width: 30px;
@@ -2993,20 +2985,37 @@ a.stockin-touch {
   padding: 0;
   border-right: 0;
 }
-.stockin-order-card-item__row3 {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: end;
+/* 金额组 / 日期组：两组各一行成对的输入 + 一行独立字段，宽度按内容收敛 */
+.stockin-order-card-item__amounts {
   margin-top: 10px;
 }
-.stockin-order-card-item__row2 {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 128px;
-  gap: 10px;
+.stockin-order-card-item__dates {
   margin-top: 10px;
   padding-top: 9px;
   border-top: 1px dashed var(--stockin-color-border-visible);
+}
+.stockin-order-card-item__row2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+/* 数量步进器、保质期数值+单位二联：按内容定宽，不再拉满整行 */
+.stockin-order-card-item__amounts > .stockin-order-cell--qty {
+  margin-top: 8px;
+}
+.stockin-order-card-item__amounts .stockin-stepper {
+  max-width: 232px;
+}
+.stockin-order-card-item__dates > .stockin-order-cell--shelf {
+  margin-top: 8px;
+}
+.stockin-order-card-item__dates .stockin-input-group {
+  max-width: 232px;
+}
+.stockin-order-card-item__dates .stockin-shelf-unit {
+  flex: 0 0 88px;
+  width: 88px;
 }
 .stockin-order-card-item .stockin-order-cell {
   padding: 0;
@@ -3018,13 +3027,6 @@ a.stockin-touch {
   font-weight: 600;
   color: var(--stockin-color-muted);
   margin-bottom: 4px;
-}
-.stockin-order-card-item .stockin-order-cell--auto {
-  margin-top: 8px;
-}
-.stockin-order-card-item .stockin-order-auto {
-  min-height: 32px;
-  font-size: 11px;
 }
 .stockin-order-card-item__head .stockin-order-cell__label {
   display: none;
@@ -3439,13 +3441,6 @@ a.stockin-touch {
 }
 
 @media (max-width: 767px) {
-  /* 手机上「数量」独占一行，避免和单价、金额挤成三列 */
-  .stockin-order-card-item__row3 {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-  .stockin-order-card-item__row3 > .stockin-order-cell--qty {
-    grid-column: 1 / -1;
-  }
   .stockin-diff-panel {
     padding-left: var(--stockin-s4);
     padding-right: var(--stockin-s4);
