@@ -3192,7 +3192,9 @@ a.stockin-touch {
 .stockin-nav-fab {
   justify-content: flex-start !important;
 }
-.stockin-nav-fab__btn {
+/* 手机档 .stockin-nav-item span { display: block } 优先级高于单类选择器，
+   会覆盖这里的 grid，导致加号贴在方块左上角；用复合选择器保证真正居中。 */
+.stockin-nav-item .stockin-nav-fab__btn {
   width: 46px;
   height: 46px;
   margin-top: -14px;
@@ -3202,6 +3204,11 @@ a.stockin-touch {
   display: grid;
   place-items: center;
   box-shadow: 0 6px 16px rgba(31, 107, 82, 0.32);
+}
+.stockin-nav-item .stockin-nav-fab__btn .stockin-icon {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.2;
 }
 .stockin-more-list {
   display: flex;
