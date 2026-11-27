@@ -278,12 +278,17 @@ export { TEST_HOST, TEST_ORIGIN, TEST_PORT };
  * 多数测试只关心「有公钥/没公钥」，不关心管理台流程，因此这里直接装配
  * 仓储与服务，不经过 HTTP。需要断言审计或管理台行为时再单独建实例。
  */
-export function createTestBackupKeys(db: Db, logs?: OperationLogRepository): BackupKeyService {
+export function createTestBackupKeys(
+  db: Db,
+  logs?: OperationLogRepository,
+  defaultPublicKey?: string,
+): BackupKeyService {
   // 公钥一律读库内，各测试按需播种（见 seedDefaultBackupKey）。
   return new BackupKeyService({
     db,
     repo: new BackupKeyRepository(db),
     logs: logs ?? new OperationLogRepository(db),
+    defaultPublicKey,
   });
 }
 

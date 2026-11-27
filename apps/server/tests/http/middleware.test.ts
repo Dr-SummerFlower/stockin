@@ -8,7 +8,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HSTS_HEADER_VALUE } from '@stockin/shared';
-import { applySecurityHeaders } from '../../src/middleware/secure-headers';
+import { applySecurityHeaders, newCspNonce } from '../../src/middleware/secure-headers';
 import { createHarness, TEST_ORIGIN, type Harness } from '../support/harness';
 
 let harness: Harness | null = null;
@@ -26,14 +26,35 @@ afterEach(() => {
  * nosniff、no-referrer，且**不得**出现 HSTS（纯 HTTP）。
  */
 function expectSecurityHeaders(headers: Headers): void {
-  expect(headers.get('content-security-policy')).toBe(
-    "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'",
+  // AUDIT-09：CSP 带逐请求 nonce；用正则避免把随机值写死。
+  expect(headers.get('content-security-policy')).toMatch(
+    /^default-src 'self'; script-src 'self' 'unsafe-eval' 'nonce-[0-9a-f]{32}'; style-src 'self' 'unsafe-inline'$/,
   );
   expect(headers.get('x-frame-options')).toBe('DENY');
   expect(headers.get('x-content-type-options')).toBe('nosniff');
   expect(headers.get('referrer-policy')).toBe('no-referrer');
   expect(headers.get('strict-transport-security')).toBeNull();
 }
+
+describe('CSP nonce（AUDIT-09）', () => {
+  it('nonce 每次生成都不同且为 128 bit 随机', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 20; i += 1) {
+      const nonce = newCspNonce();
+      expect(nonce).toMatch(/^[0-9a-f]{32}$/);
+      seen.add(nonce);
+    }
+    expect(seen.size).toBe(20);
+  });
+
+  it('不带 nonce 的基线 CSP 仍可构造，且不含 unsafe-inline 脚本', () => {
+    const headers = new Headers();
+    applySecurityHeaders(headers, { hsts: false });
+    expect(headers.get('content-security-policy')).toBe(
+      "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'",
+    );
+  });
+});
 
 describe('CSRF 来源校验', () => {
   it('HTTPS 部署下发 HSTS，纯 HTTP 不下发（AUDIT-04）', () => {

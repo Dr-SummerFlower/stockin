@@ -34,6 +34,12 @@ export interface BackupKeyServiceDeps {
   readonly db: Db;
   readonly repo: BackupKeyRepository;
   readonly logs: OperationLogRepository;
+  /**
+   * 首次播种用的默认公钥（来自 `BACKUP_PUBLIC_KEY`）。
+   *
+   * 可选：测试与「纯管理台维护」场景不传，此时 `ensureSeeded()` 恒返回 false。
+   */
+  readonly defaultPublicKey?: string;
 }
 
 /**
@@ -84,6 +90,19 @@ export async function seedDefaultBackupKey(
 
 export class BackupKeyService implements BackupKeySource {
   constructor(private readonly deps: BackupKeyServiceDeps) {}
+
+  /**
+   * 运行期补播种（AUDIT-12）：库内为空且 env 提供了默认公钥时写入一条启用中的公钥。
+   *
+   * 为什么需要：bootstrap 里的播种只在 DO 实例「首次构造」时跑一次。Workers 的 CI
+   * 顺序是 `deploy → secret put`，Secret 到达时 DO 可能已被任意请求预热过；此时
+   * `BACKUP_PUBLIC_KEY` 已配好却永远不会再播种，管理台就一直显示「尚未配置任何公钥」
+   * （线上实测：enabled=false，但 Secret 注入链路正常）。本方法在每次请求入口幂等
+   * 调用：`count() > 0` 时立即返回，不覆盖管理员在面板的删改，也不写审计。
+   */
+  async ensureSeeded(): Promise<boolean> {
+    return seedDefaultBackupKey(this.deps.db, this.deps.repo, this.deps.defaultPublicKey ?? '');
+  }
 
   /**
    * 是否具备加密能力（逻辑备份与一次性恢复的总开关）。

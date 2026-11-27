@@ -113,7 +113,31 @@ export const DATE_FORMAT = 'YYYY-MM-DD';
 export const CSP_DEFAULT_SRC = "'self'";
 export const CSP_STYLE_SRC = "'self' 'unsafe-inline'";
 export const CSP_SCRIPT_SRC = "'self' 'unsafe-eval'";
-export const CSP_HEADER_VALUE = `default-src ${CSP_DEFAULT_SRC}; script-src ${CSP_SCRIPT_SRC}; style-src ${CSP_STYLE_SRC}`;
+
+/**
+ * 构造带 per-request nonce 的 CSP 头（AUDIT-09）。
+ *
+ * 背景：Cloudflare 的 JavaScript Detections / Bot Fight Mode 会向 HTML 注入一小段
+ * 内联脚本，浏览器在 `script-src` 没有 nonce / unsafe-inline 时会拒绝执行，控制台
+ * 每页一条报错，CF 的 bot 信号也随之失效。CF 官方做法（JavaScript Detections →
+ * If you have a CSP）是：**解析响应头里的 nonce 并自动给注入脚本打上同一个 nonce**，
+ * 并明确不推荐 `unsafe-inline`。因此这里按请求生成随机 nonce 拼进 `script-src`。
+ *
+ * 关键点：
+ *  - nonce 只放进 `script-src`，不放进 `default-src`，避免影响图片/字体等；
+ *  - `/cdn-cgi/challenge-platform/` 是同源路径，已被 `'self'` 覆盖；
+ *  - 应用自身脚本仍是 hashed 外链，不依赖 nonce，nonce 只服务 CF 注入；
+ *  - nonce 必须**每响应唯一且不可预测**，否则等于没有。生成在服务端中间件完成，
+ *    本函数只负责拼装，便于测试断言字面量。
+ */
+export function cspHeaderValue(nonce: string | null): string {
+  const scriptSrc: string =
+    nonce === null || nonce === '' ? CSP_SCRIPT_SRC : `${CSP_SCRIPT_SRC} 'nonce-${nonce}'`;
+  return `default-src ${CSP_DEFAULT_SRC}; script-src ${scriptSrc}; style-src ${CSP_STYLE_SRC}`;
+}
+
+/** 不带 nonce 的基线 CSP（设计文档 §10.2 裁决 29 的逐字字面量）。 */
+export const CSP_HEADER_VALUE = cspHeaderValue(null);
 
 /**
  * HTTPS 部署的 HSTS 值（`ORIGIN_SCHEME=https` 时才下发）。

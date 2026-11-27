@@ -89,6 +89,9 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     db,
     repo: new BackupKeyRepository(db),
     logs: repositories.logs,
+    // AUDIT-12：Secret 晚于 DO 首次构造到达时，bootstrap 的播种窗口会错过。
+    // 把默认公钥交给服务，在请求入口幂等补播种；已有公钥时立即跳过。
+    defaultPublicKey: env.backupPublicKey,
   });
   const logicalBackup = new LogicalBackupService({
     db,

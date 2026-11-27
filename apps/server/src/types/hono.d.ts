@@ -38,6 +38,8 @@ export interface AppVariables {
   adminSession: AdminIdentity | null;
   /** 审计署名，形如 `admin:<github_login>`。 */
   adminActor: string;
+  /** 本次响应的 CSP nonce（每个请求唯一，供 CF 注入脚本复用）。 */
+  cspNonce: string;
 }
 
 /** 创建 app 时使用的 Env 泛型。 */
@@ -55,6 +57,7 @@ declare module 'hono' {
     clientIp: string;
     adminSession: AdminIdentity | null;
     adminActor: string;
+    cspNonce: string;
   }
 }
 

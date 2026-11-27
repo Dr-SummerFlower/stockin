@@ -75,12 +75,17 @@ export class StockinDurableObject extends DurableObject<WorkerEnv> {
   /** DO alarm 回调：驱动逻辑备份 / 恢复的异步状态机。 */
   async alarm(): Promise<void> {
     const runtime: AssembledRuntime = await this.ensureRuntime();
+    await runtime.deps.backupKeys.ensureSeeded();
     // 必须走 alarm 专用入口：它会清空调度器的合并守卫，多 chunk 备份才能续调度。
     await runtime.runAlarmTick();
   }
 
   async fetch(request: Request): Promise<Response> {
     const runtime: AssembledRuntime = await this.ensureRuntime();
+    // AUDIT-12：bootstrap 的播种只在 DO 首次构造时跑一次；CI 的 `secret put` 晚于
+    // deploy，Secret 到达时实例可能已初始化，导致管理台一直显示「无公钥」。
+    // 每个请求幂等补一次：库内已有公钥时只是一次极快的 COUNT 查询，不覆盖面板改动。
+    await runtime.deps.backupKeys.ensureSeeded();
     const path: string = new URL(request.url).pathname;
     if (path === INTERNAL_SCHEDULED_PATH) {
       await runtime.runScheduledBackup();

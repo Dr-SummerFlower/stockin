@@ -22,7 +22,11 @@ import type { StaticPort } from './runtime/ports';
 import { createAccessLogMiddleware } from './middleware/access-log';
 import { createRequestIdMiddleware } from './middleware/request-id';
 import { createClientIpMiddleware } from './middleware/client-ip';
-import { createSecureHeadersMiddleware, applySecurityHeaders } from './middleware/secure-headers';
+import {
+  createSecureHeadersMiddleware,
+  applySecurityHeaders,
+  newCspNonce,
+} from './middleware/secure-headers';
 import { createCsrfMiddleware } from './middleware/csrf';
 import { createBodyLimitMiddleware } from './middleware/body-limit';
 import { createRateLimitMiddleware } from './middleware/rate-limit';
@@ -153,8 +157,13 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     );
     const response: Response = errorResponse(ErrorCode.COMMON_INTERNAL, requestId);
     // 异常可能发生在安全头中间件的内层之外（如中间件自身抛错），此处再调用
-    // 同一个函数，保证「任何响应都带 CSP」这条不因注册顺序而漏。
-    applySecurityHeaders(response.headers, securityHeaderOptions);
+    // 同一个函数，保证「任何响应都带 CSP」这条不因注册顺序而漏。nonce 复用请求
+    // 作用域里已生成的那个；中间件尚未跑到时现场兜底，避免返回不含 nonce 的 CSP。
+    applySecurityHeaders(
+      response.headers,
+      securityHeaderOptions,
+      c.get('cspNonce') ?? newCspNonce(),
+    );
     return response;
   });
 

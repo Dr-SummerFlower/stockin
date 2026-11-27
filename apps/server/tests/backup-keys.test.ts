@@ -93,6 +93,26 @@ describe('首次播种', () => {
     expect(service.activePublicKey()).toBe(before);
     expect(repo.count()).toBe(2);
   });
+
+  it('运行期补播种：默认公钥晚于 bootstrap 到达也能生效（AUDIT-12）', async () => {
+    // 模拟线上情形：首次构造时 env 无 key，DO 已初始化；Secret 之后才配好。
+    const withoutKey = makeService();
+    expect(await withoutKey.ensureSeeded()).toBe(false);
+    expect(repo.count()).toBe(0);
+
+    const withKey = new BackupKeyService({ db, repo, logs, defaultPublicKey: first.publicKey });
+    expect(await withKey.ensureSeeded()).toBe(true);
+    expect(repo.count()).toBe(1);
+    expect(repo.findActive()?.public_key).toBe(first.publicKey);
+    expect(auditCount()).toBe(0);
+
+    // 补播种后再次调用必须幂等，且不覆盖管理台新增的公钥。
+    const service = makeService();
+    await service.add({ publicKey: fresh.publicKey, activate: true }, 'admin:a', 'r1');
+    expect(await withKey.ensureSeeded()).toBe(false);
+    expect(repo.count()).toBe(2);
+    expect(service.activePublicKey()).toBe(fresh.publicKey);
+  });
 });
 
 describe('BackupKeyService', () => {
