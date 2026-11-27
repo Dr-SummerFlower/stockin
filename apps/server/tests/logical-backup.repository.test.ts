@@ -115,14 +115,16 @@ describe('LogicalBackupRepository', () => {
     const tables = repo.listTables();
     expect(tables).toContain('records');
     expect(tables).toContain('settings');
-    // Workers 备份包必须与 Node 等价：只含 RESTORE_TABLES 那批业务表。
+    // Workers 备份包必须与 Node 等价：只含 RESTORE_TABLES 那批业务表（声明顺序）。
+    // 关键回归：006 引入的统计表与 backup_keys 不得混进备份包，否则恢复端会以
+    // 「非白名单表」拒绝整份备份 —— 能备份却恢复不了。
     expect(tables).toEqual([
-      'admin_accounts',
       'credentials',
-      'meta',
-      'operation_logs',
-      'records',
       'settings',
+      'records',
+      'operation_logs',
+      'meta',
+      'admin_accounts',
     ]);
     // 仍受白名单保护：排除表不可被显式寻址。
     expect(() => repo.listColumns('_cf_METADATA')).toThrow(/非法表名/);
@@ -190,6 +192,49 @@ describe('LogicalBackupRepository', () => {
     expect(repo.getBackup('bk-2')?.status).toBe('ready');
     expect(repo.getJob('job-2')?.status).toBe('done');
     expect(repo.hasActiveJob()).toBe(false);
+  });
+
+  it('iterateChunks 分页读取：不重不漏，且每页一条 SQL（Workers 不整表物化）', () => {
+    repo.createJob(makeJob('page-job'));
+    repo.createBackup(makeBackup('page-bk', 'page-job'));
+    const total = 80; // 分页大小 32 → 三页（32 + 32 + 16）
+    for (let i = 0; i < total; i += 1) {
+      repo.insertChunk({
+        backup_id: 'page-bk',
+        seq: i,
+        table_name: 'records',
+        row_start: i,
+        row_count: 1,
+        iv: 'iv',
+        ciphertext: `c${i}`,
+        tag: 'tag',
+        plain_bytes: 1,
+        sha256: `h${i}`,
+      });
+    }
+
+    // 统计打到 backup_chunks 的查询次数：DO 游标不能跨 await，适配器的 iterate
+    // 等价于整表物化；分页实现必须每次只取一页（prepare 一次、all 三次）。
+    let pages = 0;
+    const counting: Db = Object.create(db) as Db;
+    counting.prepare = (sql: string) => {
+      const statement = db.prepare(sql);
+      if (!sql.includes('FROM backup_chunks')) {
+        return statement;
+      }
+      return {
+        ...statement,
+        all: (...params: unknown[]): unknown[] => {
+          pages += 1;
+          return statement.all(...params);
+        },
+      };
+    };
+    const pagedRepo = new LogicalBackupRepository(counting);
+
+    const seqs: number[] = [...pagedRepo.iterateChunks('page-bk')].map((row) => row.seq);
+    expect(seqs).toEqual(Array.from({ length: total }, (_, index) => index));
+    expect(pages).toBe(3);
   });
 
   it('gcReady 仅保留最近 N 份 ready 备份，chunks 级联删除', () => {

@@ -110,6 +110,9 @@ export class StockinDurableObject extends DurableObject<WorkerEnv> {
       storage: this.ctx.storage,
       assets: this.env.ASSETS,
       vars,
+      // 恢复批次的一次性消费必须原子：get→put 之间不能被并发请求插入。
+      // 直接用 DO 输入门（blockConcurrencyWhile）串行化这段关键区。
+      runExclusive: <T>(fn: () => Promise<T>): Promise<T> => this.ctx.blockConcurrencyWhile(fn),
     });
     const boot = await bootstrap({ bundle, overrides: workerEnvOverrides(vars) });
     const runtime: AssembledRuntime = assemble({

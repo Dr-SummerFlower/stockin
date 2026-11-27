@@ -39,3 +39,20 @@ export const restoreCommitSchema = z.object({
     signature: z.string().min(8).max(2048),
   }),
 });
+
+/**
+ * 新增备份公钥。
+ *
+ * 形状只做粗筛（base64 字符集 + 长度下界，P-256 SPKI/DER 约 124 字符），
+ * 真正的合法性由服务端用 WebCrypto 导入公钥判定 —— 正则拦不住「像 base64、
+ * 但不是 P-256 公钥」的输入，而这类错误必须在落库前说清楚。
+ */
+export const backupKeyAddSchema = z.object({
+  publicKey: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9+/]{80,}={0,2}$/, '公钥必须是单行 base64'),
+  label: z.string().trim().max(64).optional(),
+  activate: z.boolean().optional(),
+});
+export type BackupKeyAddInput = z.infer<typeof backupKeyAddSchema>;

@@ -3,18 +3,28 @@
  *
  * 与 Node 文件版语义一致：
  *  - key 形如 `restore:<batchId>:<seq>`，前缀隔离、便于整批清理。
- *  - 一次性防重放：以 `restore:<batchId>:consumed` 键是否存在为准；DO 单实例
- *    串行执行 + KV put/get 在同一 DO 内的顺序一致性，保证并发下只有一个请求
- *    读到"未消费"并写入消费标记。
- *  - 批次结束 deleteBatch 删除所有分块键（不删 consumed 标记，防重放需长期保留
- *    到 TTL 自然过期；这里用带过期语义的键无法原生支持，故 consumed 标记常驻，
- *    batchId 本身是随机 UUID，不会复用）。
+ *  - 一次性防重放：以 `restore:<batchId>:consumed` 键是否存在为准。DO 单实例，
+ *    但并发请求可在 await 点交错，故消费动作放进 `blockConcurrencyWhile`
+ *    （由组合根注入 `runExclusive`），保证并发下只有一个请求消费成功。
+ *  - 标记存活 3 小时（值为 expiresAtIso）：读取时若已过期则直接删除，避免
+ *    consumed 标记在 KV 中长期累积。3 小时远长于票据 30 分钟窗口，过期后
+ *    任何票据都已失效，清理不会打开重放口子。批次结束 deleteBatch 删除分块键，
+ *    未过期的 consumed 标记保留以防重放。
  */
 import type { DoStorageLike } from '../../repositories/adapters/do-sqlite.adapter';
 import type { RestoreStagingPort } from '../ports';
 
 export interface KvRestoreStagingOptions {
   readonly storage: DoStorageLike;
+  /**
+   * 关键区串行化（Workers 上由 `ctx.blockConcurrencyWhile` 提供）。
+   *
+   * 一次性消费是 `get → put` 两步，中间有 await。DO 虽然是单实例，但并发请求
+   * 可以在 await 点交错执行，两个 commit 可能都读到「未消费」。把这段放进输入门，
+   * 期间不投递其他事件，从而保证只有一个请求消费成功。缺省（测试替身 / 未接线）
+   * 退化为直接执行，语义与旧实现一致。
+   */
+  readonly runExclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 function safeBatchId(batchId: string): string {
@@ -41,8 +51,20 @@ function toBytes(value: unknown): Uint8Array | null {
   return null;
 }
 
+/** 读回的标记值是否已过期：解不出时间戳一律当作过期，避免坏值永久占位。 */
+function markExpired(value: unknown): boolean {
+  const bytes = toBytes(value);
+  if (bytes === null) {
+    return true;
+  }
+  const expiresAt: number = Date.parse(new TextDecoder().decode(bytes));
+  return !Number.isFinite(expiresAt) || expiresAt <= Date.now();
+}
+
 export function createKvRestoreStaging(options: KvRestoreStagingOptions): RestoreStagingPort {
   const storage = options.storage;
+  const runExclusive: <T>(fn: () => Promise<T>) => Promise<T> =
+    options.runExclusive ?? (<T>(fn: () => Promise<T>): Promise<T> => fn());
   const dataKey = (batchId: string, seq: number): string =>
     `restore:${safeBatchId(batchId)}:${seq}`;
   const consumedKey = (batchId: string): string => `restore:${safeBatchId(batchId)}:consumed`;
@@ -77,31 +99,46 @@ export function createKvRestoreStaging(options: KvRestoreStagingOptions): Restor
     async deleteBatch(batchId): Promise<void> {
       const entries = await storage.list({ prefix: `restore:${safeBatchId(batchId)}:` });
       for (const key of entries.keys()) {
-        if (!key.endsWith(':consumed')) {
+        // 分块一律删除；consumed 标记只在未过期时保留，过期的一并清掉。
+        const consumed: boolean = key.endsWith(':consumed');
+        if (!consumed || markExpired(entries.get(key))) {
           await storage.delete(key);
         }
       }
     },
 
     async isConsumed(batchId): Promise<boolean> {
-      return (await storage.get(consumedKey(batchId))) !== undefined;
+      const value = await storage.get(consumedKey(batchId));
+      if (value === undefined) {
+        return false;
+      }
+      if (markExpired(value)) {
+        await storage.delete(consumedKey(batchId));
+        return false;
+      }
+      return true;
     },
 
     async consumeBatch(batchId, expiresAtIso): Promise<boolean> {
       if (Date.parse(expiresAtIso) <= Date.now()) {
         return false;
       }
-      // 待核实（需在 workerd 实测）：get→put 之间存在 await，若 Cloudflare DO
-      // 在该 await 点允许事件交错（即未隐式串行化），两个并发 commit 可能都
-      // 读到「未消费」。官方语义是单 DO 实例串行执行，本实现据此假设成立；
-      // 若实测不成立，应在 DO 侧用 blockConcurrencyWhile 包裹整个消费流程。
       const key = consumedKey(batchId);
-      const already = await storage.get(key);
-      if (already !== undefined) {
-        return false;
-      }
-      await storage.put(key, expiresAtIso);
-      return true;
+      // get→put 之间必须不被打断：放进 DO 输入门（blockConcurrencyWhile）执行，
+      // 期间其他事件排队，两个并发 commit 里只有一个能读到「未消费」。
+      const attempt = async (): Promise<boolean> => {
+        const already = await storage.get(key);
+        if (already !== undefined) {
+          // 未过期的标记才算重复；过期的直接清掉，让本次消费继续。
+          if (!markExpired(already)) {
+            return false;
+          }
+          await storage.delete(key);
+        }
+        await storage.put(key, expiresAtIso);
+        return true;
+      };
+      return runExclusive(attempt);
     },
   };
 }

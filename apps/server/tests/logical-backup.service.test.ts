@@ -13,22 +13,24 @@ import { createPragmaVersionStore } from '../src/runtime/node/version-store.prag
 import { createFilesystemMigrationSource } from '../src/runtime/node/migration-source.filesystem';
 import { runMigrations } from '../src/repositories/migrations/runner';
 import type { BackupPort, BackgroundTaskScheduler } from '../src/runtime/ports';
-import { loadEnv } from '../src/env';
 import { configureServerTimeZone } from '../src/lib/today';
 import { MetaRepository } from '../src/repositories/meta.repository';
 import { SettingsRepository } from '../src/repositories/settings.repository';
 import { OperationLogRepository } from '../src/repositories/operation-log.repository';
+import { BackupKeyRepository } from '../src/repositories/backup-key.repository';
 import {
   LOGICAL_BACKUP_CHUNK_ROWS,
   LogicalBackupRepository,
 } from '../src/repositories/logical-backup.repository';
 import { LogicalBackupService } from '../src/services/logical-backup.service';
+import { seedDefaultBackupKey } from '../src/services/backup-key.service';
 import {
   decryptBackupChunk,
   generateBackupKeyPair,
   unwrapBackupDataKey,
 } from '../src/lib/backup-crypto';
 import { chunkAad, parseBackupLine } from '../src/lib/backup-format';
+import { createTestBackupKeys } from './support/harness';
 
 const noopBackupPort: BackupPort = {
   mode: 'filesystem',
@@ -68,23 +70,18 @@ beforeEach(async () => {
     initState: 1,
   });
   keyPair = await generateBackupKeyPair();
-  const env = loadEnv({
-    cwd: dir,
-    dataDir,
-    backupDir: path.join(dir, 'backups'),
-    tmpDir: path.join(dir, 'tmp'),
-    backupPublicKey: keyPair.publicKey,
-  });
+  // 首次播种：service 只读库内公钥，env 不再参与。
+  await seedDefaultBackupKey(db, new BackupKeyRepository(db), keyPair.publicKey);
   repo = new LogicalBackupRepository(db);
   scheduler = new ManualScheduler();
   service = new LogicalBackupService({
     db,
-    env,
     repo,
     settings: new SettingsRepository(db),
     meta: new MetaRepository(db),
     logs: new OperationLogRepository(db),
     scheduler,
+    keys: createTestBackupKeys(db),
   });
 });
 
@@ -103,16 +100,20 @@ function insertRecords(count: number): void {
 }
 
 describe('LogicalBackupService', () => {
-  it('公钥未配置时禁止入队', async () => {
-    const env = loadEnv({ cwd: dir, backupPublicKey: '' });
+  it('库内没有公钥时禁止入队', async () => {
+    // 清掉 beforeEach 播种的公钥，模拟库内未配置的状态。
+    const keysRepo = new BackupKeyRepository(db);
+    for (const row of keysRepo.list()) {
+      keysRepo.remove(row.key_id);
+    }
     const disabled = new LogicalBackupService({
       db,
-      env,
       repo,
       settings: new SettingsRepository(db),
       meta: new MetaRepository(db),
       logs: new OperationLogRepository(db),
       scheduler,
+      keys: createTestBackupKeys(db),
     });
     expect(disabled.enabled).toBe(false);
     const result = await disabled.enqueue('test');

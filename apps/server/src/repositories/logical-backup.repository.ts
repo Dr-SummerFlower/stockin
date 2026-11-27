@@ -5,10 +5,16 @@
  * 表名来自 sqlite_master 的白名单过滤，不直接使用用户输入。
  */
 import type { Db } from './db';
+import { RESTORE_TABLES } from './restore.repository';
 
 export const LOGICAL_BACKUP_FORMAT_VERSION = 1;
 export const LOGICAL_BACKUP_KEEP_COUNT = 5;
 export const LOGICAL_BACKUP_CHUNK_ROWS = 200;
+/**
+ * 下载迭代时每页读取的 chunk 行数。DO 游标无法跨 await，`iterate` 在 Workers
+ * 上会整表物化；分页读取把下载链路的内存峰值压到「一页密文」的量级。
+ */
+const CHUNK_PAGE_SIZE = 32;
 
 const EXCLUDED_TABLES = new Set([
   'backup_jobs',
@@ -86,6 +92,21 @@ export interface BackupChunkRow {
   tag: string;
   plain_bytes: number;
   sha256: string;
+}
+
+/**
+ * manifest 计算只需要摘要列。
+ *
+ * `listChunks` 会把 base64 密文一起读回（120k 行的备份约 600 chunk / 36MB），
+ * 收尾时再整包物化一次纯属浪费；这里只取 manifest 的六个字段。
+ */
+export interface ChunkManifestRow {
+  readonly seq: number;
+  readonly table_name: string;
+  readonly row_start: number;
+  readonly row_count: number;
+  readonly sha256: string;
+  readonly plain_bytes: number;
 }
 
 export interface BackupDataRow {
@@ -225,6 +246,24 @@ export class LogicalBackupRepository {
     return row !== undefined;
   }
 
+  /** 未完成的 job（pending/running），供启动期作废「进程中断」的残留任务。 */
+  listActiveJobs(): BackupJobRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM backup_jobs
+         WHERE status IN ('pending', 'running')
+         ORDER BY created_at ASC`,
+      )
+      .all() as BackupJobRow[];
+  }
+
+  /** 按 job 取 backup 行（service 内部原先直接拼 SQL，迁移前备份也要用）。 */
+  getBackupByJob(jobId: string): BackupRow | undefined {
+    return this.db.prepare('SELECT * FROM backups WHERE job_id = ?').get(jobId) as
+      | BackupRow
+      | undefined;
+  }
+
   /** 最近 N 个任务（含已完成），供前端展示进度与历史。 */
   listJobs(limit = 20): BackupJobRow[] {
     return this.db
@@ -280,11 +319,45 @@ export class LogicalBackupRepository {
       .all(backupId) as BackupChunkRow[];
   }
 
-  /** 逐行迭代 chunk（不整表缓冲），供下载流式响应控制内存水位。 */
-  iterateChunks(backupId: string): IterableIterator<BackupChunkRow> {
+  /** 只取 manifest 需要的摘要列（不含密文），收尾时用。 */
+  listChunkManifest(backupId: string): ChunkManifestRow[] {
     return this.db
-      .prepare('SELECT * FROM backup_chunks WHERE backup_id = ? ORDER BY seq ASC')
-      .iterate(backupId) as IterableIterator<BackupChunkRow>;
+      .prepare(
+        `SELECT seq, table_name, row_start, row_count, sha256, plain_bytes
+           FROM backup_chunks WHERE backup_id = ? ORDER BY seq ASC`,
+      )
+      .all(backupId) as ChunkManifestRow[];
+  }
+
+  /**
+   * 逐行迭代 chunk（不整表缓冲），供下载流式响应控制内存水位。
+   *
+   * 走 keyset 分页（`seq > lastSeq` + `LIMIT`）而不是 `DbPort.iterate()`：
+   * Workers 的 DO 游标**不能跨 await**（官方明确警告会丢快照语义），适配器只能
+   * 先 `toArray()` 再迭代，`iterate` 在 Workers 上等价于整表物化。分页把峰值
+   * 限制在一页（`CHUNK_PAGE_SIZE` 行）内，Node / Workers 行为一致。
+   */
+  iterateChunks(backupId: string): IterableIterator<BackupChunkRow> {
+    const statement = this.db.prepare(
+      'SELECT * FROM backup_chunks WHERE backup_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?',
+    );
+    function* paginate(): Generator<BackupChunkRow> {
+      let lastSeq = -1;
+      for (;;) {
+        const rows = statement.all(backupId, lastSeq, CHUNK_PAGE_SIZE) as BackupChunkRow[];
+        if (rows.length === 0) {
+          return;
+        }
+        for (const row of rows) {
+          lastSeq = row.seq;
+          yield row;
+        }
+        if (rows.length < CHUNK_PAGE_SIZE) {
+          return;
+        }
+      }
+    }
+    return paginate();
   }
 
   /**
@@ -331,15 +404,23 @@ export class LogicalBackupRepository {
   }
 
   /** 白名单：只备份普通业务表，排除备份表与会话表。 */
+  /**
+   * 参与逻辑备份的表：**只取 `RESTORE_TABLES` 白名单**，按名字排序。
+   *
+   * 早期实现是「枚举 sqlite_master 再排除已知非业务表」，方向反了：任何新增的
+   * 辅助表都会自动被卷入备份包，而恢复端只接受白名单表 —— 于是备份能生成、
+   * 却恢复不了。006 引入的三张统计表和 `backup_keys` 正好踩中这一点。
+   *
+   * 改成白名单后语义与恢复端严格对称：能备份的必然能恢复。
+   */
   listTables(): string[] {
-    const rows = this.db
-      .prepare(
-        `SELECT name FROM sqlite_master
-         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-         ORDER BY name ASC`,
-      )
-      .all() as { name: string }[];
-    return rows.map((row) => row.name).filter((name) => !isExcludedTable(name));
+    const rows = this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+      name: string;
+    }[];
+    const present = new Set<string>(rows.map((row) => row.name));
+    // 顺序沿用 RESTORE_TABLES 的声明顺序（父表在前），不再额外排序：
+    // 分块自带表名，顺序不影响恢复语义，声明顺序反而更便于人工核对。
+    return RESTORE_TABLES.filter((name) => present.has(name) && !isExcludedTable(name));
   }
 
   listColumns(table: string): string[] {

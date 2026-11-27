@@ -17,7 +17,12 @@ import path from 'node:path';
 import type { Hono } from 'hono';
 import { assemble, type AssembledRuntime } from '../../src/assembly';
 import { bootstrap } from '../../src/bootstrap';
-import { closeDatabase } from '../../src/repositories/db';
+import { closeDatabase, type Db } from '../../src/repositories/db';
+import { BackupKeyRepository } from '../../src/repositories/backup-key.repository';
+import { BackupKeyService } from '../../src/services/backup-key.service';
+import { OperationLogRepository } from '../../src/repositories/operation-log.repository';
+import { RecordRepository } from '../../src/repositories/record.repository';
+import { RecordStatsRepository } from '../../src/repositories/record-stats.repository';
 import type { Env } from '../../src/env';
 import type { AppDeps } from '../../src/app';
 import type { AppEnv } from '../../src/types/hono';
@@ -106,6 +111,13 @@ export interface HarnessOptions {
   };
   /** 逻辑备份公钥覆盖（恢复端到端测试需注入与本地私钥配对的公钥）。 */
   readonly backupPublicKey?: string;
+  /**
+   * 覆盖平台的单次导出行上限。
+   *
+   * 生产上由 `assembly` 按 `excelWrite` 推出（Workers buffer = 5,000 行、Node
+   * 流式 = 不限）；测试要在 Node 上验证上限行为，必须显式传入。
+   */
+  readonly exportMaxRows?: number;
 }
 
 /** 创建测试台。返回时数据库已迁移、凭据已生成，但 `setup` 尚未完成。 */
@@ -152,6 +164,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     repositories: result.repositories,
     ports: result.ports,
     platform: base.platform,
+    exportMaxRows: options.exportMaxRows,
   });
   runtime.start();
 
@@ -256,3 +269,23 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 }
 
 export { TEST_HOST, TEST_ORIGIN, TEST_PORT };
+
+/**
+ * 构造测试用的备份公钥服务（库 + env 锚点）。
+ *
+ * 多数测试只关心「有公钥/没公钥」，不关心管理台流程，因此这里直接装配
+ * 仓储与服务，不经过 HTTP。需要断言审计或管理台行为时再单独建实例。
+ */
+export function createTestBackupKeys(db: Db, logs?: OperationLogRepository): BackupKeyService {
+  // 公钥一律读库内，各测试按需播种（见 seedDefaultBackupKey）。
+  return new BackupKeyService({
+    db,
+    repo: new BackupKeyRepository(db),
+    logs: logs ?? new OperationLogRepository(db),
+  });
+}
+
+/** 测试用仪表盘统计仓储（依赖真实 records 仓储）。 */
+export function createTestStats(db: Db): RecordStatsRepository {
+  return new RecordStatsRepository(db, new RecordRepository(db));
+}

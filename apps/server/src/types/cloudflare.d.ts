@@ -45,6 +45,11 @@ declare module 'cloudflare:workers' {
   export interface DurableObjectContext {
     readonly storage: DurableObjectStorage;
     waitUntil(promise: Promise<unknown>): void;
+    /**
+     * 在回调执行期间暂停投递其他事件（输入门），用于关键区串行化。
+     * 本项目只用在「恢复批次一次性消费」这一处，避免 get→put 之间被并发请求插入。
+     */
+    blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T>;
   }
 
   export class DurableObject<Env = unknown> {

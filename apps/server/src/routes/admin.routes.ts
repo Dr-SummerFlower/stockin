@@ -24,6 +24,7 @@ import {
   ErrorCode,
   TARGET_TYPE,
   adminOwnerResetSchema,
+  backupKeyAddSchema,
   backupSettingsSchema,
   restoreCommitSchema,
   type AdminBackupListResponse,
@@ -31,6 +32,8 @@ import {
   type LogicalBackupListResponse,
   type BackupSettingsRequest,
   type BackupSettingsResponse,
+  type BackupKeyAddRequest,
+  type BackupKeyListResponse,
   type RestoreBeginResponse,
   type RestoreCommitRequest,
 } from '@stockin/shared';
@@ -51,6 +54,7 @@ import type { AppEnv } from '../types/hono';
 import type { BackupService } from '../services/backup.service';
 import type { LogicalBackupService } from '../services/logical-backup.service';
 import type { RestoreService } from '../services/restore.service';
+import type { BackupKeyService } from '../services/backup-key.service';
 import type { SettingsRepository } from '../repositories/settings.repository';
 import type { OperationLogRepository } from '../repositories/operation-log.repository';
 import type { Db } from '../repositories/db';
@@ -66,6 +70,7 @@ export interface AdminRouteDeps {
   readonly backup: BackupService;
   readonly logicalBackup: LogicalBackupService;
   readonly restore: RestoreService;
+  readonly backupKeys: BackupKeyService;
   readonly settings: SettingsRepository;
   readonly logs: OperationLogRepository;
   readonly db: Db;
@@ -364,6 +369,50 @@ export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): vo
       return c.json(body, 200);
     },
   );
+
+  /* ------------------------- 备份公钥（管理员） ------------------------- */
+
+  api.get('/api/admin/backup-keys', (c) => {
+    const result = deps.backupKeys.list();
+    return result.ok
+      ? c.json(result.data satisfies BackupKeyListResponse, 200)
+      : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+  });
+
+  api.post(
+    '/api/admin/backup-keys',
+    zValidator('json', backupKeyAddSchema, (result, c) => {
+      if (!result.success) {
+        return errorResponse(ErrorCode.VALID_FAILED, String(c.get('requestId') ?? ''), {
+          issues: result.error.issues,
+        });
+      }
+      return;
+    }),
+    async (c) => {
+      const input = c.req.valid('json') as BackupKeyAddRequest;
+      const result = await deps.backupKeys.add(input, adminActorOf(c), c.get('requestId') ?? '');
+      return result.ok
+        ? c.json(result.data satisfies BackupKeyListResponse, 200)
+        : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+    },
+  );
+
+  api.post('/api/admin/backup-keys/:keyId/activate', (c) => {
+    const keyId: string = c.req.param('keyId') ?? '';
+    const result = deps.backupKeys.activate(keyId, adminActorOf(c), c.get('requestId') ?? '');
+    return result.ok
+      ? c.json(result.data satisfies BackupKeyListResponse, 200)
+      : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+  });
+
+  api.delete('/api/admin/backup-keys/:keyId', (c) => {
+    const keyId: string = c.req.param('keyId') ?? '';
+    const result = deps.backupKeys.remove(keyId, adminActorOf(c), c.get('requestId') ?? '');
+    return result.ok
+      ? c.json(result.data satisfies BackupKeyListResponse, 200)
+      : errorResponse(result.code, c.get('requestId') ?? '', result.details);
+  });
 
   /* ------------------------- 一次性恢复（管理员） ------------------------- */
 

@@ -1,7 +1,7 @@
 /**
  * 恢复服务测试：本地签名票据 → 分块上传 → 验签 → 全量恢复 → 防重放。
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,12 +11,14 @@ import { createPragmaVersionStore } from '../src/runtime/node/version-store.prag
 import { createFilesystemMigrationSource } from '../src/runtime/node/migration-source.filesystem';
 import { runMigrations } from '../src/repositories/migrations/runner';
 import type { BackupPort } from '../src/runtime/ports';
-import { loadEnv } from '../src/env';
-import { configureServerTimeZone } from '../src/lib/today';
+import { loadEnv, type Env } from '../src/env';
+import { configureServerTimeZone, serverToday } from '../src/lib/today';
 import { MetaRepository } from '../src/repositories/meta.repository';
 import { OperationLogRepository } from '../src/repositories/operation-log.repository';
+import { BackupKeyRepository } from '../src/repositories/backup-key.repository';
 import { createFilesystemRestoreStaging } from '../src/runtime/node/restore-staging.filesystem';
 import { RestoreService } from '../src/services/restore.service';
+import { seedDefaultBackupKey } from '../src/services/backup-key.service';
 import type { BackupService } from '../src/services/backup.service';
 import { generateBackupKeyPair, signRestoreTicket } from '../src/lib/backup-crypto';
 import {
@@ -29,6 +31,7 @@ import {
 } from '../src/lib/backup-format';
 import { SCHEMA_EXPECTED } from '../src/repositories/schema';
 import { RESTORE_TABLES } from '../src/repositories/restore.repository';
+import { createTestBackupKeys, createTestStats } from './support/harness';
 
 const noopBackupPort: BackupPort = {
   mode: 'filesystem',
@@ -39,6 +42,7 @@ const noopBackupPort: BackupPort = {
 
 let dir: string;
 let db: Db;
+let env: Env;
 let keyPair: Awaited<ReturnType<typeof generateBackupKeyPair>>;
 let service: RestoreService;
 
@@ -55,12 +59,13 @@ beforeEach(async () => {
     initState: 1,
   });
   keyPair = await generateBackupKeyPair();
-  const env = loadEnv({
+  // 首次播种：验签只读库内公钥，env 不再参与。
+  await seedDefaultBackupKey(db, new BackupKeyRepository(db), keyPair.publicKey);
+  env = loadEnv({
     cwd: dir,
     dataDir,
     backupDir: path.join(dir, 'backups'),
     tmpDir: path.join(dir, 'tmp'),
-    backupPublicKey: keyPair.publicKey,
   });
   service = new RestoreService({
     db,
@@ -68,6 +73,8 @@ beforeEach(async () => {
     staging: createFilesystemRestoreStaging({ tmpDir: env.tmpDir }),
     meta: new MetaRepository(db),
     logs: new OperationLogRepository(db),
+    stats: createTestStats(db),
+    keys: createTestBackupKeys(db),
   });
 });
 
@@ -199,6 +206,78 @@ describe('RestoreService', () => {
     expect(shop.expiry_threshold_days).toBe(45);
     // 会话被清空。
     expect((db.prepare('SELECT COUNT(*) AS c FROM sessions').get() as { c: number }).c).toBe(0);
+
+    // 全量恢复会摘掉统计触发器、回填后再一次性 rebuild；这里必须验证派生表
+    // 与 aggregateSql 仍等价，且触发器确实被重新挂上（.tmp/待办 TODO-04）。
+    const stats = createTestStats(db);
+    const threshold: number = 45; // 与恢复包中 settings.expiry_threshold_days 一致
+    expect(stats.matchesAggregate(serverToday(), threshold)).toBe(true);
+    db.prepare(
+      `INSERT INTO records
+         (name, name_norm, purchase_date, expiry_date, spec_norm, unit_price, quantity,
+          amount_cents, created_at, updated_at)
+       VALUES ('恢复后新增', '恢复后新增', '2026-03-01', '2026-12-15', '', 100, 2, 500, ?, ?)`,
+    ).run('2026-03-01T00:00:00Z', '2026-03-01T00:00:00Z');
+    expect(stats.matchesAggregate(serverToday(), threshold)).toBe(true);
+    expect(stats.metrics(serverToday(), threshold).totalRecords).toBe(2);
+  });
+
+  it('分块在行中间（含多字节字符）被切开时仍能正确解析', async () => {
+    const begun = service.beginBatch();
+    const { batchId, issuedAt } = begun.data!;
+    const { lines, ticket } = await buildPackageAndTicket(batchId, issuedAt);
+    const payload: Uint8Array = new TextEncoder().encode(`${lines.join('\n')}\n`);
+    // 每 37 字节切一块：切点必然落在 JSON 行内部，且会切断中文的 3 字节序列，
+    // 覆盖「流式解码 + 跨块拼接行」两条路径（旧实现靠整包拼接，不会暴露这里）。
+    const STEP = 37;
+    let seq = 0;
+    for (let offset = 0; offset < payload.byteLength; offset += STEP) {
+      const slice = payload.subarray(offset, Math.min(offset + STEP, payload.byteLength));
+      const put = await service.putChunk(batchId, seq, slice);
+      expect(put.ok).toBe(true);
+      seq += 1;
+    }
+    expect(seq).toBeGreaterThan(lines.length);
+
+    const result = await service.commit(batchId, ticket);
+    expect(result.ok).toBe(true);
+    expect(result.data?.restoredRows).toBe(2);
+    expect(
+      (db.prepare('SELECT shop_name FROM settings WHERE id = 1').get() as { shop_name: string })
+        .shop_name,
+    ).toBe('恢复后的店铺');
+    // 消费标记存活 3 小时（远长于票据 30 分钟窗口），过期由 staging 惰性清理。
+    const consumedFile = path.join(env.tmpDir, 'restore-staging', batchId, '.consumed');
+    const expiresAt: number = Date.parse(readFileSync(consumedFile, 'utf8'));
+    expect(expiresAt - Date.now()).toBeGreaterThan(3 * 60 * 60 * 1000 - 60_000);
+    expect(expiresAt - Date.now()).toBeLessThanOrEqual(3 * 60 * 60 * 1000);
+  });
+
+  it('恢复包超过当前运行时字节上限时提前拒绝（避免 Workers OOM）', async () => {
+    const staging = createFilesystemRestoreStaging({ tmpDir: path.join(dir, 'tmp-tiny') });
+    const tiny = new RestoreService({
+      db,
+      env,
+      staging,
+      meta: new MetaRepository(db),
+      logs: new OperationLogRepository(db),
+      stats: createTestStats(db),
+      keys: createTestBackupKeys(db),
+      maxRestoreBytes: 64,
+    });
+    const begun = tiny.beginBatch();
+    const { batchId, issuedAt } = begun.data!;
+    const { lines, ticket } = await buildPackageAndTicket(batchId, issuedAt);
+    for (let i = 0; i < lines.length; i += 1) {
+      await tiny.putChunk(batchId, i, new TextEncoder().encode(`${lines[i]}\n`));
+    }
+    const result = await tiny.commit(batchId, ticket);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('BACKUP_RESTORE_FAILED');
+    expect((result.details as { reason?: string }).reason).toContain('字节上限');
+    // 超限发生在消费之前：批次未被烧掉，但明文分块必须立即清理，不能长期残留。
+    expect(await staging.isConsumed(batchId)).toBe(false);
+    expect(await staging.listChunkSeqs(batchId)).toEqual([]);
   });
 
   it('上传数据与票据摘要不符时拒绝恢复（签名仍有效）', async () => {
@@ -215,6 +294,10 @@ describe('RestoreService', () => {
     const result = await service.commit(batchId, ticket);
     expect(result.ok).toBe(false);
     expect(result.code).toBe('BACKUP_INVALID_TICKET');
+    // 校验失败路径也要清理明文分块（旧实现直接 return，分块残留到人工清理）。
+    expect(
+      await createFilesystemRestoreStaging({ tmpDir: env.tmpDir }).listChunkSeqs(batchId),
+    ).toEqual([]);
   });
 
   it('票据签名被篡改时拒绝恢复', async () => {
@@ -452,7 +535,6 @@ describe('恢复前物理快照校验（§4）与审计署名（§7）', () => {
       dataDir: path.join(dir, 'data'),
       backupDir: path.join(dir, 'backups'),
       tmpDir: path.join(dir, 'tmp'),
-      backupPublicKey: keyPair.publicKey,
     });
     return {
       calls,
@@ -462,6 +544,8 @@ describe('恢复前物理快照校验（§4）与审计署名（§7）', () => {
         staging: createFilesystemRestoreStaging({ tmpDir: env.tmpDir }),
         meta: new MetaRepository(db),
         logs: new OperationLogRepository(db),
+        stats: createTestStats(db),
+        keys: createTestBackupKeys(db),
         physicalBackup: spy,
       }),
     };

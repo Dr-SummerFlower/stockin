@@ -34,6 +34,7 @@ export function createApiRouter(deps: AppDeps): Hono<AppEnv> {
     backup: deps.backup,
     logicalBackup: deps.logicalBackup,
     restore: deps.restore,
+    backupKeys: deps.backupKeys,
     settings: deps.repositories.settings,
     logs: deps.repositories.logs,
     db: deps.db,

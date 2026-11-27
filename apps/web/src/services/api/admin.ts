@@ -11,6 +11,8 @@ import type {
   AdminBackupListResponse,
   AdminMeResponse,
   AdminSystemResponse,
+  BackupKeyAddRequest,
+  BackupKeyListResponse,
   BackupSettingsRequest,
   BackupSettingsResponse,
   LogicalBackupListResponse,
@@ -84,6 +86,38 @@ export function updateBackupSettings(input: BackupSettingsRequest): Promise<Back
   return request<BackupSettingsResponse>('/api/admin/backup-settings', {
     method: 'PUT',
     json: input,
+    silent: true,
+  });
+}
+
+/* ----------------------------- 备份公钥（管理员） ----------------------------- */
+
+/** `GET /api/admin/backup-keys`：库内公钥 + 部署锚点。 */
+export function listBackupKeys(): Promise<BackupKeyListResponse> {
+  return request<BackupKeyListResponse>('/api/admin/backup-keys', { silent: true });
+}
+
+/** `POST /api/admin/backup-keys`：新增一把公钥（可同时设为加密公钥）。 */
+export function addBackupKey(input: BackupKeyAddRequest): Promise<BackupKeyListResponse> {
+  return request<BackupKeyListResponse>('/api/admin/backup-keys', {
+    method: 'POST',
+    json: input,
+    silent: true,
+  });
+}
+
+/** `POST /api/admin/backup-keys/:keyId/activate`：切换加密公钥。 */
+export function activateBackupKey(keyId: string): Promise<BackupKeyListResponse> {
+  return request<BackupKeyListResponse>(
+    `/api/admin/backup-keys/${encodeURIComponent(keyId)}/activate`,
+    { method: 'POST', silent: true },
+  );
+}
+
+/** `DELETE /api/admin/backup-keys/:keyId`：删除一把不再需要的公钥。 */
+export function deleteBackupKey(keyId: string): Promise<BackupKeyListResponse> {
+  return request<BackupKeyListResponse>(`/api/admin/backup-keys/${encodeURIComponent(keyId)}`, {
+    method: 'DELETE',
     silent: true,
   });
 }

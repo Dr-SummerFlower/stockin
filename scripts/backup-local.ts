@@ -3,23 +3,31 @@
  * 本地备份工具（私钥永远只在这台机器上出现）。
  *
  * 子命令：
- *   decrypt  --in <backup.ndjson> --key <private.key> [--out <dir>]
+ *   decrypt  --in <backup.ndjson> [--key <private.key> | --key-dir .keys] [--out <dir>]
  *             解封数据密钥 → 逐 chunk 解密 + 校验 sha256 / AAD / manifest →
  *             输出 <dir>/restore-package.ndjson（首行 restore-meta，其后每表一行）。
  *   ticket   --package <restore-package.ndjson> --batch <batchId>
- *             --issued-at <iso> --schema <n> --key <private.key> [--out <file>]
+ *             --issued-at <iso> --schema <n> [--key <file> | --key-dir .keys]
+ *             [--key-id <keyId>] [--out <file>]
  *             用本地私钥对票据规范字节做 ECDSA 签名，输出 restore-ticket.json。
  *   restore  --origin <https://host> --cookie '<admin-sid=...>' --package <file>
- *             --ticket <file> [--chunk-bytes <n>]
+ *             --ticket <file> [--chunk-bytes <n>] [--key <file> | --key-dir .keys]
  *             端到端：POST begin → 分块 PUT → POST commit（票据用本地私钥签名）。
+ *
+ * 密钥环（推荐）：`.keys/` 下按 `<keyId>.private.key` 存放多把私钥。
+ *   - decrypt 按备份 meta 的 keyId **自动选键**，所以轮换后旧备份照样能解；
+ *   - ticket / restore 默认用 `.keys/active` 指向的签名密钥，也可 `--key-id` 指定。
+ *   未指定 --key / --key-dir 时默认用项目根 `.keys/`。
  *
  * 说明：所有解密 / 验签 / 票据签名都只发生在本地；服务端只拿到公钥与已签名数据。
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+  backupKeyId,
   decryptBackupChunk,
   hashBackupBytes,
+  publicKeyFromPrivate,
   unwrapBackupDataKey,
   signRestoreTicket,
 } from '../apps/server/src/lib/backup-crypto';
@@ -56,10 +64,130 @@ function readText(file: string): string {
   return readFileSync(path.resolve(file), 'utf8').trim();
 }
 
+/** ------------------------------- 密钥环 -------------------------------- */
+
+interface KeyringEntry {
+  readonly keyId: string;
+  readonly privateKey: string;
+  readonly file: string;
+}
+
+/** 默认密钥目录：未显式给 --key / --key-dir 时用项目根 `.keys/`。 */
+const DEFAULT_KEY_DIR = '.keys';
+
+/**
+ * 读取密钥环：目录内所有 `*.private.key` 与历史单文件 `backup-private.key`。
+ *
+ * keyId 由私钥派生出的公钥现算，因此旧文件无需改名即可被索引；顺序稳定
+ * （按文件名排序），但选键只按 keyId 精确匹配，不依赖顺序。
+ */
+async function readKeyring(dir: string): Promise<KeyringEntry[]> {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    throw new Error(`密钥目录不存在或不可读: ${dir}（用 --key-dir 指定，或 --key 指定单个私钥文件）`);
+  }
+  const files: string[] = names
+    .filter((name) => name.endsWith('.private.key') || name === 'backup-private.key')
+    .sort();
+  if (files.length === 0) {
+    throw new Error(`密钥目录里没有私钥文件（*.private.key）：${dir}`);
+  }
+  const ring: KeyringEntry[] = [];
+  for (const name of files) {
+    const file = path.join(dir, name);
+    const privateKey = readText(file);
+    const keyId = await backupKeyId(await publicKeyFromPrivate(privateKey));
+    ring.push({ keyId, privateKey, file });
+  }
+  return ring;
+}
+
+/** 显式 `--key` 的私钥内容（同时给出其 keyId，便于与备份 meta 比对）。 */
+async function explicitKey(): Promise<KeyringEntry | null> {
+  const file = arg('key', false);
+  if (file === undefined) {
+    return null;
+  }
+  const privateKey = readText(file);
+  const keyId = await backupKeyId(await publicKeyFromPrivate(privateKey));
+  return { keyId, privateKey, file: path.resolve(file) };
+}
+
+/** 解密用私钥：优先 `--key`，否则按备份 meta 的 keyId 在密钥环里精确匹配。 */
+async function resolveDecryptKey(backupKeyIdInMeta: string): Promise<KeyringEntry> {
+  const explicit = await explicitKey();
+  if (explicit !== null) {
+    if (explicit.keyId.toLowerCase() !== backupKeyIdInMeta.toLowerCase()) {
+      throw new Error(
+        `--key 指定的私钥与备份不匹配：备份 keyId=${backupKeyIdInMeta}，` +
+          `该私钥 keyId=${explicit.keyId}。请改用备份对应的私钥（或用 --key-dir 让脚本自动选键）`,
+      );
+    }
+    return explicit;
+  }
+  const dir = path.resolve(arg('key-dir', false) ?? DEFAULT_KEY_DIR);
+  const ring = await readKeyring(dir);
+  const hit = ring.find(
+    (entry) => entry.keyId.toLowerCase() === backupKeyIdInMeta.toLowerCase(),
+  );
+  if (hit === undefined) {
+    throw new Error(
+      `密钥环里没有能解封该备份的私钥（备份 keyId=${backupKeyIdInMeta}）。\n` +
+        `  ${dir} 现有 keyId: ${ring.map((entry) => entry.keyId).join(', ')}\n` +
+        '  轮换后旧备份仍需要旧私钥：把旧的 `<keyId>.private.key` 放回该目录即可。',
+    );
+  }
+  return hit;
+}
+
+/** 签名用私钥（ticket / restore）：`--key` > `--key-id` > `.keys/active` > 唯一私钥。 */
+async function resolveSigningKey(): Promise<KeyringEntry> {
+  const explicit = await explicitKey();
+  if (explicit !== null) {
+    return explicit;
+  }
+  const dir = path.resolve(arg('key-dir', false) ?? DEFAULT_KEY_DIR);
+  const ring = await readKeyring(dir);
+  const wanted = arg('key-id', false);
+  if (wanted !== undefined) {
+    const hit = ring.find((entry) => entry.keyId.toLowerCase() === wanted.toLowerCase());
+    if (hit === undefined) {
+      throw new Error(
+        `--key-id ${wanted} 不在密钥环里；现有 keyId: ${ring.map((entry) => entry.keyId).join(', ')}`,
+      );
+    }
+    return hit;
+  }
+  let active = '';
+  try {
+    active = readText(path.join(dir, 'active'));
+  } catch {
+    active = '';
+  }
+  if (active !== '') {
+    const hit = ring.find((entry) => entry.keyId.toLowerCase() === active.toLowerCase());
+    if (hit === undefined) {
+      throw new Error(
+        `active 指向 ${active}，但该私钥不在密钥环里；` +
+          `现有 keyId: ${ring.map((entry) => entry.keyId).join(', ')}`,
+      );
+    }
+    return hit;
+  }
+  if (ring.length === 1) {
+    return ring[0] as KeyringEntry;
+  }
+  throw new Error(
+    `密钥环里有 ${ring.length} 把私钥且没有 active 指针，无法确定签名密钥；` +
+      '请用 --key-id 指定，或在密钥目录写入 active 文件',
+  );
+}
+
 /** ------------------------------- decrypt -------------------------------- */
 async function cmdDecrypt(): Promise<void> {
   const input = readText(arg('in')!);
-  const privateKey = readText(arg('key')!);
   const outDir = path.resolve(arg('out', false) ?? '.tmp/restore');
   mkdirSync(outDir, { recursive: true });
 
@@ -73,7 +201,9 @@ async function cmdDecrypt(): Promise<void> {
     throw new Error(`不支持的备份格式版本: ${meta.version}`);
   }
 
-  const dataKey = await unwrapBackupDataKey(privateKey, {
+  // 先按 keyId 选私钥：轮换后旧备份仍能解，选错时给出可操作的错误而不是 GCM 认证失败。
+  const key = await resolveDecryptKey(meta.keyId);
+  const dataKey = await unwrapBackupDataKey(key.privateKey, {
     keyId: meta.keyId,
     ephemeralPublicKey: meta.ephemeralPublicKey,
     kdfSalt: meta.kdfSalt,
@@ -174,7 +304,8 @@ async function cmdDecrypt(): Promise<void> {
     'utf8',
   );
   process.stdout.write(
-    `[decrypt] 完成：${tables.length} 张表，dataSha256=${dataSha256}\n` +
+    `[decrypt] 完成：${tables.length} 张表，keyId=${meta.keyId}（用 ${key.file}），` +
+      `dataSha256=${dataSha256}\n` +
       `  恢复包: ${packagePath}\n`,
   );
 }
@@ -185,7 +316,7 @@ async function cmdTicket(): Promise<void> {
   const batchId = arg('batch')!;
   const issuedAt = arg('issued-at')!;
   const schemaVersion = Number.parseInt(arg('schema')!, 10);
-  const privateKey = readText(arg('key')!);
+  const key = await resolveSigningKey();
   const tables: RestoreTable[] = packageText
     .split('\n')
     .filter((line) => line.trim() !== '')
@@ -219,12 +350,12 @@ async function cmdTicket(): Promise<void> {
     schemaVersion,
     keyId: metaRow?.keyId ?? '',
   };
-  const signature = await signRestoreTicket(privateKey, encodeTicketPayload(payload));
+  const signature = await signRestoreTicket(key.privateKey, encodeTicketPayload(payload));
   const ticket: RestoreTicket = { payload, signature };
   const outFile = path.resolve(arg('out', false) ?? '.tmp/restore/restore-ticket.json');
   mkdirSync(path.dirname(outFile), { recursive: true });
   writeFileSync(outFile, `${JSON.stringify(ticket, null, 2)}\n`, 'utf8');
-  process.stdout.write(`[ticket] 已生成: ${outFile}\n`);
+  process.stdout.write(`[ticket] 已生成: ${outFile}（签名 keyId=${key.keyId}）\n`);
 }
 
 /** -------------------------------- restore -------------------------------- */
@@ -272,14 +403,14 @@ async function cmdRestore(): Promise<void> {
   };
 
   // 重新签名票据（票据里的 batchId / issuedAt 必须与本次批次一致）。
-  const privateKey = readText(arg('key')!);
+  const key = await resolveSigningKey();
   const originalPayload = ticket.payload;
   const resignPayload = {
     ...originalPayload,
     batchId: begun.batchId,
     issuedAt: begun.issuedAt,
   };
-  const signature = await signRestoreTicket(privateKey, encodeTicketPayload(resignPayload));
+  const signature = await signRestoreTicket(key.privateKey, encodeTicketPayload(resignPayload));
   const finalTicket: RestoreTicket = { payload: resignPayload, signature };
 
   // 2) 分块上传明文恢复包。

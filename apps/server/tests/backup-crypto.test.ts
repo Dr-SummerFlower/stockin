@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  backupKeyId,
   createBackupDataKey,
   decryptBackupChunk,
   encryptBackupChunk,
   generateBackupKeyPair,
+  publicKeyFromPrivate,
   signRestoreTicket,
   unwrapBackupDataKey,
   verifyRestoreTicket,
+  verifyRestoreTicketWithAnyKey,
 } from '../src/lib/backup-crypto';
 import { encodeTicketPayload } from '../src/lib/backup-format';
 
@@ -81,5 +84,43 @@ describe('恢复票据 ECDSA 签名', () => {
     const signature = await signRestoreTicket(pair.privateKey, bytes);
     expect(await verifyRestoreTicket(wrong.publicKey, bytes, signature)).toBe(false);
     expect(await verifyRestoreTicket(pair.publicKey, bytes, 'not-base64!!!')).toBe(false);
+  });
+
+  it('轮换过渡期：任一公钥验过即通过，空列表一律拒绝', async () => {
+    const oldPair = await generateBackupKeyPair();
+    const newPair = await generateBackupKeyPair();
+    const bytes = encodeTicketPayload(payload);
+    const oldSignature = await signRestoreTicket(oldPair.privateKey, bytes);
+    const newSignature = await signRestoreTicket(newPair.privateKey, bytes);
+
+    // 首项用于加密，验签按顺序尝试：新旧签名都能过。
+    expect(
+      await verifyRestoreTicketWithAnyKey(
+        [newPair.publicKey, oldPair.publicKey],
+        bytes,
+        oldSignature,
+      ),
+    ).toBe(true);
+    expect(
+      await verifyRestoreTicketWithAnyKey(
+        [newPair.publicKey, oldPair.publicKey],
+        bytes,
+        newSignature,
+      ),
+    ).toBe(true);
+    // 过渡期结束后只保留新公钥：旧私钥签的票据被拒。
+    expect(await verifyRestoreTicketWithAnyKey([newPair.publicKey], bytes, oldSignature)).toBe(
+      false,
+    );
+    // 未配置公钥时不得「无密钥即放行」。
+    expect(await verifyRestoreTicketWithAnyKey([], bytes, newSignature)).toBe(false);
+  });
+});
+
+describe('私钥派生公钥（本地密钥环选键）', () => {
+  it('派生出的公钥与密钥对的公钥、keyId 完全一致', async () => {
+    const pair = await generateBackupKeyPair();
+    expect(await publicKeyFromPrivate(pair.privateKey)).toBe(pair.publicKey);
+    expect(await backupKeyId(pair.publicKey)).toBe(pair.keyId);
   });
 });

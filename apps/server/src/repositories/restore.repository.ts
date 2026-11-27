@@ -6,6 +6,7 @@
  * 在恢复窗口内临时移除，回填后原样重建，保证恢复后约束仍然生效。
  */
 import type { Db } from './db';
+import type { RecordStatsRepository } from './record-stats.repository';
 import type { RestoreTable } from '../lib/backup-format';
 
 /** 可恢复表白名单（顺序即插入顺序；列名以恢复包携带的 columns 为准）。 */
@@ -77,7 +78,35 @@ END`,
 ];
 
 export class RestoreRepository {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly stats: RecordStatsRepository,
+  ) {}
+
+  /**
+   * 摘掉仪表盘统计触发器（`trg_records_stats_*`），返回可原样重建的 DDL 清单。
+   *
+   * 为什么必须摘：全量恢复要逐行插入十几万行，逐行维护统计是纯浪费，而且会让
+   * 恢复慢到超时。DDL 直接从 `sqlite_master` 取，不在 TS 里复制一份定义 ——
+   * 以后新增统计触发器不需要再同步改这里。
+   */
+  private detachStatsTriggers(): { name: string; ddl: string }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT name, sql FROM sqlite_master
+          WHERE type = 'trigger' AND name LIKE 'trg_records_stats_%'`,
+      )
+      .all() as { name: string; sql: string | null }[];
+    const captured: { name: string; ddl: string }[] = [];
+    for (const row of rows) {
+      if (typeof row.sql !== 'string' || row.sql === '') {
+        continue;
+      }
+      captured.push({ name: row.name, ddl: row.sql });
+      this.db.exec(`DROP TRIGGER IF EXISTS ${row.name}`);
+    }
+    return captured;
+  }
 
   /** 是否所有可恢复表都存在（schema 兼容校验）。 */
   assertSchemaCompatible(): void {
@@ -108,6 +137,8 @@ export class RestoreRepository {
       for (const trigger of TRIGGERS) {
         this.db.exec(`DROP TRIGGER IF EXISTS ${trigger.name}`);
       }
+      // 1.1) 再摘掉仪表盘统计触发器：回填是批量插入，逐行维护纯属浪费。
+      const statsTriggers = this.detachStatsTriggers();
 
       // 2) 先删会话表（它们的外键指向 credentials / admin_accounts），
       //    否则 DELETE credentials 会被 sessions.account_id 外键拦截。
@@ -141,7 +172,14 @@ export class RestoreRepository {
         }
       }
 
+      // 3.1) 统计表是派生数据：批量回填完再一次性重算，而不是靠触发器逐行累加
+      //      （触发器此刻是摘掉的）。必须在重建触发器**之前**算完。
+      this.stats.rebuildInTransaction();
+
       // 4) 重建触发器，恢复约束。
+      for (const trigger of statsTriggers) {
+        this.db.exec(trigger.ddl);
+      }
       for (const trigger of TRIGGERS) {
         this.db.exec(trigger.create);
       }

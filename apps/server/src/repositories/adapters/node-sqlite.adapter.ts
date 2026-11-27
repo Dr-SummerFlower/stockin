@@ -48,8 +48,6 @@ function wrapStatement(db: DatabaseSync, sql: string): StatementPort {
   return {
     get: (...params: unknown[]): unknown => statement.get(...bind(params)),
     all: (...params: unknown[]): unknown[] => statement.all(...bind(params)),
-    iterate: (...params: unknown[]): IterableIterator<unknown> =>
-      statement.iterate(...bind(params)) as IterableIterator<unknown>,
     run: (...params: unknown[]): RunResultPort => {
       const result = statement.run(...bind(params));
       return {

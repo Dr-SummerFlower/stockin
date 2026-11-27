@@ -5,6 +5,8 @@
  * - 批次不再需要时 deleteBatch 整目录删除。
  * - 一次性防重放：consume 通过原子 rename 一个标记文件实现（rename 在同一文件系统
  *   上是原子的），保证并发下只有一个请求能拿到票据。
+ * - 标记存活 3 小时（由调用方传入 expiresAtIso）：读取时若已过期则直接删除，
+ *   避免标记文件长期累积。3 小时远长于票据 30 分钟窗口，清理不会打开重放口子。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +22,16 @@ function safeBatchId(batchId: string): string {
     throw new Error(`[restore-staging] 非法 batchId: ${batchId}`);
   }
   return batchId;
+}
+
+/** 标记是否已过期：读不到/时间戳非法一律当作过期，避免坏标记永久占位。 */
+function markExpired(file: string): boolean {
+  try {
+    const expiresAt: number = Date.parse(fs.readFileSync(file, 'utf8'));
+    return !Number.isFinite(expiresAt) || expiresAt <= Date.now();
+  } catch {
+    return true;
+  }
 }
 
 export function createFilesystemRestoreStaging(
@@ -69,11 +81,14 @@ export function createFilesystemRestoreStaging(
       if (!fs.existsSync(dir)) {
         return;
       }
-      // 保留 .consumed 标记：与 Workers KV 版一致，batchId 的防重放需持续到
-      // 时间窗口自然过期；删除分块但保留消费记录，避免同批次被重放。
+      // 删除分块但保留未过期的 .consumed 标记，避免同批次被重放；已过期的标记
+      // 由 isConsumed/consumeBatch 惰性清理，这里一并兜底删掉。
       // .consuming 是瞬时锁，正常路径已被 consumeBatch 清理；这里兜底删除残留。
       for (const name of fs.readdirSync(dir)) {
         if (name === '.consumed') {
+          if (markExpired(path.join(dir, name))) {
+            fs.rmSync(path.join(dir, name), { force: true });
+          }
           continue;
         }
         fs.rmSync(path.join(dir, name), { force: true });
@@ -82,7 +97,14 @@ export function createFilesystemRestoreStaging(
 
     async isConsumed(batchId): Promise<boolean> {
       const consumed = path.join(batchDir(batchId), '.consumed');
-      return fs.existsSync(consumed);
+      if (!fs.existsSync(consumed)) {
+        return false;
+      }
+      if (markExpired(consumed)) {
+        fs.rmSync(consumed, { force: true });
+        return false;
+      }
+      return true;
     },
 
     async consumeBatch(batchId, expiresAtIso): Promise<boolean> {
@@ -92,7 +114,14 @@ export function createFilesystemRestoreStaging(
       const dir = batchDir(batchId);
       const consumed = path.join(dir, '.consumed');
       const lock = path.join(dir, '.consuming');
-      if (fs.existsSync(consumed) || fs.existsSync(lock)) {
+      if (fs.existsSync(consumed)) {
+        // 未过期的标记才算重复；过期的直接清掉，让本次消费继续。
+        if (!markExpired(consumed)) {
+          return false;
+        }
+        fs.rmSync(consumed, { force: true });
+      }
+      if (fs.existsSync(lock)) {
         return false;
       }
       fs.mkdirSync(dir, { recursive: true });

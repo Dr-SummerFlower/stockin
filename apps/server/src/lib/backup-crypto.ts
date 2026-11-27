@@ -8,6 +8,7 @@
  *
  * 私钥只在本地解密/恢复脚本中使用；服务端只拿公钥。
  */
+import type { webcrypto } from 'node:crypto';
 
 export const BACKUP_FORMAT_VERSION = 1;
 const KDF_INFO = new TextEncoder().encode('stockin-logical-backup-v1');
@@ -157,7 +158,7 @@ export async function createBackupDataKey(publicKeyBase64: string): Promise<{
   // keyId 标识的是「解封公钥」（即本地私钥这批密钥），不是每次随机生成的
   // AES 数据密钥；多份备份共用同一 keyId 是刻意的——它们都能被同一把本地私钥
   // 解封。数据密钥本身每次备份独立随机生成并单独封装（见上方 rawDataKey）。
-  const keyId = (await sha256(base64ToBytes(publicKeyBase64))).slice(0, 32);
+  const keyId = await backupKeyId(publicKeyBase64);
   return {
     dataKey,
     wrapped: {
@@ -263,10 +264,16 @@ export async function hashBackupBytes(bytes: Uint8Array): Promise<string> {
  * 因此同一份私钥 DER 可导入为 ECDH（解封数据密钥）或 ECDSA（签票据），
  * 公钥 DER 同理。私钥始终只在本地脚本中出现，服务端只有公钥。
  *
- * 已知待评审（纵深防御）：同一把密钥兼具 ECDH 封装与 ECDSA 签名两用，
- * 缺少密钥用途分离。目前未见可直接利用的交叉协议攻击；拆分密钥需要同时
- * 变更 generateBackupKeyPair、env 公钥配置、本地私钥脚本与既有备份的兼容
- * 策略，属重大变更，留待安全评审裁决后再动，不在本次修复范围。
+ * 已知取舍（2026-11-24 裁决：接受，不拆）：同一把密钥兼具 ECDH 封装与 ECDSA
+ * 签名两用。P-256 上无公开的实用跨协议攻击；两用途共享同一秘密，拆分对
+ * 「私钥泄露」这一主风险的收窄有限，真正起作用的是私钥离线保存、票据 30 分钟
+ * 窗口 + batchId 绑定 + 一次性消费、以及服务端权限与审计。拆分还会引入 4 份
+ * 密钥文件的保管与混用风险。
+ *
+ * 轮换（2026-11-25 修订）：轮换只换这一对密钥，不拆用途。服务端公钥以库内
+ * `backup_keys` 为真源，加密用启用中的那把、验签用全部；`BACKUP_PUBLIC_KEY`
+ * 仅首次启动播种，之后不参与。旧私钥留在本地 `.keys/` 供旧备份解封，由备份
+ * meta 的 keyId 决定用哪把。详见 README「备份密钥轮换」。
  * ------------------------------------------------------------------ */
 
 async function importSigningPrivateKey(privateKeyBase64: string): Promise<CryptoKey> {
@@ -320,4 +327,68 @@ export async function verifyRestoreTicket(
   } catch {
     return false;
   }
+}
+
+/**
+ * 服务端：按顺序尝试多把公钥验签，任一通过即成功。
+ *
+ * 只用于密钥轮换过渡期：新公钥已在用、旧公钥签出的票据（30 分钟窗口内）仍要能验过。
+ * 加密路径始终只用首项公钥，这里不参与。空列表返回 false，不做「无密钥即放行」。
+ */
+export async function verifyRestoreTicketWithAnyKey(
+  publicKeys: readonly string[],
+  payload: Uint8Array,
+  signatureBase64: string,
+): Promise<boolean> {
+  for (const publicKey of publicKeys) {
+    if (await verifyRestoreTicket(publicKey, payload, signatureBase64)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 公钥指纹（keyId）：sha256(SPKI/DER) 前 32 个十六进制字符，与备份 meta 的 keyId 同源。 */
+export async function backupKeyId(publicKeyBase64: string): Promise<string> {
+  return (await sha256(base64ToBytes(publicKeyBase64))).slice(0, 32);
+}
+
+/**
+ * 从 PKCS#8 私钥派生对应公钥（SPKI/DER base64）。
+ *
+ * 本地密钥环只保存私钥时也能算出 keyId，从而按备份 meta 的 keyId 选键；
+ * 也让历史单文件命名（`backup-private.key`）无需改名即可继续使用。
+ */
+export async function publicKeyFromPrivate(privateKeyBase64: string): Promise<string> {
+  const privateKey: CryptoKey = await subtle.importKey(
+    'pkcs8',
+    toArrayBuffer(base64ToBytes(privateKeyBase64)),
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits'],
+  );
+  // 不直接写全局 `JsonWebKey`：本仓库只开 ES2022 lib（无 DOM 类型），
+  // 该接口只存在于 node:crypto 的 webcrypto 命名空间下。
+  const jwk = (await subtle.exportKey('jwk', privateKey)) as unknown as webcrypto.JsonWebKey;
+  // 只取公有部分（kty/crv/x/y），丢掉 d；私钥不外泄到日志或文件。
+  const publicJwk: webcrypto.JsonWebKey = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y };
+  const publicKey: CryptoKey = await subtle.importKey(
+    'jwk',
+    publicJwk,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    [],
+  );
+  return bytesToBase64(new Uint8Array(await subtle.exportKey('spki', publicKey)));
+}
+
+/**
+ * 校验一段 base64 确实是 P-256 公钥（SPKI/DER）。
+ *
+ * 管理台允许管理员粘贴公钥，正则只能保证「像 base64」；这里用 WebCrypto 真正
+ * 导入一次，导入失败即抛错。落库前校验，避免把不可用的公钥存进去、直到下次
+ * 备份才失败。
+ */
+export async function assertValidBackupPublicKey(publicKeyBase64: string): Promise<void> {
+  await importPublicKey(publicKeyBase64);
 }

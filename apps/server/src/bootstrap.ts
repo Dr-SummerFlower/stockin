@@ -22,16 +22,26 @@ import { loadEnv, type Env, type EnvOverrides } from './env';
 import { logger } from './lib/logger';
 import { configureCookiePolicy } from './lib/cookie';
 import { configureServerTimeZone, utcNowIso } from './lib/today';
-import { assertIntegrity, closeDatabase, tableExists, type Db } from './repositories/db';
+import {
+  assertIntegrity,
+  closeDatabase,
+  ensureQueryPlannerStats,
+  tableExists,
+  type Db,
+} from './repositories/db';
 import { runMigrations, type MigrationResult } from './repositories/migrations/runner';
+import { BackupKeyRepository } from './repositories/backup-key.repository';
+import { seedDefaultBackupKey } from './services/backup-key.service';
 import { CredentialRepository } from './repositories/credential.repository';
 import { MetaRepository } from './repositories/meta.repository';
 import { RecordRepository } from './repositories/record.repository';
+import { RecordStatsRepository } from './repositories/record-stats.repository';
 import { SessionRepository } from './repositories/session.repository';
 import { SettingsRepository } from './repositories/settings.repository';
 import { OperationLogRepository } from './repositories/operation-log.repository';
 import { AdminAccountRepository } from './repositories/admin-account.repository';
 import { AdminSessionRepository } from './repositories/admin-session.repository';
+import { takeUpgradeLogicalBackup, type UpgradeBackupNote } from './services/upgrade-backup';
 import type {
   BackgroundTaskScheduler,
   BackupPort,
@@ -122,6 +132,8 @@ export interface BootstrapOptions {
 
 export interface BootstrapRepositories {
   readonly records: RecordRepository;
+  /** 仪表盘增量统计（触发器维护的派生表）。 */
+  readonly stats: RecordStatsRepository;
   readonly sessions: SessionRepository;
   readonly credentials: CredentialRepository;
   readonly meta: MetaRepository;
@@ -147,6 +159,8 @@ export interface BootstrapResult {
   readonly db: Db;
   readonly env: Env;
   readonly migration: MigrationResult;
+  /** 升级后的逻辑备份结果；未发生迁移（或已跳过）时为 `null`。 */
+  readonly upgradeBackup: UpgradeBackupNote | null;
   readonly repositories: BootstrapRepositories;
   readonly ports: ResolvedPorts;
 }
@@ -220,6 +234,71 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
     // meta 必须在迁移成功后才构造（其查询依赖已建表）。
     const meta = new MetaRepository(db);
 
+    // 首次启动播种默认备份公钥：库内 backup_keys 为空且配置了 BACKUP_PUBLIC_KEY
+    // 时写入一条启用中的公钥。必须在下面的升级后逻辑备份之前完成，否则那份备份
+    // 会因「没有公钥」跳过。幂等，后续轮换/删除都由管理台接管，env 不再参与。
+    // 播种失败只告警不阻断启动（与备份链路的降级策略一致）。
+    try {
+      const seeded: boolean = await seedDefaultBackupKey(
+        db,
+        new BackupKeyRepository(db),
+        env.backupPublicKey,
+      );
+      if (seeded) {
+        logger.info('[BOOTSTRAP] 已从默认公钥播种 backup_keys，后续请在管理台维护');
+      }
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        '[BOOTSTRAP] 播种默认备份公钥失败，请在管理台添加公钥后重试',
+      );
+    }
+
+    // 查询规划器统计：缺它时列表页会退化成「全表扫描 + 临时 B 树排序」，
+    // 在 12 万行下既是 63ms→0.12ms 的差距，也是 Workers 每日 500 万行读取
+    // 额度的生死线（一次列表页 12 万行）。幂等，已有统计即跳过；失败只降级
+    // 性能，不得阻断启动。
+    try {
+      const analyzed: boolean = ensureQueryPlannerStats(db);
+      if (analyzed) {
+        logger.info('[BOOTSTRAP] 已生成查询规划器统计（ANALYZE）');
+      }
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        '[BOOTSTRAP] ANALYZE 失败，已跳过（查询可能退化为全表扫描）',
+      );
+    }
+
+    // 升级属于关键改动，两份备份分工不同：
+    //   · 升级**前**的物理快照 —— 由 runner 生成，是回滚点（整库字节级回到旧结构）；
+    //   · 升级**后**的逻辑备份 —— 在这里生成，是数据副本（可下载、可异地、可在当前
+    //     版本直接恢复）。放在 ANALYZE 之后，避免每个 chunk 都退化成全表扫描。
+    // 失败只降级为 skipped 并打 WARN，不阻断启动：迁移已经提交，卡在这里最糟。
+    let upgradeBackup: UpgradeBackupNote | null = null;
+    if (migration.applied.length > 0) {
+      upgradeBackup = await takeUpgradeLogicalBackup({
+        db,
+        platform,
+        fromVersion: migration.fromVersion,
+      });
+      if (upgradeBackup.status === 'ok') {
+        logger.info(
+          {
+            backupId: upgradeBackup.backupId,
+            fromVersion: migration.fromVersion,
+            toVersion: migration.toVersion,
+          },
+          '[BOOTSTRAP] 升级后已生成逻辑备份（升级前的物理快照另有其份）',
+        );
+      } else {
+        logger.warn(
+          { fromVersion: migration.fromVersion, reason: upgradeBackup.reason },
+          '[BOOTSTRAP] 升级后逻辑备份已跳过，回滚点仍由升级前的物理快照承担',
+        );
+      }
+    }
+
     // 自助引导：首启不再生成随机初始密码、也不打印任何凭据。
     //
     // 首次访问直接进入 `/setup` 设置正式账密、密保问题与店铺配置。这样
@@ -231,8 +310,11 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
       logger.info('[BOOTSTRAP] 尚未完成初始化，首次访问将进入自助引导');
     }
 
+    const recordRepository = new RecordRepository(db);
+    const recordStats = new RecordStatsRepository(db, recordRepository);
     const repositories: BootstrapRepositories = {
-      records: new RecordRepository(db),
+      records: recordRepository,
+      stats: recordStats,
       sessions: new SessionRepository(db),
       credentials,
       meta,
@@ -250,7 +332,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
       backgroundScheduler: bundle.backgroundScheduler(env),
       restoreStaging: bundle.restoreStaging(env),
     };
-    return { db, env, migration, repositories, ports };
+    return { db, env, migration, upgradeBackup, repositories, ports };
   } catch (error) {
     closeDatabase(db);
     throw error;

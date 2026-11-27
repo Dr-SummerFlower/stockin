@@ -17,10 +17,11 @@ import {
   type StatsExpiryResponse,
   type StatsSummaryResponse,
 } from '@stockin/shared';
-import { addDays, aggregateRules, buildExpiryAlerts, type AggregateRecord } from '@stockin/domain';
+import { addDays, buildExpiryAlerts, type AggregateRecord } from '@stockin/domain';
 import type { Db } from '../repositories/db';
 import { deferredTransaction } from '../repositories/db';
 import type { RecordRepository } from '../repositories/record.repository';
+import type { RecordStatsRepository } from '../repositories/record-stats.repository';
 import type { SettingsRepository } from '../repositories/settings.repository';
 import { nullable, type RecordRow } from '../repositories/types';
 import { serverToday } from '../lib/today';
@@ -29,6 +30,7 @@ import type { ServiceResult } from '../app';
 export interface DashboardServiceDeps {
   readonly db: Db;
   readonly records: RecordRepository;
+  readonly stats: RecordStatsRepository;
   readonly settings: SettingsRepository;
 }
 
@@ -72,14 +74,15 @@ export class DashboardService {
 
   /**
    * 一个 DEFERRED 读事务快照：今天、阈值、指标、清单全部取自同一瞬间。
-   * 6 组指标走 Repository 的单遍条件聚合 SQL（与 domain.aggregateRules 口径一致）。
+   * 6 组指标读触发器维护的增量统计表（O(桶数)，与总行数无关），
+   * 口径由 `RecordStatsRepository.rebuild` 复用 `aggregateSql` 保证一致。
    */
   snapshot(query: ExpiryAlertQuery = {}): ServiceResult<DashboardResponse> {
     const { page, pageSize, status } = normalizeAlertQuery(query);
     const data: DashboardResponse = deferredTransaction(this.deps.db, () => {
       const baseDate: string = serverToday();
       const thresholdDays: number = this.deps.settings.getThresholdDays();
-      const metrics: DashboardMetrics = this.deps.records.aggregateSql(baseDate, thresholdDays);
+      const metrics: DashboardMetrics = this.deps.stats.metrics(baseDate, thresholdDays);
       const nearEnd: string = addDays(baseDate, thresholdDays);
 
       // B2：先按同条件 COUNT，再只取当前页；过期过多时也不会挤掉临期项。
@@ -144,34 +147,5 @@ export class DashboardService {
         alertsStatus: result.data.alertsStatus,
       },
     };
-  }
-
-  /**
-   * 供自测交叉验证：用 domain.aggregateRules 对同一批有效记录重算 6 组指标，
-   * 必须与 snapshot() 的 SQL 单遍聚合逐字段相等。
-   */
-  crossCheckWithDomain(): { sql: DashboardMetrics; rules: DashboardMetrics; equal: boolean } {
-    return deferredTransaction(this.deps.db, () => {
-      const baseDate: string = serverToday();
-      const thresholdDays: number = this.deps.settings.getThresholdDays();
-      const sql: DashboardMetrics = this.deps.records.aggregateSql(baseDate, thresholdDays);
-      const rows: AggregateRecord[] = [];
-      for (const row of this.deps.records.iterate({}, baseDate, thresholdDays)) {
-        rows.push(toAggregateRecord(row));
-      }
-      const rules: DashboardMetrics = aggregateRules(rows, baseDate, thresholdDays);
-      const keys: readonly (keyof DashboardMetrics)[] = [
-        'totalAmountCents',
-        'totalRecords',
-        'distinctProducts',
-        'totalQuantity',
-        'nearExpiryCount',
-        'nearExpiryAmountCents',
-        'expiredCount',
-        'expiredAmountCents',
-      ];
-      const equal: boolean = keys.every((key) => sql[key] === rules[key]);
-      return { sql, rules, equal };
-    });
   }
 }

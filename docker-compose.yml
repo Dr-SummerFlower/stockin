@@ -64,9 +64,11 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       ADMIN_GITHUB_LOGINS: ${ADMIN_GITHUB_LOGINS:-}
-      # 【逻辑备份 · 可选】公钥（DER/SPKI base64，单行）来自 .env；为空则逻辑备份不可用。
-      # 私钥只留本地 .keys/，不要写进 .env、镜像或仓库。改完需 `docker compose up -d`
-      # 重建容器（restart 不会重读环境变量）。
+      # 【逻辑备份 · 可选】默认公钥（P-256 SPKI/DER base64，单行）来自 .env。
+      # 私钥只留本地 .keys/，不要写进 .env、镜像或仓库。
+      # 只在首次启动、库内没有任何公钥时播种一条；此后轮换/增删全在管理台
+      # 「备份公钥」里做（入库，无需重建容器），本变量不再参与运行期逻辑。
+      # 改完需 `docker compose up -d` 重建容器（restart 不会重读环境变量）。
       BACKUP_PUBLIC_KEY: ${BACKUP_PUBLIC_KEY:-}
     volumes:
       - stockin-data:/app/data

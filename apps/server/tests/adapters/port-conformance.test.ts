@@ -181,17 +181,6 @@ for (const adapter of ADAPTERS) {
       expect(rows.map((row) => row.name)).toEqual(['A', 'B', 'C']);
     });
 
-    it('iterate 逐行产出，且不依赖 all()', () => {
-      for (const name of ['A', 'B', 'C', 'D']) {
-        db.prepare('INSERT INTO t (name) VALUES (?)').run(name);
-      }
-      const seen: string[] = [];
-      for (const row of db.prepare('SELECT name FROM t ORDER BY id').iterate()) {
-        seen.push((row as { name: string }).name);
-      }
-      expect(seen).toEqual(['A', 'B', 'C', 'D']);
-    });
-
     it('事务提交后数据可见', () => {
       db.transaction('immediate', () => {
         db.prepare('INSERT INTO t (name) VALUES (?)').run('X');

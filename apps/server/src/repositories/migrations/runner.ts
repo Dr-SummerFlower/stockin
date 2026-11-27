@@ -2,7 +2,9 @@
  * `NNN_*.sql` 三位递增迁移执行器。
  *
  * 依据：设计文档 v1.1 §4.5 / §7.3 —— 已发布脚本不可改；version 为唯一权威；
- * 迁移前自动快照、单脚本单事务（BEGIN IMMEDIATE）、失败即非零退出；
+ * 迁移前自动快照（2026-11-24 定调：升级前**只**做物理快照，逻辑备份放在迁移
+ * 成功之后由 `bootstrap()` 触发，见 `services/upgrade-backup.ts`）、单脚本单事务
+ * （BEGIN IMMEDIATE）、失败即非零退出；
  * fix-forward 优先，只有显式 CLI 放行才允许版本回退启动。
  *
  * SQL 模板中的 `{{NAME}}` 从 @stockin/shared 注入，确保业务常量单一真源。
@@ -129,6 +131,7 @@ export interface MigrationResult {
   readonly toVersion: number;
   readonly applied: readonly number[];
   readonly verdict: UserVersionVerdict;
+  /** 物理快照的跳过原因；`null` 表示已生成。 */
   readonly backupSkippedReason: string | null;
 }
 
@@ -145,23 +148,43 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
   );
 
   if (verdict === 'ok') {
-    return { fromVersion, toVersion: fromVersion, applied: [], verdict, backupSkippedReason: null };
+    return {
+      fromVersion,
+      toVersion: fromVersion,
+      applied: [],
+      verdict,
+      backupSkippedReason: null,
+    };
   }
   if (verdict === 'rollback-allowed') {
     logger.warn(
       { fromVersion, expected: SCHEMA_EXPECTED },
       '[migration] 已消费一次性回滚放行：仅放行启动，不自动降级数据；请尽快 fix-forward',
     );
-    return { fromVersion, toVersion: fromVersion, applied: [], verdict, backupSkippedReason: null };
+    return {
+      fromVersion,
+      toVersion: fromVersion,
+      applied: [],
+      verdict,
+      backupSkippedReason: null,
+    };
   }
 
   const files: MigrationFile[] = migrations.discover();
   const pending: MigrationFile[] = files.filter((file) => file.version > fromVersion);
   if (pending.length === 0) {
-    return { fromVersion, toVersion: fromVersion, applied: [], verdict, backupSkippedReason: null };
+    return {
+      fromVersion,
+      toVersion: fromVersion,
+      applied: [],
+      verdict,
+      backupSkippedReason: null,
+    };
   }
 
-  // 迁移前自动快照；空间不足只跳过、不阻断。
+  // 迁移前自动快照；空间不足只跳过、不阻断。逻辑备份不在这里做：它要读的是
+  // 迁移**之后**的数据（新结构、可直接在新版本恢复），由 bootstrap 在迁移成功
+  // 且统计就绪后再触发，见 `services/upgrade-backup.ts`。
   const snapshot = await backup.create(db, {
     reason: 'pre-migration',
     initState: options.initState,
@@ -193,5 +216,11 @@ export async function runMigrations(options: RunMigrationsOptions): Promise<Migr
       `[migration] 执行后版本=${toVersion}，与 SCHEMA_EXPECTED ${SCHEMA_EXPECTED} 不符`,
     );
   }
-  return { fromVersion, toVersion, applied, verdict, backupSkippedReason };
+  return {
+    fromVersion,
+    toVersion,
+    applied,
+    verdict,
+    backupSkippedReason,
+  };
 }

@@ -270,6 +270,29 @@ describe('Excel 模板与导出', () => {
     expect(sheet?.rowCount).toBe(2);
     expect(sheet?.getRow(2).getCell(1).value).toBe('导出啤酒');
   });
+
+  it('命中行数超过平台上限时返回 413，且不产出文件', async () => {
+    // Workers 的 buffer 写出把整份工作簿建在 isolate 内存里，超限必须在建表前拒绝；
+    // 这里用 exportMaxRows:1 在 Node 上复现同一分支。
+    harness = await createHarness({ exportMaxRows: 1 });
+    const cookie: string = await harness.completeSetup('owner', 'Temp-Pass-2026-11-x9');
+    await harness.json('/api/records', { json: recordPayload('上限一'), cookie });
+    await harness.json('/api/records', {
+      json: recordPayload('上限二', { purchaseDate: '2026-11-11' }),
+      cookie,
+    });
+
+    const response = await harness.json<{
+      code: string;
+      details: { total: number; limit: number };
+    }>('/api/excel/export', { method: 'POST', json: { filter: {} }, cookie });
+
+    expect(response.status).toBe(413);
+    expect(response.body.code).toBe('EXCEL_EXPORT_TOO_LARGE');
+    expect(response.body.details).toMatchObject({ total: 2, limit: 1 });
+    // 错误响应不能带附件头，否则前端会把 JSON 当文件保存。
+    expect(response.headers.get('content-disposition')).toBeNull();
+  });
 });
 
 describe('Excel 导入', () => {

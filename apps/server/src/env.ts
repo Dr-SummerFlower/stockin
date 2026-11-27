@@ -59,7 +59,13 @@ export interface Env {
   /** 仅当显式设置 WEB_DIST_DIR（或自测覆盖）时才非 undefined；否则由运行时兜底。 */
   readonly staticRoot?: string;
   readonly backupKeepCount: number;
-  /** 逻辑备份公钥（DER/SPKI base64）；为空表示未配置，逻辑备份不可用。 */
+  /**
+   * 逻辑备份的默认公钥（DER/SPKI base64），**仅用于首次启动播种**。
+   *
+   * 库内 `backup_keys` 为空时，bootstrap 把这一把写入并设为启用中；之后
+   * 加密与验签一律只读库内公钥，本变量不再参与任何运行期逻辑。空串表示
+   * 未提供默认公钥（全新实例需自行到管理台添加公钥才能启用备份）。
+   */
   readonly backupPublicKey: string;
   readonly tmpfsBytes: number;
   readonly minFreeBytes: number;
@@ -85,6 +91,7 @@ export interface EnvOverrides {
   readonly backupDir?: string;
   readonly tmpDir?: string;
   readonly staticRoot?: string;
+  /** 首次启动播种用的默认逻辑备份公钥（单值）。 */
   readonly backupPublicKey?: string;
   /** 管理员 OAuth 覆盖（自测注入；缺省读 process.env.GITHUB_*）。 */
   readonly admin?: {
@@ -118,6 +125,33 @@ const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', 'localhost', '[::1]'];
 
 /** 最小可用空间推导：文档 §7.5 建议 200MB，取 shared 导入上限的 10 倍，不硬编码。 */
 const MIN_FREE_BYTES = 10 * IMPORT_MAX_UNCOMPRESSED_BYTES;
+
+/**
+ * P-256 SPKI/DER 的 base64 形状：91 个字符 + `=` 补齐，字符集固定。
+ * 只在启动时做形状校验，真正的密钥可用性由 WebCrypto 导入失败时报错
+ * （封装阶段已有错误日志，避免把异步导入塞进同步的 `loadEnv`）。
+ */
+const BACKUP_PUBLIC_KEY_PATTERN = /^[A-Za-z0-9+/]{80,}={0,2}$/;
+
+/**
+ * 解析首次启动播种用的默认公钥（单值）。
+ *
+ * 这是「一次性种子」，不是运行期锚点：bootstrap 在库内 `backup_keys` 为空时
+ * 把它写入并设为启用中，之后加密与验签只读库内，本值不再参与。
+ * 形状不合法直接抛错，避免把非法公钥播种进库。
+ */
+function parseBackupPublicKey(raw?: string): string {
+  const key: string = (raw ?? '').trim();
+  if (key === '') {
+    return '';
+  }
+  if (!BACKUP_PUBLIC_KEY_PATTERN.test(key)) {
+    throw new RangeError(
+      '[env] 逻辑备份默认公钥必须是单行 base64（P-256 SPKI/DER），检查是否带换行、空格或粘贴了私钥',
+    );
+  }
+  return key;
+}
 
 function parsePort(raw: number | string | undefined): number {
   if (raw === undefined || raw === '') {
@@ -319,11 +353,9 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     allowedLogins,
   };
 
-  const backupPublicKey: string = (
-    overrides.backupPublicKey ??
-    process.env.BACKUP_PUBLIC_KEY ??
-    ''
-  ).trim();
+  const backupPublicKey: string = parseBackupPublicKey(
+    overrides.backupPublicKey ?? process.env.BACKUP_PUBLIC_KEY,
+  );
 
   return {
     nodeEnv: overrides.nodeEnv ?? process.env.NODE_ENV ?? 'production',

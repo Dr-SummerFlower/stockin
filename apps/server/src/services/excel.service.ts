@@ -7,7 +7,8 @@
  * 导入前备份）；逐行 Zod + domain 补算；文件内 Map 自比 + 库内批量判重；
  * **有 issue 不开写事务直接 422**；全通过才 `BEGIN IMMEDIATE` 整批单事务
  * + 1 条汇总日志 + COMMIT；导出走 StreamingWorkbookWriter 逐行 commit +
- * Repository `iterate()` 游标 + 写入 Hono `stream()`（带第三参数错误处理器）。
+ * Repository 的 keyset 分页（`iteratePages`，内存水位与总行数无关）+ 写入 Hono
+ * `stream()`（带第三参数错误处理器）；Workers 的 buffer 路径另设行数上限。
  * 错误行号一律 Excel 物理行号。exceljs 仅本服务使用。
  */
 import { Writable } from 'node:stream';
@@ -55,6 +56,7 @@ import { toRecordFields, type WriteContext } from '../repositories/types';
 import type { Env } from '../env';
 import { serverToday, utcNowIso } from '../lib/today';
 import { logger } from '../lib/logger';
+import { errorResponse } from '../lib/response';
 import type { HeavyTaskGate } from './heavy-task';
 import type { BackupService } from './backup.service';
 import type { WorkbookReader } from '../runtime/ports';
@@ -79,6 +81,14 @@ export interface ExcelServiceDeps {
    * `stream` = 逐行流式管进响应；`buffer` = 整份生成后一次返回。
    */
   readonly excelWrite: ExcelWriteKind;
+  /**
+   * 单次导出的行数上限（`buffer` 写出方式必须有；`stream` 可不设）。
+   *
+   * Workers 的 buffer 路径把整份工作簿建在 128MB isolate 里，实测 5k 行峰值
+   * 堆约 60MB、10k 行约 72MB 且 RSS 更高，再往上必然 OOM。超限直接 413 并
+   * 提示缩小日期范围，不用 OOM 兜底（OOM 只会留下一个 1101）。
+   */
+  readonly exportMaxRows?: number;
 }
 
 export interface ExcelContext {
@@ -90,6 +100,17 @@ const ZIP_LOCAL_MAGIC = 0x04034b50;
 const ZIP_CENTRAL_MAGIC = 0x02014b50;
 const ZIP_EOCD_MAGIC = 0x06054b50;
 const MAX_CELLS = (IMPORT_MAX_ROWS + 1) * EXCEL_COLUMN_COUNT * 2;
+
+/**
+ * Workers 单次导出的行数上限（5,000 行）。
+ *
+ * 依据 2026-11-24 本机实测（exceljs 4.4.0，10 列 × N 行，`writeBuffer()`）：
+ * 2k 行峰值堆 ≈ 8MB，5k 行 ≈ 60MB，10k 行 ≈ 72MB 且 RSS 更高。Workers 单
+ * isolate 只有 128MB，且 workerd 的 zip 与字符串开销比 Node 更大，故取 5k
+ * （约一个月的高峰数据量：2,000 商品 × 每月一次）留出余量。
+ * Node 走流式写出，不受此限。
+ */
+export const EXCEL_EXPORT_MAX_ROWS_WORKERS = 5000;
 
 /** 从 EOCD + central directory 估算解压后总字节数（不解压、不读系统时钟）。 */
 export function estimateZipUncompressedSize(buffer: Buffer): {
@@ -225,6 +246,24 @@ export class ExcelService {
   ): Response | Promise<Response> {
     const thresholdDays: number = this.deps.settings.getThresholdDays();
     const today: string = serverToday();
+
+    // 先判上限再写响应头：一旦设置了 content-disposition，就必须返回一份文件，
+    // 不能再退回 JSON 错误体。COUNT 与 iteratePages 共用同一套筛选条件，正常
+    // 情况下两者一致；Workers 的 await 点可能插入并发写入，因此这是**宽松**
+    // 上限 —— 5000 行本身留有余量，多几行不会立刻 OOM。要严格卡死需要快照
+    // 事务或先物化全部行，前者会阻塞写入、后者正是这个上限要防的内存问题。
+    const maxRows: number | undefined = this.deps.exportMaxRows;
+    if (maxRows !== undefined) {
+      const total: number = this.deps.records.count(filter, today, thresholdDays);
+      if (total > maxRows) {
+        return errorResponse(ErrorCode.EXCEL_EXPORT_TOO_LARGE, ctx.requestId, {
+          total,
+          limit: maxRows,
+          reason: `命中 ${total} 行，超过当前平台单次导出上限 ${maxRows} 行；请缩小进货日期范围后分批导出`,
+        });
+      }
+    }
+
     // 数据导出不写审计：只读、非状态变更，属「只留关键操作」移除范围。
     this.setDownloadHeaders(c, 'stockin-export.xlsx');
 
@@ -302,7 +341,7 @@ export class ExcelService {
       (headerRow as unknown as { commit(): void }).commit();
     }
     let written = 0;
-    for (const row of this.deps.records.iterate(filter, today, thresholdDays)) {
+    for (const row of this.deps.records.iteratePages(filter, today, thresholdDays)) {
       const fields = toRecordFields(row);
       const added = sheet.addRow([
         fields.name,

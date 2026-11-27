@@ -170,17 +170,26 @@ export function encodeTicketPayload(payload: RestoreTicketPayload): Uint8Array {
 /**
  * 恢复包的"数据摘要"：对所有 `table` 行按出现顺序做规范化 JSON 后拼接再 hash。
  * 与票据 dataSha256 对应，用于服务端验证数据未被篡改。
+ *
+ * 用累加字符串而不是 `map + join`：V8 的 cons string 让追加接近 O(1)，只在
+ * `TextEncoder` 时展开一次；旧写法会同时驻留「逐表字符串数组 + join 结果 +
+ * 编码字节」三份副本，大包在 Workers 上直接顶到内存上限。
  */
 export async function restoreDataDigest(tables: readonly RestoreTable[]): Promise<string> {
-  const parts: string[] = tables.map((table) =>
-    JSON.stringify({
+  let payload = '';
+  for (let index = 0; index < tables.length; index += 1) {
+    const table = tables[index];
+    if (index > 0) {
+      payload += '\n';
+    }
+    payload += JSON.stringify({
       kind: 'table',
       table: table.table,
       columns: table.columns,
       rows: table.rows,
-    }),
-  );
-  return hashBackupBytes(new TextEncoder().encode(parts.join('\n')));
+    });
+  }
+  return hashBackupBytes(new TextEncoder().encode(payload));
 }
 
 /**

@@ -14,10 +14,12 @@
  *     执行后补一次 `SELECT last_insert_rowid()`（同连接，事务内同样成立）。
  *  ③ **不能 `exec('BEGIN')`**：事务必须走 `transactionSync`；`immediate` 与
  *     `deferred` 在此处无区别（DO 单实例串行执行，本身即写者独占）。
+ *  ④ **没有可跨 `await` 的游标**：端口因此不提供 `iterate`，无界扫描一律走
+ *     Repository 的 keyset 分页（见 `db.port.ts` 的说明）。
  *
- * **现状边界（勿误读）**：本适配器是"端口可移植性"的证明 + 一致性测试对象，
- * **尚未**接入 Worker 入口。上 Workers 还差三块与驱动无关的工作：
- * 迁移脚本从 `fs` 改内联、备份改 PITR、Excel 导入导出的临时文件改内存流。
+ * **现状边界（勿误读）**：本适配器已接入 Worker 入口（`runtime/workers/db.factory.ts`），
+ * 与驱动无关的三块工作（迁移内联、备份改 PITR、Excel 临时文件改内存）分别由
+ * `migration-source.inline.ts`、`backup.pitr.ts`、`workbook.memory.ts` 承担。
  */
 import {
   UnsupportedCapabilityError,
@@ -86,12 +88,6 @@ function wrapStatement(storage: DoSqlStorageLike, sql: string): StatementPort {
   return {
     get: (...params: unknown[]): unknown => storage.exec(sql, ...params).toArray()[0],
     all: (...params: unknown[]): unknown[] => storage.exec(sql, ...params).toArray(),
-    iterate: (...params: unknown[]): IterableIterator<unknown> => {
-      // 游标跨 await 会失去快照语义（官方明确警告），故先同步物化再迭代。
-      // 对 DO 而言内存上限由上层的 SELECT 条件控制，导出链路仍按行消费。
-      const rows: unknown[] = storage.exec(sql, ...params).toArray();
-      return rows[Symbol.iterator]();
-    },
     run: (...params: unknown[]): RunResultPort => {
       const cursor: DoSqlCursorLike = storage.exec(sql, ...params);
       // 必须消费游标语句才会真正执行（DO 的 cursor 是惰性的）。

@@ -26,6 +26,11 @@ export interface WorkersRuntimeInput {
   readonly assets: AssetsBinding;
   /** 平台 `env` 对象（含 `[vars]` 与绑定）。 */
   readonly vars: Record<string, unknown>;
+  /**
+   * DO 关键区串行化，直接接 `ctx.blockConcurrencyWhile`。
+   * 目前只用于恢复批次的一次性消费（`get → put` 不能被并发请求插入）。
+   */
+  readonly runExclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -67,7 +72,7 @@ export function workersRuntime(input: WorkersRuntimeInput): RuntimeBundle {
     },
 
     restoreStaging() {
-      return createKvRestoreStaging({ storage: input.storage });
+      return createKvRestoreStaging({ storage: input.storage, runExclusive: input.runExclusive });
     },
   };
 }

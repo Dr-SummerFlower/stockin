@@ -88,3 +88,32 @@ export interface BackupSettingsResponse {
   readonly logicalBackupIntervalDays: number;
   readonly physicalBackupIntervalDays: number;
 }
+
+/** 备份公钥条目的来源：全部由管理台维护并落库，可增删启用。 */
+export type BackupKeySource = 'database';
+
+/** 公钥条目。**永不含私钥**，`keyId` 即公钥 SHA-256 前 32 位，可与本地 `.keys/` 对照。 */
+export interface BackupKeyItem {
+  readonly keyId: string;
+  readonly label: string;
+  /** 当前用于加密新备份的那一把（全局唯一）。 */
+  readonly active: boolean;
+  readonly source: BackupKeySource;
+  readonly createdAt: string | null;
+  readonly activatedAt: string | null;
+}
+
+/** GET /api/admin/backup-keys */
+export interface BackupKeyListResponse {
+  readonly items: readonly BackupKeyItem[];
+  /** 是否有可用于加密的公钥（逻辑备份与恢复的开关）。 */
+  readonly enabled: boolean;
+}
+
+/** POST /api/admin/backup-keys */
+export interface BackupKeyAddRequest {
+  readonly publicKey: string;
+  readonly label?: string;
+  /** 新增后立即设为加密公钥（首次接管时用）。 */
+  readonly activate?: boolean;
+}

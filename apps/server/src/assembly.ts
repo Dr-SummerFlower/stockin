@@ -16,15 +16,21 @@ import type { BootstrapRepositories, ResolvedPorts } from './bootstrap';
 import type { PlatformProfile } from './runtime/platform';
 import { logger } from './lib/logger';
 import { LogicalBackupRepository } from './repositories/logical-backup.repository';
+import { BackupKeyRepository } from './repositories/backup-key.repository';
+import { BackupKeyService } from './services/backup-key.service';
 import { LogicalBackupService } from './services/logical-backup.service';
-import { RestoreService } from './services/restore.service';
+import {
+  RestoreService,
+  RESTORE_MAX_BYTES_NODE,
+  RESTORE_MAX_BYTES_WORKERS,
+} from './services/restore.service';
 import { AuthService } from './services/auth.service';
 import { AdminAuthService } from './services/admin-auth.service';
 import { AdminService } from './services/admin.service';
 import { BackupService } from './services/backup.service';
 import { BackupScheduler } from './services/backup-scheduler';
 import { DashboardService } from './services/dashboard.service';
-import { ExcelService } from './services/excel.service';
+import { ExcelService, EXCEL_EXPORT_MAX_ROWS_WORKERS } from './services/excel.service';
 import { HealthService } from './services/health.service';
 import { RecordService } from './services/record.service';
 import { heavyTaskGate } from './services/heavy-task';
@@ -35,6 +41,13 @@ export interface AssemblyInput {
   readonly repositories: BootstrapRepositories;
   readonly ports: ResolvedPorts;
   readonly platform: PlatformProfile;
+  /**
+   * 覆盖平台默认的单次导出行上限。
+   *
+   * 缺省按运行时取：Workers（buffer 写出、128MB 内存）5,000 行，Node（流式写出）
+   * 不设限。留出这个口子是给「同运行时换部署规格」和测试用的，业务代码不读它。
+   */
+  readonly exportMaxRows?: number;
 }
 
 /** 装配结果：应用实例 + 生命周期钩子。 */
@@ -71,23 +84,40 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     settings: repositories.settings,
     port: ports.backup,
   });
+  const backupKeys = new BackupKeyService({
+    db,
+    repo: new BackupKeyRepository(db),
+    logs: repositories.logs,
+  });
   const logicalBackup = new LogicalBackupService({
     db,
-    env,
     repo: new LogicalBackupRepository(db),
     settings: repositories.settings,
     meta: repositories.meta,
     logs: repositories.logs,
     scheduler: ports.backgroundScheduler,
     physicalBackup: backup,
+    keys: backupKeys,
   });
+  // 启动期无条件清理上次进程中断留下的 pending/running 任务：数据密钥只在
+  // 进程内存里，残留 job 不可能靠下一次 tick 恢复，却会让 hasActiveJob() 恒真、
+  // 所有后续入队都返回 COMMON_BUSY。此前只在升级备份路径调用，普通重启没有
+  // 清理点（见 .tmp/待办 TODO-01）。升级路径那次调用先于 assemble，这里重复
+  // 调用是幂等的（已无 stale job 时不做任何写入）。
+  logicalBackup.abandonStaleJobs();
   const restore = new RestoreService({
     db,
-    env,
     staging: ports.restoreStaging,
     meta: repositories.meta,
     logs: repositories.logs,
+    stats: repositories.stats,
+    keys: backupKeys,
     physicalBackup: backup,
+    // 恢复包解析的堆增量约为包体的 6 倍（2026-11-24 实测），Workers 128MB 内存
+    // 支撑不了几十 MB 的包；按运行时给上限，超限在读取第一个分块后立即拒绝，
+    // 让用户改在自托管 Node 上恢复，而不是让 isolate OOM。
+    maxRestoreBytes:
+      platform.target === 'workers' ? RESTORE_MAX_BYTES_WORKERS : RESTORE_MAX_BYTES_NODE,
   });
   // 调度器的 tick 回调在 Service 构造好后注入（bootstrap 阶段 Service 还不存在）。
   ports.backgroundScheduler.setTick(() => logicalBackup.tick());
@@ -129,6 +159,7 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
   const dashboard = new DashboardService({
     db,
     records: repositories.records,
+    stats: repositories.stats,
     settings: repositories.settings,
   });
   const excel = new ExcelService({
@@ -141,6 +172,10 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     backup,
     readWorkbook: ports.workbookReader,
     excelWrite: platform.excelWrite,
+    // buffer 写出把整份工作簿建在 isolate 内存里，必须限行；流式写出不受限。
+    exportMaxRows:
+      input.exportMaxRows ??
+      (platform.excelWrite === 'buffer' ? EXCEL_EXPORT_MAX_ROWS_WORKERS : undefined),
   });
 
   const deps: AppDeps = {
@@ -156,6 +191,7 @@ export function assemble(input: AssemblyInput): AssembledRuntime {
     backup,
     logicalBackup,
     restore,
+    backupKeys,
     health,
     gate,
     staticPort: ports.staticPort,

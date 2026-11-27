@@ -69,6 +69,7 @@ export const ACTION_LABELS: Readonly<Record<string, string>> = {
   ADMIN_DATA_EXPORT: '管理员导出数据',
   ADMIN_AUDIT_EXPORT: '管理员导出审计日志',
   ADMIN_OWNER_RESET: '管理员重置店主凭据',
+  BACKUP_KEY_UPDATE: '备份公钥维护',
 };
 
 /** target_type 中文文案。 */

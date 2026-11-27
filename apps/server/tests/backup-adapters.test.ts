@@ -4,7 +4,7 @@
  * 目标是把平台差异的分支也纳入覆盖率口径（这些文件此前 0%）。
  * 用内存 DoStorageLike 仿真 DO 的 KV + alarm，不依赖 workerd。
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -183,9 +183,89 @@ describe('Node 文件系统恢复暂存', () => {
       false,
     );
   });
+
+  it('消费标记 3 小时后过期：isConsumed 直接清理，可重新消费', async () => {
+    const consumedFile = path.join(dir, 'restore-staging', 'rb-ttl', '.consumed');
+    await staging.consumeBatch('rb-ttl', new Date(Date.now() + 60_000).toISOString());
+    expect(existsSync(consumedFile)).toBe(true);
+    // 把标记改成 3 小时前签发即已过期的状态。
+    writeFileSync(consumedFile, new Date(Date.now() - 1000).toISOString(), 'utf8');
+    expect(await staging.isConsumed('rb-ttl')).toBe(false);
+    expect(existsSync(consumedFile)).toBe(false);
+    expect(await staging.consumeBatch('rb-ttl', new Date(Date.now() + 60_000).toISOString())).toBe(
+      true,
+    );
+  });
 });
 
 describe('Workers KV 恢复暂存', () => {
+  /** 让 KV 读写各跨一次宏任务，放大 get→put 之间的交错窗口。 */
+  function slowStorage(base: DoStorageLike): DoStorageLike {
+    return {
+      ...base,
+      async get<T>(key: string): Promise<T | undefined> {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return base.get<T>(key);
+      },
+      async put(key: string, value: ArrayBuffer | ArrayBufferView | string): Promise<void> {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        await base.put(key, value);
+      },
+    };
+  }
+
+  /** 串行化器替身：对应 Workers 上的 `ctx.blockConcurrencyWhile`。 */
+  function createMutex(): <T>(fn: () => Promise<T>) => Promise<T> {
+    let tail: Promise<unknown> = Promise.resolve();
+    return <T>(fn: () => Promise<T>): Promise<T> => {
+      const run: Promise<T> = tail.then(fn, fn);
+      tail = run.catch(() => undefined);
+      return run;
+    };
+  }
+
+  it('并发 consumeBatch 未串行化会双成功，注入 runExclusive 后只成功一次', async () => {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+
+    // 基线：用屏障强制两个并发请求都先读到「未消费」再各自写入——这正是
+    // get→put 之间被插入时的竞态，说明「DO 单实例」本身不足以保证一次性消费。
+    const base = createMemoryStorage();
+    let arrived = 0;
+    let releaseBarrier: () => void = () => {};
+    const barrier = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const racing: DoStorageLike = {
+      ...base,
+      async get<T>(key: string): Promise<T | undefined> {
+        arrived += 1;
+        if (arrived >= 2) {
+          releaseBarrier();
+        }
+        await barrier;
+        return base.get<T>(key);
+      },
+    };
+    const plain = createKvRestoreStaging({ storage: racing });
+    const unguarded = await Promise.all([
+      plain.consumeBatch('rb-race', expiresAt),
+      plain.consumeBatch('rb-race', expiresAt),
+    ]);
+    expect(unguarded).toEqual([true, true]);
+
+    // 注入串行化（Workers 由 ctx.blockConcurrencyWhile 提供）后，只有一个成功。
+    const guarded = createKvRestoreStaging({
+      storage: slowStorage(createMemoryStorage()),
+      runExclusive: createMutex(),
+    });
+    const serialized = await Promise.all([
+      guarded.consumeBatch('rb-race', expiresAt),
+      guarded.consumeBatch('rb-race', expiresAt),
+    ]);
+    expect(serialized.filter(Boolean)).toHaveLength(1);
+    expect(await guarded.isConsumed('rb-race')).toBe(true);
+  });
+
   it('分块 CRUD + 防重放 + 非法参数', async () => {
     const storage = createMemoryStorage();
     const staging = createKvRestoreStaging({ storage });
@@ -205,5 +285,19 @@ describe('Workers KV 恢复暂存', () => {
     await expect(staging.putChunk('../bad', 0, new Uint8Array([1]))).rejects.toThrow(/非法/);
     await expect(staging.putChunk('rb-3', -1, new Uint8Array([1]))).rejects.toThrow(/非法/);
     expect(await staging.consumeBatch('rb-3', new Date(Date.now() - 1).toISOString())).toBe(false);
+  });
+
+  it('消费标记过期后被清理，可重新消费', async () => {
+    const storage = createMemoryStorage();
+    const staging = createKvRestoreStaging({ storage });
+    const key = 'restore:rb-ttl:consumed';
+    await staging.consumeBatch('rb-ttl', new Date(Date.now() + 60_000).toISOString());
+    expect(await staging.isConsumed('rb-ttl')).toBe(true);
+    // 改写标记值为已过期时间戳。
+    await storage.put(key, new Date(Date.now() - 1000).toISOString());
+    expect(await staging.isConsumed('rb-ttl')).toBe(false);
+    expect(await staging.consumeBatch('rb-ttl', new Date(Date.now() + 60_000).toISOString())).toBe(
+      true,
+    );
   });
 });

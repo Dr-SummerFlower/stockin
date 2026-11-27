@@ -46,6 +46,9 @@ describe('workerEnvOverrides', () => {
       GITHUB_CLIENT_ID: '  cid  ',
       GITHUB_CLIENT_SECRET: ' csecret ',
       ADMIN_GITHUB_LOGINS: ' Alice,Bob ',
+      BACKUP_PUBLIC_KEY: ' pub-a ',
+      // 已废弃的复数锚点变量即使出现在平台 env 里也不再映射。
+      BACKUP_PUBLIC_KEYS: 'pub-b,pub-a',
     });
     expect(overrides).toEqual({
       port: '8787',
@@ -55,6 +58,8 @@ describe('workerEnvOverrides', () => {
       originScheme: 'https',
       cookieSecure: 'true',
       nodeEnv: 'production',
+      // 仅映射首次播种用的单值默认公钥；复数列表已废弃，不再映射。
+      backupPublicKey: 'pub-a',
       admin: {
         clientId: 'cid',
         clientSecret: 'csecret',

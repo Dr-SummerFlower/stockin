@@ -18,7 +18,6 @@
  */
 import { ErrorCode } from '@stockin/shared';
 import { randomUUID } from 'node:crypto';
-import type { Env } from '../env';
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
 import { SCHEMA_EXPECTED } from '../repositories/schema';
@@ -54,10 +53,10 @@ import { logger } from '../lib/logger';
 import type { ServiceResult } from '../app';
 import type { BackgroundTaskScheduler } from '../runtime/ports';
 import type { BackupService } from './backup.service';
+import type { BackupKeySource } from './backup-key.service';
 
 export interface LogicalBackupServiceDeps {
   readonly db: Db;
-  readonly env: Env;
   readonly repo: LogicalBackupRepository;
   readonly settings: SettingsRepository;
   readonly meta: MetaRepository;
@@ -65,6 +64,8 @@ export interface LogicalBackupServiceDeps {
   readonly scheduler: BackgroundTaskScheduler;
   /** 物理快照端口（危险操作/每次备份前刷新），可选：未注入时跳过。 */
   readonly physicalBackup?: BackupService;
+  /** 备份公钥：库内启用中的那把优先，缺省回落到部署锚点。 */
+  readonly keys: BackupKeySource;
 }
 
 /** job 的对外状态（不含游标等内部字段）。 */
@@ -108,17 +109,24 @@ const SCHEDULE_DELAY_MS = 25;
 /** 每份逻辑备份的明文上限（256MB，上限保护，防Gemini 记录异常膨胀撑爆 DO）。 */
 const MAX_PLAIN_BYTES = 256 * 1024 * 1024;
 
+/** 任务「卡死」判定阈值：超过这么久没有任何游标推进，即认为进程已中断。 */
+const STALE_JOB_MS = 10 * 60 * 1000;
+
 export class LogicalBackupService {
   constructor(private readonly deps: LogicalBackupServiceDeps) {}
 
-  /** 逻辑备份是否可用（公钥已配置）。 */
+  /** 逻辑备份是否可用（库内有公钥，或部署锚点已配置）。 */
   get enabled(): boolean {
-    return this.deps.env.backupPublicKey.trim() !== '';
+    return this.deps.keys.enabled;
   }
 
   /**
    * 入队一次逻辑备份。已有 active job 时返回 COMMON_BUSY（不排队双份）。
    * 成功返回 jobId，数据由调度器异步推进。
+   *
+   * meta 里的 `schemaVersion` 恒为 `SCHEMA_EXPECTED`：逻辑备份只描述**当前**库，
+   * 升级专用的那份也放在迁移成功之后生成（见 `services/upgrade-backup.ts`），
+   * 所以不存在「包里是旧结构、meta 写新版本」的情况。
    */
   async enqueue(reason: string, requestId = ''): Promise<ServiceResult<{ jobId: string }>> {
     if (!this.enabled) {
@@ -127,7 +135,8 @@ export class LogicalBackupService {
     let wrapped: WrappedKeyMaterial;
     let dataKey: CryptoKey;
     try {
-      const created = await createBackupDataKey(this.deps.env.backupPublicKey);
+      // 只用「启用中」的那把加密（轮换后新备份立即改用新密钥）；其余公钥仅参与验签。
+      const created = await createBackupDataKey(this.deps.keys.activePublicKey());
       wrapped = created.wrapped;
       dataKey = created.dataKey;
     } catch (error) {
@@ -227,9 +236,10 @@ export class LogicalBackupService {
       let cursorTable: string | null = job.cursor_table;
       let cursorRowid: number | null = job.cursor_rowid;
       let seq: number = job.chunk_seq;
-      let plainBytesTotal: number = 0;
-      const previous = this.deps.repo.listChunks(backup.id);
-      plainBytesTotal = previous.reduce((sum, chunk) => sum + chunk.plain_bytes, 0);
+      // 累计明文字节从 backup 行读，不要每轮 `listChunks()` 重算：那会把已写入的
+      // 全部密文（极端数据量约 36MB）读回内存，300 轮 tick 等于 O(n²) 的 IO。
+      // `plain_bytes` 与 chunk 插入在同一事务里推进，断点续跑也是准确的。
+      let plainBytesTotal: number = backup.plain_bytes;
 
       while (processed < maxChunks) {
         // 定位当前表：游标为 null 时从首表开始。
@@ -278,7 +288,7 @@ export class LogicalBackupService {
         }
 
         const encrypted = await encryptBackupChunk(
-          await importKeyFromWrapped(this.deps.env.backupPublicKey, backup),
+          await importKeyFromWrapped(backup),
           plaintext,
           chunkAad(backup.id, seq, table),
         );
@@ -320,7 +330,8 @@ export class LogicalBackupService {
 
   /** 完成收尾：算 manifest、标记 ready、GC、物理快照兜底。 */
   private async finish(backup: BackupRow, job: BackupJobRow): Promise<void> {
-    const chunks = this.deps.repo.listChunks(backup.id);
+    // 只读摘要列：收尾不需要密文本身（见 ChunkManifestRow 的注释）。
+    const chunks = this.deps.repo.listChunkManifest(backup.id);
     const entries: ManifestEntry[] = chunks.map((chunk) => ({
       seq: chunk.seq,
       table: chunk.table_name,
@@ -404,6 +415,38 @@ export class LogicalBackupService {
     if (failedBackup !== undefined) {
       uncacheDataKey(failedBackup.id);
     }
+  }
+
+  /**
+   * 把「明显卡死」的任务标记失败，返回作废的条数。
+   *
+   * 为什么需要：数据密钥只存在进程内存里，进程被 kill / DO 驱逐后那个 job 会
+   * 永远停在 pending 或 running。`hasActiveJob()` 因此恒真，后续每一次入队都
+   * 返回 COMMON_BUSY —— 表现是「备份按钮点了没反应」，而且恰好在升级前最要紧的
+   * 那次备份上失效。阈值取 10 分钟：一个 chunk 只有 200 行，12 万行正常不到
+   * 1 分钟就能推完；10 分钟没有任何游标推进只可能是进程已经没了。
+   */
+  abandonStaleJobs(nowMs: number = Date.now(), maxAgeMs: number = STALE_JOB_MS): number {
+    const stale = this.deps.repo.listActiveJobs().filter((job) => {
+      const ts: number = Date.parse(job.updated_at);
+      return !Number.isFinite(ts) || nowMs - ts > maxAgeMs;
+    });
+    for (const job of stale) {
+      immediateTransaction(this.deps.db, () => {
+        this.deps.repo.finishJob(job.id, 'failed', '进程中断，任务已作废（启动期清理）');
+        const backup: BackupRow | undefined = this.findBackupByJob(job.id);
+        if (backup !== undefined) {
+          this.deps.repo.markBackupFailed(backup.id);
+          uncacheDataKey(backup.id);
+        }
+        this.deps.repo.gcTerminal(LOGICAL_BACKUP_KEEP_COUNT);
+      });
+      logger.warn(
+        { jobId: job.id, updatedAt: job.updated_at },
+        '[logical-backup] 已作废卡死任务（长时间无游标推进）',
+      );
+    }
+    return stale.length;
   }
 
   /** 按间隔检查是否需要自动入队一次逻辑备份（由定时调度调用）。 */
@@ -553,9 +596,7 @@ export class LogicalBackupService {
   }
 
   private findBackupByJob(jobId: string): BackupRow | undefined {
-    return this.deps.db.prepare('SELECT * FROM backups WHERE job_id = ?').get(jobId) as
-      | BackupRow
-      | undefined;
+    return this.deps.repo.getBackupByJob(jobId);
   }
 }
 
@@ -584,8 +625,8 @@ export function clearDataKeyCache(): void {
   dataKeyCache.clear();
 }
 
-/** tick 取数据密钥：优先内存缓存；缺失时用公钥+信封信息重新派生（密钥封装的逆过程在本地脚本，服务端无私钥）。 */
-async function importKeyFromWrapped(_publicKey: string, backup: BackupRow): Promise<CryptoKey> {
+/** tick 取数据密钥：只认进程内缓存；缺失即失败（服务端无私钥，无法反解已封装的数据密钥）。 */
+async function importKeyFromWrapped(backup: BackupRow): Promise<CryptoKey> {
   const cached: CryptoKey | undefined = dataKeyCache.get(backup.id);
   if (cached !== undefined) {
     return cached;

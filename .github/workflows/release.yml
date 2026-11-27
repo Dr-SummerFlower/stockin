@@ -147,6 +147,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WORKER_ORIGIN: ${{ vars.WORKER_PUBLIC_ORIGIN || secrets.WORKER_PUBLIC_ORIGIN }}
+          # 公钥只经环境变量进入命令，不经 `--var` 明文下发、不落进部署配置。
+          BACKUP_PUBLIC_KEY_VALUE: ${{ secrets.BACKUP_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           RAW="${WORKER_ORIGIN#https://}"
@@ -169,8 +171,12 @@ jobs:
             printf 'enabled = false\n'
           } > .wrangler.preview.toml
           wrangler preview --config .wrangler.preview.toml --name dev \
-            --var "PUBLIC_ORIGINS:${PREVIEW_ORIGIN}" \
-            --var "BACKUP_PUBLIC_KEY:${{ secrets.BACKUP_PUBLIC_KEY }}"
+            --var "PUBLIC_ORIGINS:${PREVIEW_ORIGIN}"
+          if [[ -n "${BACKUP_PUBLIC_KEY_VALUE}" ]]; then
+            printf '%s' "${BACKUP_PUBLIC_KEY_VALUE}" \
+              | wrangler secret put BACKUP_PUBLIC_KEY --name dev \
+              || { echo "::error::预览环境写入备份默认公钥 Secret 失败，预览首次启动无法播种默认公钥"; exit 1; }
+          fi
           {
             echo "### Worker Preview"
             echo "${PREVIEW_ORIGIN}"
@@ -431,10 +437,12 @@ jobs:
           VERSION="${{ needs.publish.outputs.version }}"
           # 不用 set -e：deploy 失败时也要把 wrangler 的报错原样打出来，
           # 否则命令替换会把失败输出一起吞掉、日志里只剩一行 set -e 退出。
+          # 注意：**不再**用 `--var BACKUP_PUBLIC_KEY` 下发公钥——那样会让公钥以
+          # 明文留在 Worker 的 vars 配置里（控制台可见、随 wrangler 警告回显到日志）。
+          # 公钥改由下一步 `wrangler secret put` 注入（加密存储、只在运行时可见）。
           DOMAIN="${{ steps.origins.outputs.domain }}"
           ARGS=(deploy --name "${WORKER_NAME}" --tag "${VERSION}"
-            --var "PUBLIC_ORIGINS:${{ steps.origins.outputs.origins }}"
-            --var "BACKUP_PUBLIC_KEY:${{ secrets.BACKUP_PUBLIC_KEY }}")
+            --var "PUBLIC_ORIGINS:${{ steps.origins.outputs.origins }}")
           if [[ -n "${DOMAIN}" ]]; then
             ARGS+=(--domain "${DOMAIN}")
           fi
@@ -454,6 +462,32 @@ jobs:
           echo "url=${URL}" >> "${GITHUB_OUTPUT}"
           echo "### Worker 已部署 ${VERSION}" >> "${GITHUB_STEP_SUMMARY}"
           printf '%s\n' "${URL}" >> "${GITHUB_STEP_SUMMARY}"
+
+      # 公钥以 **Secret** 形式写入（加密存储、控制台不再明文可读、不经 --var 落进
+      # 部署配置）。顺序必须在 deploy 之后：deploy 会把历史上的同名明文 var 移除，
+      # 否则 secret put 会因「同名 var 已存在」被拒绝。
+      # 值只经环境变量进入管道，不拼进命令行，避免被日志或 `set -x` 回显。
+      - name: 写入备份公钥 Secret
+        working-directory: .tmp/artifacts/workers/stockin
+        shell: bash
+        env:
+          BACKUP_PUBLIC_KEY_VALUE: ${{ secrets.BACKUP_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BACKUP_PUBLIC_KEY_VALUE}" ]]; then
+            echo "::warning::未配置 Repository secret BACKUP_PUBLIC_KEY：Worker 首次启动不会播种默认公钥，需到管理台添加"
+            {
+              echo "### 未配置默认备份公钥"
+              echo '未配置 `BACKUP_PUBLIC_KEY`，首次启动不会播种默认公钥；请到管理台「备份公钥」添加一把以启用逻辑备份（店主侧功能不受影响）。'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          if ! printf '%s' "${BACKUP_PUBLIC_KEY_VALUE}" \
+            | wrangler secret put BACKUP_PUBLIC_KEY --name "${WORKER_NAME}"; then
+            echo "::error::写入 BACKUP_PUBLIC_KEY Secret 失败；若提示与同名变量冲突，请先在控制台删除该变量再重跑"
+            exit 1
+          fi
+          echo "- 默认备份公钥已写入 Secret（密文存储，运行时以 \`env.BACKUP_PUBLIC_KEY\` 注入，仅首次启动播种）" >> "${GITHUB_STEP_SUMMARY}"
 
       # 部署后冒烟：Worker 首次请求要跑迁移与 DO 初始化，失败会持续 5xx，
       # 因此重试而不是一次定论。

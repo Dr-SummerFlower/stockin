@@ -49,6 +49,7 @@ import { ROUTES, TOUCH_TARGET_MIN_PX } from '@/constants/routes';
 import EmptyState from '@/components/EmptyState';
 import LogicalBackupPanel from './LogicalBackupPanel';
 import BackupSettingsPanel from './BackupSettingsPanel';
+import BackupKeysPanel from './BackupKeysPanel';
 import RestorePanel from './RestorePanel';
 
 const { Title, Text, Paragraph } = Typography;
@@ -321,6 +322,7 @@ const AdminPage: React.FC = () => {
       </Card>
 
       <LogicalBackupPanel />
+      <BackupKeysPanel />
       <BackupSettingsPanel />
       <RestorePanel />
 

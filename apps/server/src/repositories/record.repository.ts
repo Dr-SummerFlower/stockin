@@ -5,7 +5,7 @@
  * 每条查询显式 `deleted_at IS NULL`；金额以分整数存储、禁止浮点累加；
  * SQL 内禁 `date('now')` / `CURRENT_DATE`，基准日与边界常量由应用层注入；
  * 八项判重用普通部分索引探测 + `IS` 做 NULL 安全等值；
- * 单遍条件聚合 6 组指标；导出走游标 `iterate()`，**禁止 all() 整表缓冲**。
+ * 单遍条件聚合 6 组指标；导出走 keyset 分页（`iteratePages`），**禁止 all() 整表缓冲**。
  */
 import {
   DEFAULT_EXPIRY_THRESHOLD_DAYS,
@@ -43,6 +43,9 @@ const SORT_COLUMNS: Readonly<Record<string, string>> = {
   quantity: 'quantity',
   amountCents: 'amount_cents',
 };
+
+/** 导出分页的页大小：500 行 ≈ 150KB 原始行数据，跨运行时都远低于内存上限。 */
+export const EXPORT_PAGE_SIZE = 500;
 
 function clampPageSize(raw: number | undefined): number {
   if (raw === undefined || !Number.isInteger(raw) || raw < 1) {
@@ -167,7 +170,7 @@ export class RecordRepository {
     return (this.db.prepare(sql).get(...params) as RecordRow | undefined) ?? null;
   }
 
-  /** `all()` 仅用于有界分页（pageSize <= MAX_PAGE_SIZE）；导出必须走 iterate()。 */
+  /** `all()` 仅用于有界分页（pageSize <= MAX_PAGE_SIZE）；导出必须走 iteratePages()。 */
   private rows(sql: string, ...params: unknown[]): RecordRow[] {
     return this.db.prepare(sql).all(...params) as RecordRow[];
   }
@@ -542,18 +545,60 @@ export class RecordRepository {
   }
 
   /**
-   * 导出专用游标：逐行迭代，**禁止 all() 整表缓冲**。
-   * 供 T03b 的 StreamingWorkbookWriter 与 domain.aggregateRules 兜底校验共用。
+   * 导出行数（与 `iteratePages` 同一套筛选条件）。
+   *
+   * 供「导出前先判上限」使用：Workers 的 buffer 写出方式要先把整份工作簿建在
+   * 内存里，必须在建表前就知道行数，不能靠 OOM 兜底。
    */
-  iterate(
+  count(
     filter: RecordFilter = {},
     today: string = '1970-01-01',
     thresholdDays: number = DEFAULT_EXPIRY_THRESHOLD_DAYS,
+  ): number {
+    const { where, params } = buildFilter(filter, today, thresholdDays);
+    return this.scalar(`SELECT COUNT(*) AS c FROM records WHERE ${where}`, ...params);
+  }
+
+  /**
+   * 导出专用 keyset 分页游标：每页最多 `pageSize` 行，**内存水位与总行数无关**。
+   *
+   * 为什么不用 SQL 游标：Durable Objects 的游标不能跨 `await`，端口层只能
+   * 先物化再迭代（见 `db.port.ts`），120k 行会在 128MB isolate 里直接顶满。
+   * 这里用 `(purchase_date, id) > (上一页末行)` 推进：与 `ORDER BY purchase_date,
+   * id` 严格同序（id 唯一，不会跳行或重复），并命中现成的部分索引
+   * `idx_records_active_purchase_date (purchase_date, id) WHERE deleted_at IS NULL`。
+   *
+   * `id` 参与排序键而不是只用 `purchase_date`：同一天多条记录时只按日期推进
+   * 会漏行。
+   */
+  *iteratePages(
+    filter: RecordFilter = {},
+    today: string = '1970-01-01',
+    thresholdDays: number = DEFAULT_EXPIRY_THRESHOLD_DAYS,
+    pageSize: number = EXPORT_PAGE_SIZE,
   ): IterableIterator<RecordRow> {
     const { where, params } = buildFilter(filter, today, thresholdDays);
     const stmt = this.db.prepare(
-      `SELECT * FROM records WHERE ${where} ORDER BY purchase_date ASC, id ASC`,
+      `SELECT * FROM records
+        WHERE ${where} AND (purchase_date > ? OR (purchase_date = ? AND id > ?))
+        ORDER BY purchase_date ASC, id ASC
+        LIMIT ?`,
     );
-    return stmt.iterate(...params) as IterableIterator<RecordRow>;
+    let lastDate = '';
+    let lastId = 0;
+    for (;;) {
+      const rows = stmt.all(...params, lastDate, lastDate, lastId, pageSize) as RecordRow[];
+      if (rows.length === 0) {
+        return;
+      }
+      for (const row of rows) {
+        lastDate = row.purchase_date;
+        lastId = row.id;
+        yield row;
+      }
+      if (rows.length < pageSize) {
+        return;
+      }
+    }
   }
 }

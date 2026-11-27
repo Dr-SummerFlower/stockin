@@ -27,13 +27,16 @@ export interface RunResultPort {
 export interface StatementPort {
   /** 取首行；无结果返回 undefined。 */
   get(...params: unknown[]): unknown;
-  /** 取全部行。 */
-  all(...params: unknown[]): unknown[];
   /**
-   * 逐行迭代游标，**不整表缓冲**。
-   * 导出链路（StreamingWorkbookWriter）依赖它控制内存水位，不允许退化成 all()。
+   * 取全部行。
+   *
+   * 端口**不提供**逐行游标（2026-11-24 移除 `iterate`）：Durable Objects 的
+   * 游标不能跨 `await`，适配器只能先 `toArray()` 再迭代，`iterate` 在 Workers
+   * 上就是整表物化——同一个方法在两种运行时语义不同，是最容易踩的内存陷阱。
+   * 无界扫描统一走 Repository 的 keyset 分页（`iteratePages`）：`LIMIT` 由 SQL
+   * 保证，Node 与 Workers 的内存水位一致。
    */
-  iterate(...params: unknown[]): IterableIterator<unknown>;
+  all(...params: unknown[]): unknown[];
   /** 执行写语句并返回影响面。 */
   run(...params: unknown[]): RunResultPort;
 }

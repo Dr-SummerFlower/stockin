@@ -42,6 +42,7 @@ import type { ExcelService } from './services/excel.service';
 import type { BackupService } from './services/backup.service';
 import type { LogicalBackupService } from './services/logical-backup.service';
 import type { RestoreService } from './services/restore.service';
+import type { BackupKeyService } from './services/backup-key.service';
 import { createApiRouter } from './routes';
 import { createSpaFallback } from './static';
 
@@ -71,6 +72,8 @@ export interface AppDeps {
   readonly logicalBackup: LogicalBackupService;
   /** 一次性恢复（管理员）：验签票据 + 全量恢复 + 清空会话。 */
   readonly restore: RestoreService;
+  /** 备份公钥（管理台维护；加密取启用中那把，验签取全部 + 部署锚点）。 */
+  readonly backupKeys: BackupKeyService;
   readonly health: HealthService;
   readonly gate: HeavyTaskGate;
   /**
