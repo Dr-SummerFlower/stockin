@@ -20,9 +20,16 @@ import {
   CSP_DEFAULT_SRC,
   CSP_HEADER_VALUE,
   CSP_STYLE_SRC,
+  HSTS_HEADER_VALUE,
   SECURITY_HEADERS,
 } from '@stockin/shared';
 import type { AppEnv } from '../types/hono';
+
+/** 安全头选项：只有 HTTPS 部署才下发 HSTS。 */
+export interface SecurityHeaderOptions {
+  /** `originScheme === 'https'` 时为 true；纯 HTTP 必须为 false。 */
+  readonly hsts: boolean;
+}
 
 /**
  * 把项目口径的安全头写到给定 Headers 上。
@@ -30,31 +37,41 @@ import type { AppEnv } from '../types/hono';
  * 抽成纯函数是为了让「中间件正常响应」与「onError 兜底」共用同一段代码：
  * 错误响应也要带 CSP，否则 500 页面在浏览器里会失去既有保护。
  *
+ * HSTS 按来源 scheme 分支：纯 HTTP 下**必须移除**（否则 IP:PORT 会被锁进
+ * 强制 https），HTTPS 下必须下发 —— 此前无条件删除，导致 Workers 部署
+ * 完全没有 HSTS（AUDIT-04）。
+ *
  * 注意这里**不写** `x-request-id`：它由 request-id 中间件统一签发，
  * 错误信封（`lib/response.ts`）另行带上同一个值，再在这里写一遍就是第三个真源。
  */
-export function applySecurityHeaders(headers: Headers): void {
+export function applySecurityHeaders(headers: Headers, options: SecurityHeaderOptions): void {
   headers.set('content-security-policy', CSP_HEADER_VALUE);
   headers.set('x-frame-options', SECURITY_HEADERS.X_FRAME_OPTIONS);
   headers.set('x-content-type-options', SECURITY_HEADERS.X_CONTENT_TYPE_OPTIONS);
   headers.set('referrer-policy', SECURITY_HEADERS.REFERRER_POLICY);
-  // 纯 HTTP 下显式移除任何可能被上游/框架补上的 HSTS。
-  headers.delete('strict-transport-security');
+  if (options.hsts) {
+    headers.set('strict-transport-security', HSTS_HEADER_VALUE);
+  } else {
+    // 纯 HTTP 下显式移除任何可能被上游/框架补上的 HSTS。
+    headers.delete('strict-transport-security');
+  }
 }
 
 /**
- * 构造安全头中间件。先让 hono/secure-headers 下发基线头（含显式关闭 HSTS），
+ * 构造安全头中间件。先让 hono/secure-headers 下发基线头（HSTS 按 scheme 开关），
  * 再用 shared 的 CSP_HEADER_VALUE 覆写 CSP，保证字面量与设计文档逐字一致。
  * 注册位置在 requestId 之后、CSRF 之前：洋葱模型下它的 after 代码在内层
  * 全部执行完之后运行，因此被 CSRF / bodyLimit / 限流直接拒绝的响应同样带全套头。
  */
-export function createSecureHeadersMiddleware(): MiddlewareHandler<AppEnv> {
+export function createSecureHeadersMiddleware(
+  options: SecurityHeaderOptions,
+): MiddlewareHandler<AppEnv> {
   const baseline = secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: [CSP_DEFAULT_SRC],
       styleSrc: CSP_STYLE_SRC.split(' '),
     },
-    strictTransportSecurity: false,
+    strictTransportSecurity: options.hsts ? HSTS_HEADER_VALUE : false,
     xFrameOptions: SECURITY_HEADERS.X_FRAME_OPTIONS,
     referrerPolicy: SECURITY_HEADERS.REFERRER_POLICY,
     xContentTypeOptions: SECURITY_HEADERS.X_CONTENT_TYPE_OPTIONS,
@@ -62,6 +79,6 @@ export function createSecureHeadersMiddleware(): MiddlewareHandler<AppEnv> {
 
   return async (c, next): Promise<void> => {
     await baseline(c, next);
-    applySecurityHeaders(c.res.headers);
+    applySecurityHeaders(c.res.headers, options);
   };
 }

@@ -85,6 +85,20 @@ function wrapStatement(storage: DoSqlStorageLike, sql: string): StatementPort {
     return toCount(firstValue(rows));
   };
 
+  /**
+   * 主表受影响行数（= Node 侧 `sqlite3_changes` 的口径）。
+   *
+   * **不要**用游标的 `rowsWritten`：它把触发器与索引层的写入也算进去，
+   * 而 `records` 上有 7 个统计/去重触发器，一次 UPDATE 会被放大 5~11 倍
+   * （线上实测：删 1 条明细报 7、恢复 1 条报 11）。`changes()` 只数顶层
+   * 语句直接改动的行，与 Node 完全一致；它读取的是最近一次 DML 的结果，
+   * 中间的 SELECT（含 last_insert_rowid）不会重置它。
+   */
+  const lastChanges = (): number => {
+    const rows: Record<string, unknown>[] = storage.exec('SELECT changes() AS c').toArray();
+    return toCount(firstValue(rows));
+  };
+
   return {
     get: (...params: unknown[]): unknown => storage.exec(sql, ...params).toArray()[0],
     all: (...params: unknown[]): unknown[] => storage.exec(sql, ...params).toArray(),
@@ -92,7 +106,8 @@ function wrapStatement(storage: DoSqlStorageLike, sql: string): StatementPort {
       const cursor: DoSqlCursorLike = storage.exec(sql, ...params);
       // 必须消费游标语句才会真正执行（DO 的 cursor 是惰性的）。
       cursor.toArray();
-      return { changes: toCount(cursor.rowsWritten), lastInsertRowid: lastInsertRowid() };
+      const changes: number = lastChanges();
+      return { changes, lastInsertRowid: lastInsertRowid() };
     },
   };
 }

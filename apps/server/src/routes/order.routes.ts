@@ -15,32 +15,20 @@ import {
   type OrderFilter,
 } from '@stockin/shared';
 import { errorResponse } from '../lib/response';
-import { parseIdParam } from './record.routes';
+import { parsePositiveIdParam, queryInt } from './query';
 import type { AppEnv } from '../types/hono';
 import type { AppDeps } from '../app';
 
 /** 从 query 构造单据筛选；形状校验走 shared 的 orderFilterSchema。 */
 export function parseOrderFilterQuery(c: Context): OrderFilter | null {
   const q = c.req.query();
-  const intOf = (raw: string | undefined): number | undefined => {
-    if (raw === undefined || raw.trim() === '') {
-      return undefined;
-    }
-    // 不能用 parseInt：它会把 `1.5` / `20abc` 静默截断成整数后通过 Zod。
-    // 原串必须是纯十进制整数，否则交给 schema 判 422（06-P2-5）。
-    const trimmed: string = raw.trim();
-    if (!/^\d+$/.test(trimmed)) {
-      return Number.NaN;
-    }
-    return Number(trimmed);
-  };
   const candidate: Record<string, unknown> = {
     q: q.q,
     supplier: q.supplier,
     purchaseDateFrom: q.purchaseDateFrom,
     purchaseDateTo: q.purchaseDateTo,
-    page: intOf(q.page),
-    pageSize: intOf(q.pageSize),
+    page: queryInt(q.page),
+    pageSize: queryInt(q.pageSize),
   };
   for (const key of Object.keys(candidate)) {
     if (candidate[key] === undefined) {
@@ -112,7 +100,7 @@ export function registerOrderRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   });
 
   api.get('/api/orders/:id', (c) => {
-    const id: number | null = parseIdParam(c);
+    const id: number | null = parsePositiveIdParam(c);
     if (id === null) {
       return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
     }
@@ -147,7 +135,7 @@ export function registerOrderRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   );
 
   api.delete('/api/orders/:id', (c) => {
-    const id: number | null = parseIdParam(c);
+    const id: number | null = parsePositiveIdParam(c);
     if (id === null) {
       return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
     }

@@ -8,7 +8,7 @@ import type { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { batchIdsSchema, DEFAULT_PAGE_SIZE, ErrorCode } from '@stockin/shared';
 import { errorResponse } from '../lib/response';
-import { parseIdParam } from './record.routes';
+import { parsePositiveIdParam } from './query';
 import type { AppEnv } from '../types/hono';
 import type { AppDeps } from '../app';
 
@@ -76,7 +76,7 @@ export function registerTrashRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   );
 
   api.post('/api/trash/:id/restore', (c) => {
-    const id: number | null = parseIdParam(c);
+    const id: number | null = parsePositiveIdParam(c);
     if (id === null) {
       return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
     }
@@ -87,7 +87,7 @@ export function registerTrashRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   });
 
   api.delete('/api/trash/:id', (c) => {
-    const id: number | null = parseIdParam(c);
+    const id: number | null = parsePositiveIdParam(c);
     if (id === null) {
       return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
     }

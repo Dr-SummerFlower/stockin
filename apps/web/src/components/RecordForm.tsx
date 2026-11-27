@@ -19,7 +19,7 @@
  * 后端契约不变，三天字段的联动全部由 `@stockin/domain` 负责。
  */
 import React, { useState } from 'react';
-import { Alert, Button, Select } from 'antd';
+import { Alert, App as AntdApp, Button, Select } from 'antd';
 import { ImeInput as Input } from '@/components/ImeInput';
 import {
   SCALE,
@@ -233,6 +233,48 @@ export function validateRecordForm(base: BaseFields, state: LinkageState): strin
   return null;
 }
 
+/**
+ * 表单内 Enter 不触发隐式提交。
+ *
+ * 日期选择器 / 数字框里按回车确认时，浏览器会顺带提交整张表单 —— 实测因此存下过
+ * 「只有名称和日期、金额全 0」的半张记录。只放行焦点在提交按钮上的回车。
+ */
+export function blockImplicitSubmit(event: React.KeyboardEvent<HTMLFormElement>): void {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  const target = event.target as HTMLElement;
+  if (target.tagName === 'TEXTAREA') {
+    return;
+  }
+  if (target instanceof HTMLButtonElement && target.type === 'submit') {
+    return;
+  }
+  event.preventDefault();
+}
+
+/** 单价 / 数量 / 金额是否全为 0（三项都为空时 draft 就是三个 0）。 */
+function isZeroAmount(draft: RecordDraft): boolean {
+  return draft.unitPrice === 0 && draft.quantity === 0 && draft.amountCents === 0;
+}
+
+/** 零金额记录的一次确认；返回 true 表示继续保存。 */
+function confirmZeroAmount(
+  modal: ReturnType<typeof AntdApp.useApp>['modal'],
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    modal.confirm({
+      title: '金额为 0，确认保存？',
+      content:
+        '单价、数量、金额都是 0：这条记录会计入笔数与商品种类，但不计入金额合计。赠品可以这样记。',
+      okText: '继续保存',
+      cancelText: '返回修改',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+}
+
 /** 来源三态：中文标签 + 语义色 + 输入底色三通道，颜色不单独承载状态。 */
 const SOURCE_TAG: Readonly<
   Record<string, { readonly cls: string; readonly text: string }>
@@ -284,6 +326,7 @@ const RecordForm: React.FC<RecordFormProps> = ({
     () => initial?.shelfLifeUnit ?? 'month',
   );
   const [formError, setFormError] = useState<string | null>(null);
+  const { modal } = AntdApp.useApp();
 
   const dispatch = (event: FieldEvent): void => {
     setLinkage((prev: LinkageState): LinkageState => applyFieldEvent(prev, event));
@@ -310,15 +353,29 @@ const RecordForm: React.FC<RecordFormProps> = ({
       return;
     }
     setFormError(null);
+    const draft: RecordDraft = buildRecordDraft(base, linkage, initial);
+    /**
+     * 三项全空 / 全 0 的记录没有任何金额意义，但「赠品」确实可能金额为 0，
+     * 所以不阻断、改成一次显式确认（AUDIT-08）。编辑既有记录时不打扰 ——
+     * 那是一条已经存过的历史数据。
+     */
+    if (initial === null && isZeroAmount(draft) && !(await confirmZeroAmount(modal))) {
+      return;
+    }
     try {
-      await onSubmit(buildRecordDraft(base, linkage, initial));
+      await onSubmit(draft);
     } catch (cause) {
       setFormError(errorMessage(cause, '保存失败'));
     }
   };
 
   return (
-    <form className="stockin-form-layout" onSubmit={submit} noValidate>
+    <form
+      className="stockin-form-layout"
+      onSubmit={submit}
+      onKeyDown={blockImplicitSubmit}
+      noValidate
+    >
       <div className="stockin-form-main">
         {formError !== null ? (
           <Alert

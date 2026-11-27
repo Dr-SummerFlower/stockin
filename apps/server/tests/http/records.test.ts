@@ -209,15 +209,72 @@ describe('记录增删改查', () => {
     expect(bad.body.details.reason).toContain('不一致');
   });
 
+  /**
+   * AUDIT-01：前端「数量 + 金额 → 自动单价」的方向也必须在容差内通过。
+   *
+   * 700 单位 = 700000、100.00 元 = 10000 分 → 单价 HALF_UP 到 4 位是 0.1429
+   * （1429）。正推 1429 × 700 = 100.03 元，比金额多 3 分 —— 只认正推会让这个
+   * 完全合法的录入方式永远存不进去。
+   */
+  it('「数量 + 金额」推导出的单价即使正推误差超过 1 分也能保存', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<{ unitPrice: number; amountCents: number }>('/api/records', {
+      json: payload({
+        name: '按总价录入',
+        unitPrice: 1_429,
+        quantity: 700_000,
+        amountCents: 10_000,
+        sources: {
+          productionDateSrc: 'EMPTY',
+          shelfLifeSrc: 'EMPTY',
+          expiryDateSrc: 'EMPTY',
+          unitPriceSrc: 'AUTO',
+          quantitySrc: 'MANUAL',
+          amountSrc: 'MANUAL',
+        },
+      }),
+      cookie,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.unitPrice).toBe(1_429);
+    expect(created.body.amountCents).toBe(10_000);
+  });
+
+  it('反推也对不上时仍然 422（容差没有被放大成任意值）', async () => {
+    const { h, cookie } = await ready();
+    // 单价既不是 10000/700000 的舍入值（1429），正推也差 > 1 分。
+    const bad = await h.json<{ code: string }>('/api/records', {
+      json: payload({
+        name: '两个方向都不一致',
+        unitPrice: 1_000,
+        quantity: 700_000,
+        amountCents: 10_000,
+      }),
+      cookie,
+    });
+    expect(bad.status).toBe(422);
+    expect(bad.body.code).toBe('VALID_FAILED');
+  });
+
   it('非数字 id 返回 400，非法筛选条件返回 422', async () => {
     const { h, cookie } = await ready();
     const badId = await h.json<{ code: string }>('/api/records/abc', { cookie });
     expect(badId.status).toBe(400);
     expect(badId.body.code).toBe('COMMON_BAD_REQUEST');
 
+    // AUDIT-07：`12abc` 不允许被 parseInt 截断成 12。
+    const truncatedId = await h.json<{ code: string }>('/api/records/12abc', { cookie });
+    expect(truncatedId.status).toBe(400);
+    expect(truncatedId.body.code).toBe('COMMON_BAD_REQUEST');
+
     const badFilter = await h.json<{ code: string }>('/api/records?sortBy=bogus', { cookie });
     expect(badFilter.status).toBe(422);
     expect(badFilter.body.code).toBe('VALID_FAILED');
+
+    // AUDIT-07：与单据侧同口径，`20abc` 必须 422 而不是静默按 20 处理。
+    const badPageSize = await h.json<{ code: string }>('/api/records?pageSize=20abc', { cookie });
+    expect(badPageSize.status).toBe(422);
+    expect(badPageSize.body.code).toBe('VALID_FAILED');
   });
 
   it('按名称筛选与分页参数生效', async () => {

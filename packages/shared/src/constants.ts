@@ -115,6 +115,15 @@ export const CSP_STYLE_SRC = "'self' 'unsafe-inline'";
 export const CSP_SCRIPT_SRC = "'self' 'unsafe-eval'";
 export const CSP_HEADER_VALUE = `default-src ${CSP_DEFAULT_SRC}; script-src ${CSP_SCRIPT_SRC}; style-src ${CSP_STYLE_SRC}`;
 
+/**
+ * HTTPS 部署的 HSTS 值（`ORIGIN_SCHEME=https` 时才下发）。
+ *
+ * 纯 HTTP 直连下必须**不**下发：把 `http://<IP>:<PORT>` 锁进 HSTS 会让浏览器
+ * 之后强制升级到该主机的 443，自托管场景直接失联。刻意不带 `includeSubDomains`
+ * ——个体商户常把应用挂在某个子域上，锁子域会波及同域其它服务。
+ */
+export const HSTS_HEADER_VALUE = 'max-age=31536000';
+
 /** 其他安全响应头字面量。文档 §3.6。 */
 export const SECURITY_HEADERS = {
   X_CONTENT_TYPE_OPTIONS: 'nosniff',

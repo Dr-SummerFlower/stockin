@@ -16,19 +16,13 @@ import {
   type RecordFilter,
 } from '@stockin/shared';
 import { errorResponse } from '../lib/response';
+import { parsePositiveIdParam, queryInt } from './query';
 import type { AppEnv } from '../types/hono';
 import type { AppDeps } from '../app';
 
 /** 从 query 构造筛选；形状校验走 shared 的 recordFilterSchema。 */
 export function parseRecordFilterQuery(c: Context): RecordFilter | null {
   const q = c.req.query();
-  const intOf = (raw: string | undefined): number | undefined => {
-    if (raw === undefined || raw.trim() === '') {
-      return undefined;
-    }
-    const value: number = Number.parseInt(raw, 10);
-    return Number.isInteger(value) ? value : undefined;
-  };
   const candidate: Record<string, unknown> = {
     name: q.name,
     purchaseDateFrom: q.purchaseDateFrom,
@@ -37,8 +31,8 @@ export function parseRecordFilterQuery(c: Context): RecordFilter | null {
     expiryDateTo: q.expiryDateTo,
     spec: q.spec,
     expiryStatus: q.expiryStatus,
-    page: intOf(q.page),
-    pageSize: intOf(q.pageSize),
+    page: queryInt(q.page),
+    pageSize: queryInt(q.pageSize),
     sortBy: q.sortBy,
     sortOrder: q.sortOrder,
   };
@@ -49,13 +43,6 @@ export function parseRecordFilterQuery(c: Context): RecordFilter | null {
   }
   const parsed = recordFilterSchema.safeParse(candidate);
   return parsed.success ? (parsed.data as RecordFilter) : null;
-}
-
-/** 解析正整数路径参数。 */
-export function parseIdParam(c: Context): number | null {
-  const raw: string = c.req.param('id') ?? '';
-  const value: number = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 /** 注册记录端点。 */
@@ -117,7 +104,7 @@ export function registerRecordRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   );
 
   api.get('/api/records/:id', (c) => {
-    const id: number | null = parseIdParam(c);
+    const id: number | null = parsePositiveIdParam(c);
     if (id === null) {
       return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
     }
@@ -157,7 +144,7 @@ export function registerRecordRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
       return;
     }),
     (c) => {
-      const id: number | null = parseIdParam(c);
+      const id: number | null = parsePositiveIdParam(c);
       if (id === null) {
         return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
       }
@@ -175,7 +162,7 @@ export function registerRecordRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   );
 
   api.delete('/api/records/:id', (c) => {
-    const id: number | null = parseIdParam(c);
+    const id: number | null = parsePositiveIdParam(c);
     if (id === null) {
       return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
     }

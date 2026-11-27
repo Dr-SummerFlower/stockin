@@ -94,6 +94,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   const spaFallback = createSpaFallback(document);
 
   const app = new Hono<AppEnv>();
+  // 安全头统一的口径：HSTS 只跟随来源 scheme，纯 HTTP 下不下发（AUDIT-04）。
+  const securityHeaderOptions = { hsts: deps.env.originScheme === 'https' } as const;
 
   // accessLog 注册在最外层：await next() 之后写日志，语义上位于链尾。
   app.use('*', createAccessLogMiddleware());
@@ -102,7 +104,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // 安全事件恰好是最需要溯源的那一类。
   app.use('*', createClientIpMiddleware());
   // 安全头只有这一个发起点（after 代码覆盖内层所有响应，含被直接拒绝的）。
-  app.use('*', createSecureHeadersMiddleware());
+  app.use('*', createSecureHeadersMiddleware(securityHeaderOptions));
   app.use('*', createCsrfMiddleware(deps.env.publicOrigins));
   app.use('*', createBodyLimitMiddleware());
   app.use('*', createRateLimitMiddleware());
@@ -152,7 +154,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     const response: Response = errorResponse(ErrorCode.COMMON_INTERNAL, requestId);
     // 异常可能发生在安全头中间件的内层之外（如中间件自身抛错），此处再调用
     // 同一个函数，保证「任何响应都带 CSP」这条不因注册顺序而漏。
-    applySecurityHeaders(response.headers);
+    applySecurityHeaders(response.headers, securityHeaderOptions);
     return response;
   });
 

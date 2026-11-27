@@ -354,10 +354,26 @@ export function errorRequestId(error: unknown): string {
   return error instanceof ApiError ? error.requestId : '';
 }
 
+/**
+ * 从 `details` 里取可执行的原因文案。
+ *
+ * 服务端对语义校验失败（金额与单价×数量不一致、日期不合法……）会在
+ * `details.reason` 给出具体原因，比信封上的「请求数据校验失败」有用得多；
+ * 单据明细还有 `details.index`（那一行会单独高亮）。
+ */
+function detailsReason(details: unknown): string | null {
+  if (typeof details !== 'object' || details === null) {
+    return null;
+  }
+  const reason: unknown = (details as { reason?: unknown }).reason;
+  return typeof reason === 'string' && reason.trim() !== '' ? reason : null;
+}
+
 /** 从任意异常提取用户可读文案。 */
 export function errorMessage(error: unknown, fallback: string = '操作失败'): string {
   if (error instanceof ApiError) {
-    return error.message;
+    // `details.reason` 优先：422 的信封文案是通用的，原因才指导用户怎么改。
+    return detailsReason(error.details) ?? error.message;
   }
   // 非 ApiError 的 Error 多为浏览器英文异常，只有中文文案才直接上屏。
   if (error instanceof Error && error.message !== '' && /[\u4e00-\u9fa5]/.test(error.message)) {

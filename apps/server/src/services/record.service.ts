@@ -24,7 +24,7 @@ import {
   type RecordSuggestionResponse,
   type RecordView,
 } from '@stockin/shared';
-import { fixedMul, isValidISODate, normalizeName } from '@stockin/domain';
+import { fixedDiv, fixedMul, isValidISODate, normalizeName } from '@stockin/domain';
 import type { Db } from '../repositories/db';
 import { immediateTransaction } from '../repositories/db';
 import type { RecordRepository, SuggestionRow } from '../repositories/record.repository';
@@ -114,7 +114,29 @@ export function validateRecordFields(fields: RecordFields): string | null {
     SCALE.AMOUNT_CENTS,
   );
   if (Math.abs(computed - fields.amountCents) > AMOUNT_ROUNDING_TOLERANCE_CENTS) {
-    return `金额与「单价 × 数量」不一致：期望 ${computed} 分，实际 ${fields.amountCents} 分`;
+    /**
+     * 反向一致性：「数量 + 金额 → 单价」，与 `domain.computeAmountGroup` 同一算法。
+     *
+     * 单价只有 4 位小数，数量大时「正推」必然产生超过 1 分的舍入差
+     * （误差上界 ≈ 数量/200 分），而前端在「数量+金额」这一组合下正是这样算单价的
+     * ——只认正推会把合法的「按总价录入」直接判死（800 单位 × 0.1429 ≈ 100.03 元）。
+     * 因此三选二的两个方向任一在容差内成立即视为一致，容差常量本身不变。
+     */
+    const derivedPrice: number | null = fixedDiv(
+      fields.amountCents,
+      fields.quantity,
+      SCALE.AMOUNT_CENTS,
+      SCALE.QUANTITY,
+      SCALE.UNIT_PRICE,
+    );
+    // 单价侧容差取 1 个最小单位（0.0001 元 = 0.01 分）：前端就是按 HALF_UP 算的，
+    // 正常情况下与这里的重算逐位相同。
+    const reverseOk: boolean =
+      derivedPrice !== null &&
+      Math.abs(derivedPrice - fields.unitPrice) <= AMOUNT_ROUNDING_TOLERANCE_CENTS;
+    if (!reverseOk) {
+      return `金额与「单价 × 数量」不一致：期望 ${computed} 分，实际 ${fields.amountCents} 分`;
+    }
   }
   return null;
 }

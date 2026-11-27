@@ -7,6 +7,8 @@
  * （P2-5 的回归点：安全事件恰恰最需要溯源）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HSTS_HEADER_VALUE } from '@stockin/shared';
+import { applySecurityHeaders } from '../../src/middleware/secure-headers';
 import { createHarness, TEST_ORIGIN, type Harness } from '../support/harness';
 
 let harness: Harness | null = null;
@@ -34,6 +36,18 @@ function expectSecurityHeaders(headers: Headers): void {
 }
 
 describe('CSRF 来源校验', () => {
+  it('HTTPS 部署下发 HSTS，纯 HTTP 不下发（AUDIT-04）', () => {
+    const https: Headers = new Headers();
+    applySecurityHeaders(https, { hsts: true });
+    expect(https.get('strict-transport-security')).toBe(HSTS_HEADER_VALUE);
+    expect(https.get('content-security-policy')).not.toBeNull();
+
+    const http: Headers = new Headers();
+    http.set('strict-transport-security', 'max-age=999');
+    applySecurityHeaders(http, { hsts: false });
+    expect(http.get('strict-transport-security')).toBeNull();
+  });
+
   it('伪造 Origin 的写请求返回 403', async () => {
     harness = await createHarness();
     const response = await harness.json<{ code: string }>('/api/auth/login', {

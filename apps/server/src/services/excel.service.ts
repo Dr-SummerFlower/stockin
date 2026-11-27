@@ -603,7 +603,19 @@ export class ExcelService {
         }
       }
 
-      const report: ImportReport = buildImportReport(dataRowCount, parsedRows.length, issues);
+      /**
+       * 有 issue 的数据行不算「通过」。
+       *
+       * 此前 `acceptedRows` 直接取 `parsedRows.length`：一行被判「库内重复」时它
+       * 仍在 `parsedRows` 里，报告会出现「2 行可导入、0 行被拒」却整体 422 的
+       * 自相矛盾结果（AUDIT-06）。按 issue 覆盖的物理行扣减后才与结论自洽。
+       * 表头 issue 的 row 是表头行，不参与数据行计数。
+       */
+      const rejectedRows = new Set<number>(
+        issues.filter((issue) => issue.row >= EXCEL_FIRST_DATA_ROW).map((issue) => issue.row),
+      );
+      const acceptedRows: number = parsedRows.filter((item) => !rejectedRows.has(item.row)).length;
+      const report: ImportReport = buildImportReport(dataRowCount, acceptedRows, issues);
       if (issues.length > 0 || parsedRows.length === 0) {
         // 有 issue：直接 422，绝不打开写事务、绝不部分写入。
         return { ok: false, code: ErrorCode.EXCEL_ROW_INVALID, details: report };

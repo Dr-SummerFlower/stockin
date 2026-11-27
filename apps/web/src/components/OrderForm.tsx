@@ -41,7 +41,12 @@ import NumericInput from '@/components/NumericInput';
 import DateInput from '@/components/DateInput';
 import Icon from '@/components/Icon';
 import SuggestionInput from '@/components/SuggestionInput';
-import { buildRecordDraft, linkageFrom, validateRecordForm } from '@/components/RecordForm';
+import {
+  blockImplicitSubmit,
+  buildRecordDraft,
+  linkageFrom,
+  validateRecordForm,
+} from '@/components/RecordForm';
 import { getRecordSuggestions, getProductNames } from '@/services/api/record';
 import { getNextOrderNo, getOrder, listOrders } from '@/services/api/order';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -1177,6 +1182,8 @@ const OrderForm: React.FC<OrderFormProps> = ({ submitting, onSubmit, onCancel })
         event.preventDefault();
         void doSubmit();
       }}
+      // 明细行里按回车（含日期弹层确认）不应把整单提交掉。
+      onKeyDown={blockImplicitSubmit}
       noValidate
     >
       {formError !== null ? (

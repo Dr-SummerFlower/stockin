@@ -353,6 +353,49 @@ describe('Excel 导入', () => {
     expect(list.body.items[0]?.name).toBe('导入花卷');
   });
 
+  it('库内重复行：报告把被拒行算作 rejected，而不是「全部可导入却整批失败」', async () => {
+    const { h, cookie } = await ready();
+    const row: readonly string[] = [
+      '重复花卷',
+      '2026-11-10',
+      '',
+      '30天',
+      '',
+      '散装',
+      '3.0000',
+      '2.000',
+      '6.00',
+      '',
+    ];
+    // 先落一条，再导一份「1 条新行 + 1 条与之完全相同的行」。
+    const first = await h.json('/api/excel/import', {
+      method: 'POST',
+      body: uploadBody(await buildWorkbook([row])),
+      cookie,
+    });
+    expect(first.status).toBe(200);
+
+    const duplicate: readonly string[] = [...row];
+    duplicate[0] = '重复花卷'; // 与已落库那条八项完全相同 → 命中库内判重
+    const second = await h.json<{
+      code: string;
+      details: { totalRows: number; acceptedRows: number; rejectedRows: number };
+    }>('/api/excel/import', {
+      method: 'POST',
+      body: uploadBody(await buildWorkbook([VALID_ROW, duplicate])),
+      cookie,
+    });
+
+    expect(second.status).toBe(422);
+    expect(second.body.code).toBe('EXCEL_ROW_INVALID');
+    // AUDIT-06：2 行里 1 行重复 → 1 通过 / 1 被拒，不能是 2 / 0。
+    expect(second.body.details).toMatchObject({
+      totalRows: 2,
+      acceptedRows: 1,
+      rejectedRows: 1,
+    });
+  });
+
   it('表头不一致返回 422 且一条都不落库（有 issue 不开写事务）', async () => {
     const { h, cookie } = await ready();
     const badHeaders: readonly string[] = EXCEL_HEADER_TEXTS.map((header, index) =>

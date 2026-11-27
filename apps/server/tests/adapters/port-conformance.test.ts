@@ -47,6 +47,9 @@ function createDoStorageFake(file: string): {
   readonly dispose: () => void;
 } {
   const raw: DatabaseSync = new DatabaseSync(file);
+  /** `total_changes()` 的累计值，用来复刻 DO `rowsWritten` 的「含触发器」语义。 */
+  const totalChanges = (): number =>
+    Number((raw.prepare('SELECT total_changes() AS c').get() as { c: number }).c);
   const sql: DoSqlStorageLike = {
     exec(query: string, ...bindings: unknown[]): DoSqlCursorLike {
       const args = bindings as never[];
@@ -55,8 +58,14 @@ function createDoStorageFake(file: string): {
         return makeCursor(rows, rows.length, 0);
       }
       try {
-        const info = raw.prepare(query).run(...args);
-        return makeCursor([], 0, Number(info.changes));
+        const before: number = totalChanges();
+        raw.prepare(query).run(...args);
+        /**
+         * **刻意复刻真实 DO 的放大语义**：`rowsWritten` 把触发器与索引层写进去的
+         * 行也算上（`total_changes` 的增量正好是「主表 + 触发器」）。
+         * 适配器必须改用 `SELECT changes()`，否则这里会与 Node 适配器分叉。
+         */
+        return makeCursor([], 0, totalChanges() - before);
       } catch {
         // 多语句脚本（迁移）无法 prepare，退回 exec。
         raw.exec(query);
@@ -164,6 +173,29 @@ for (const adapter of ADAPTERS) {
 
       const second = db.prepare('INSERT INTO t (name) VALUES (?)').run('面包');
       expect(second.lastInsertRowid).toBe(2);
+    });
+
+    /**
+     * AUDIT-02 回归：`changes` 必须是**主表受影响行数**。
+     *
+     * DO 的游标 `rowsWritten` 会把触发器写入也计入（这里用 `total_changes` 增量
+     * 复刻该语义），而 `records` 上有 7 个触发器；若适配器回退成读 `rowsWritten`，
+     * 这条断言会从 2 变成 4，线上表现为「删 1 条报 7 条」。
+     */
+    it('run 的 changes 只数主表行数，不含触发器写入', () => {
+      db.exec('CREATE TABLE stat (id INTEGER PRIMARY KEY, c INTEGER NOT NULL)');
+      db.exec('INSERT INTO stat (id, c) VALUES (1, 0)');
+      db.exec(
+        'CREATE TRIGGER trg_t_ins AFTER INSERT ON t BEGIN UPDATE stat SET c = c + 1 WHERE id = 1; END',
+      );
+      db.prepare('INSERT INTO t (name) VALUES (?)').run('A');
+      db.prepare('INSERT INTO t (name) VALUES (?)').run('B');
+
+      const updated = db.prepare('UPDATE t SET name = ? WHERE id > 0').run('X');
+      expect(updated.changes).toBe(2);
+
+      const stat = db.prepare('SELECT c FROM stat WHERE id = 1').get() as { c: number };
+      expect(stat.c).toBe(2);
     });
 
     it('get 命中返回行；未命中返回 undefined', () => {

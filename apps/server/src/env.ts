@@ -379,8 +379,3 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     nodeVersionExpected: NODE_VERSION_EXPECTED,
   };
 }
-
-/** 供 CSRF 中间件使用：解析出可信 Origin 的主机部分（含端口）。 */
-export function publicOriginHost(env: Env): string {
-  return new URL(env.publicOrigin).host;
-}

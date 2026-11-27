@@ -13,6 +13,7 @@ import {
 } from '../repositories/operation-log.repository';
 import type { AppEnv } from '../types/hono';
 import type { AppDeps } from '../app';
+import { queryNonNegativeOrUndefined } from './query';
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -53,21 +54,14 @@ export function parseLogDetail(raw: string | null): Record<string, unknown> | nu
 export function registerLogRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
   api.get('/api/operation-logs', (c) => {
     const q = c.req.query();
-    const intOf = (raw: string | undefined): number | undefined => {
-      if (raw === undefined || raw.trim() === '') {
-        return undefined;
-      }
-      const value: number = Number.parseInt(raw, 10);
-      return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
-    };
     const filter: OperationLogFilter = {
       action: q.action !== undefined && q.action !== '' ? (q.action as Action) : undefined,
       targetType: q.targetType !== '' ? q.targetType : undefined,
-      targetId: intOf(q.targetId),
+      targetId: queryNonNegativeOrUndefined(q.targetId),
       from: logBoundary(q.from, false),
       to: logBoundary(q.to, true),
-      limit: intOf(q.limit),
-      offset: intOf(q.offset),
+      limit: queryNonNegativeOrUndefined(q.limit),
+      offset: queryNonNegativeOrUndefined(q.offset),
     };
     const paging = normalizeLogPaging(filter);
     const rows = deps.repositories.logs.list(filter);

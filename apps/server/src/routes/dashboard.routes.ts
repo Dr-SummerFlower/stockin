@@ -13,20 +13,18 @@ import type { ExpiryAlertQuery, ExpiryAlertStatus } from '@stockin/shared';
 import { errorResponse } from '../lib/response';
 import type { AppEnv } from '../types/hono';
 import type { AppDeps } from '../app';
+import { queryPositiveOrUndefined } from './query';
 
 /** 解析预警清单分页参数；非法值一律回落为「不传」，由服务端给默认值。 */
 export function parseAlertQuery(c: Context): ExpiryAlertQuery {
   const q = c.req.query();
-  const intOf = (raw: string | undefined): number | undefined => {
-    if (raw === undefined || raw.trim() === '') {
-      return undefined;
-    }
-    const value: number = Number.parseInt(raw, 10);
-    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
-  };
   const status: ExpiryAlertStatus | undefined =
     q.status === 'near' || q.status === 'expired' ? q.status : undefined;
-  return { page: intOf(q.page), pageSize: intOf(q.pageSize), status };
+  return {
+    page: queryPositiveOrUndefined(q.page),
+    pageSize: queryPositiveOrUndefined(q.pageSize),
+    status,
+  };
 }
 
 /** 注册统计端点。 */

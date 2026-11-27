@@ -34,11 +34,6 @@ export function configureCookiePolicy(options: { secure: boolean }): void {
   cookieSecure = options.secure;
 }
 
-/** 当前生效的 Secure 值（自测与日志用）。 */
-export function cookieSecureNow(): boolean {
-  return cookieSecure;
-}
-
 /** 基线选项。刻意不传 `prefix`，避免 __Host- 前缀。 */
 function baseCookieOptions(): {
   httpOnly: boolean;
