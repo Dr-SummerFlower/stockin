@@ -170,13 +170,18 @@ jobs:
             printf 'previews_enabled = true\n'
             printf 'enabled = false\n'
           } > .wrangler.preview.toml
-          wrangler preview --config .wrangler.preview.toml --name dev \
-            --var "PUBLIC_ORIGINS:${PREVIEW_ORIGIN}"
+          # AUDIT-12 跟进：Worker Preview 是完全隔离的环境，**不继承生产 Secret**。
+          # `wrangler secret put --name dev` 的 --name 指 Worker 名（会写到独立的 dev Worker），
+          # 而不是 stockin 的 dev Preview —— 这是管理台一直显示「无公钥」的真正根因。
+          # 必须用 preview 专用命令写 Secret。放在 preview 部署之前：secret put 会另建一个
+          # deployment，紧随其后的 preview 部署用显式 --var 固化可信来源，避免 CSRF 403。
           if [[ -n "${BACKUP_PUBLIC_KEY_VALUE}" ]]; then
             printf '%s' "${BACKUP_PUBLIC_KEY_VALUE}" \
-              | wrangler secret put BACKUP_PUBLIC_KEY --name dev \
+              | wrangler preview secret put BACKUP_PUBLIC_KEY --name dev \
               || { echo "::error::预览环境写入备份默认公钥 Secret 失败，预览首次启动无法播种默认公钥"; exit 1; }
           fi
+          wrangler preview --config .wrangler.preview.toml --name dev \
+            --var "PUBLIC_ORIGINS:${PREVIEW_ORIGIN}"
           {
             echo "### Worker Preview"
             echo "${PREVIEW_ORIGIN}"
