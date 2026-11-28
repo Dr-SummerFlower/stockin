@@ -116,7 +116,9 @@ export class AdminAuthService {
       });
       const tokenData = (await tokenResponse.json()) as GithubTokenResponse;
       if (!tokenResponse.ok || typeof tokenData.access_token !== 'string') {
-        return this.fail('token-exchange', requestId, clientIp, nowUtc, tokenData.error);
+        return this.fail('token-exchange', requestId, clientIp, nowUtc, {
+          error: tokenData.error ?? null,
+        });
       }
 
       const userResponse: Response = await fetch(GITHUB_USER_URL, {
@@ -133,7 +135,7 @@ export class AdminAuthService {
       }
 
       if (!this.allowedLogins.includes(login)) {
-        return this.fail('not-allowed', requestId, clientIp, nowUtc, login);
+        return this.fail('not-allowed', requestId, clientIp, nowUtc, { login });
       }
 
       const account = this.deps.accounts.upsert(
@@ -170,18 +172,30 @@ export class AdminAuthService {
     }
   }
 
+  /**
+   * 统一的失败收口。
+   *
+   * `login` 与 `error` 分开记：换 token 失败时 GitHub 返回的是错误码
+   * （如 `bad_verification_code`），不是登录名；混进 `login` 会让事后审计
+   * 误判「谁尝试登录」，所以两个字段各自独立、缺省写 null。
+   */
   private fail(
     reason: string,
     requestId: string,
     clientIp: string,
     nowUtc: string,
-    login?: string,
+    extra: { readonly login?: string; readonly error?: string | null } = {},
   ): { ok: false; code: ErrorCode } {
     this.deps.logs.append({
       action: Action.ADMIN_LOGIN_FAILED,
       targetType: TARGET_TYPE.ADMIN,
       targetId: null,
-      detail: { reason, login: login ?? null, clientIp },
+      detail: {
+        reason,
+        login: extra.login ?? null,
+        error: extra.error ?? null,
+        clientIp,
+      },
       requestId,
       actor: 'admin:anonymous',
       occurredAt: nowUtc,
