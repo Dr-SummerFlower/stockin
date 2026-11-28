@@ -825,7 +825,7 @@ describe('单张进货单打印版导出', () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()) as unknown as ArrayBuffer);
     expect(workbook.worksheets.length).toBe(1);
-    const sheet = workbook.getWorksheet('进货单-第1页');
+    const sheet = workbook.getWorksheet('进货单');
     expect(sheet).toBeDefined();
     if (sheet === undefined) return;
     expect(sheet.getRow(1).getCell(1).value).toBe('进货单');
@@ -834,7 +834,9 @@ describe('单张进货单打印版导出', () => {
     expect(sheet.getRow(13).getCell(2).value).toBe('打印明细8');
     expectPrintFooter(sheet, 19);
     expect(sheet.pageSetup?.orientation).toBe('landscape');
-    expect(sheet.pageSetup?.fitToHeight).toBe(1);
+    // 单 sheet 多页时必须放开高度，否则 Excel 会把所有页压成一页。
+    expect(sheet.pageSetup?.fitToHeight).toBe(0);
+    expect(sheet.pageSetup?.printArea).toContain('A1:J19');
   });
 
   it('多页：12 条拆两页，序号连续且末页给出整单总计', async () => {
@@ -849,17 +851,22 @@ describe('单张进货单打印版导出', () => {
     expect(response.status).toBe(200);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()) as unknown as ArrayBuffer);
-    expect(workbook.worksheets.length).toBe(2);
-    const page1 = workbook.getWorksheet('进货单-第1页');
-    const page2 = workbook.getWorksheet('进货单-第2页');
-    expect(page1?.getRow(1).getCell(1).value).toBe('进货单(1/2)');
-    expect(page2?.getRow(1).getCell(1).value).toBe('进货单(2/2)');
-    expect(page1?.getRow(15).getCell(2).value).toBe('打印明细10');
-    expect(page2?.getRow(6).getCell(2).value).toBe('打印明细11');
-    expect(String(page2?.getRow(18).getCell(1).value ?? '')).toContain('整单总计：共 12 项');
+    // 多页仍只用一个 sheet，后续页接在同一张表里，靠分页符切分打印页。
+    expect(workbook.worksheets.length).toBe(1);
+    const sheet = workbook.getWorksheet('进货单');
+    expect(sheet).toBeDefined();
+    if (sheet === undefined) return;
+    expect(sheet.getRow(1).getCell(1).value).toBe('进货单(1/2)');
+    // 非末页 19 行（含 10 行空白明细），第 2 页从第 20 行开始。
+    expect(sheet.getRow(20).getCell(1).value).toBe('进货单(2/2)');
+    expect(sheet.getRow(15).getCell(2).value).toBe('打印明细10');
+    expect(sheet.getRow(25).getCell(2).value).toBe('打印明细11');
+    expect(String(sheet.getRow(37).getCell(1).value ?? '')).toContain('整单总计：共 12 项');
+    expect(sheet.pageSetup?.fitToHeight).toBe(0);
+    expect(sheet.pageSetup?.printArea).toContain('A1:J39');
     // 两页共用同一导出时刻；末页多一行整单总计，日期行随之下移。
-    const firstPrinted = expectPrintFooter(page1, 19);
-    expect(expectPrintFooter(page2, 20)).toBe(firstPrinted);
+    const firstPrinted = expectPrintFooter(sheet, 19);
+    expect(expectPrintFooter(sheet, 39)).toBe(firstPrinted);
   });
 
   it('单据不存在时返回 404', async () => {

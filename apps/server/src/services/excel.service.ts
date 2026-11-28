@@ -372,25 +372,27 @@ function sumPrintQuantity(items: readonly RecordView[]): number {
   return items.reduce((total, item) => total + item.quantity, 0) / SCALE.QUANTITY;
 }
 
-/** 写一页完整单据；每页都可单独打印（抬头、合计、备注、打印日期齐全）。 */
+/**
+ * 向同一工作表连续写一页单据（各页内容相同、只是一页装不下）；返回本页末行号，
+ * 由调用方在页间插入打印分页符。列宽与打印设置只由调用方设置一次。
+ */
 function writeOrderPrintPage(
-  workbook: ExcelJS.Workbook,
+  ws: ExcelJS.Worksheet,
+  startRow: number,
   pageItems: readonly RecordView[],
   pageIndex: number,
   pageCount: number,
   allItems: readonly RecordView[],
   meta: OrderPrintMeta,
   printedAt: string,
-): void {
-  const ws = workbook.addWorksheet(`进货单-第${pageIndex + 1}页`);
-  ORDER_PRINT_WIDTHS.forEach((width, index) => {
-    ws.getColumn(index + 1).width = width;
-  });
+): number {
+  const base = startRow - 1;
+  const rowOf = (offset: number): number => base + offset;
 
-  // 标题：多页时带页码；sheet 名沿用中文页码，避免 Excel 禁止的「/」。
+  // 标题：多页时带页码，方便打印出来的每一页单独核对。
   const title = pageCount === 1 ? '进货单' : `进货单(${pageIndex + 1}/${pageCount})`;
-  ws.getRow(1).height = 40;
-  putMerged(ws, 1, 1, 1, 10, title, {
+  ws.getRow(rowOf(1)).height = 40;
+  putMerged(ws, rowOf(1), 1, rowOf(1), 10, title, {
     size: 18,
     bold: true,
     align: 'center',
@@ -399,20 +401,20 @@ function writeOrderPrintPage(
   });
 
   // 抬头（两行，标签右对齐 + 值左对齐）。
-  ws.getRow(2).height = 26;
-  putMerged(ws, 2, 1, 2, 2, '单据编号：', { bold: true, align: 'right' });
-  putMerged(ws, 2, 3, 2, 5, meta.orderNo, { align: 'left' });
-  putMerged(ws, 2, 6, 2, 7, '供货商：', { bold: true, align: 'right' });
-  putMerged(ws, 2, 8, 2, 10, meta.supplier, { align: 'left' });
-  ws.getRow(3).height = 26;
-  putMerged(ws, 3, 1, 3, 2, '进货日期：', { bold: true, align: 'right' });
-  putMerged(ws, 3, 3, 3, 5, meta.purchaseDate, { align: 'left' });
-  putMerged(ws, 3, 6, 3, 7, '备    注：', { bold: true, align: 'right' });
-  putMerged(ws, 3, 8, 3, 10, meta.remark, { align: 'left', wrap: true });
-  ws.getRow(4).height = 8;
+  ws.getRow(rowOf(2)).height = 26;
+  putMerged(ws, rowOf(2), 1, rowOf(2), 2, '单据编号：', { bold: true, align: 'right' });
+  putMerged(ws, rowOf(2), 3, rowOf(2), 5, meta.orderNo, { align: 'left' });
+  putMerged(ws, rowOf(2), 6, rowOf(2), 7, '供货商：', { bold: true, align: 'right' });
+  putMerged(ws, rowOf(2), 8, rowOf(2), 10, meta.supplier, { align: 'left' });
+  ws.getRow(rowOf(3)).height = 26;
+  putMerged(ws, rowOf(3), 1, rowOf(3), 2, '进货日期：', { bold: true, align: 'right' });
+  putMerged(ws, rowOf(3), 3, rowOf(3), 5, meta.purchaseDate, { align: 'left' });
+  putMerged(ws, rowOf(3), 6, rowOf(3), 7, '备    注：', { bold: true, align: 'right' });
+  putMerged(ws, rowOf(3), 8, rowOf(3), 10, meta.remark, { align: 'left', wrap: true });
+  ws.getRow(rowOf(4)).height = 8;
 
   // 明细表头。
-  const headerRow = 5;
+  const headerRow = rowOf(5);
   ws.getRow(headerRow).height = 30;
   ORDER_PRINT_DETAIL_HEADERS.forEach((header, index) => {
     const cell = ws.getRow(headerRow).getCell(index + 1);
@@ -542,20 +544,7 @@ function writeOrderPrintPage(
     border: false,
     align: 'right',
   });
-
-  ws.views = [{ showGridLines: false }];
-  ws.pageSetup = {
-    orientation: 'landscape',
-    paperSize: 9,
-    fitToPage: true,
-    fitToWidth: 1,
-    fitToHeight: 1,
-    horizontalCentered: true,
-    // exceljs 从 pageSetup.printArea 读取打印区域（Worksheet 类型未单独暴露）。
-    printArea: `A1:J${signRow}`,
-    margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
-  };
-  // 页脚不再放日期与页码：日期以表内导出时刻为准，页码已在标题中。
+  return signRow;
 }
 
 /**
@@ -835,6 +824,11 @@ export class ExcelService {
 
     try {
       const workbook = new ExcelJS.Workbook();
+      // 一张单只建一个 sheet；多页用打印分页符切分，避免多 sheet 的重复列定义与样式开销。
+      const ws = workbook.addWorksheet('进货单');
+      ORDER_PRINT_WIDTHS.forEach((width, index): void => {
+        ws.getColumn(index + 1).width = width;
+      });
       const meta: OrderPrintMeta = {
         orderNo: order.orderNo,
         supplier: order.supplier,
@@ -849,9 +843,38 @@ export class ExcelService {
       if (pages.length === 0) pages.push([]);
       // 所有页共用一次导出时刻，时钟只从 today 模块读取（时区口径唯一）。
       const printedAt: string = formatServerDateTime(utcNowIso());
-      pages.forEach((page, index) => {
-        writeOrderPrintPage(workbook, page, index, pages.length, order.items, meta, printedAt);
-      });
+      let startRow = 1;
+      let lastRow = 1;
+      for (const [index, page] of pages.entries()) {
+        lastRow = writeOrderPrintPage(
+          ws,
+          startRow,
+          page,
+          index,
+          pages.length,
+          order.items,
+          meta,
+          printedAt,
+        );
+        if (index < pages.length - 1) {
+          // 分页符落在上一页末行：打印时下一页从下一行开始，每页仍是完整单据。
+          ws.getRow(lastRow).addPageBreak();
+          startRow = lastRow + 1;
+        }
+      }
+      ws.views = [{ showGridLines: false }];
+      ws.pageSetup = {
+        orientation: 'landscape',
+        paperSize: 9,
+        fitToPage: true,
+        fitToWidth: 1,
+        // 多页共用一个 sheet，高度必须放开；fitToHeight:1 会把所有页压成一页。
+        fitToHeight: 0,
+        horizontalCentered: true,
+        // exceljs 从 pageSetup.printArea 读取打印区域（Worksheet 类型未单独暴露）。
+        printArea: `A1:J${lastRow}`,
+        margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
+      };
       const bytes = await workbook.xlsx.writeBuffer();
       return c.body(bytes as unknown as ArrayBuffer, 200);
     } catch (error) {
