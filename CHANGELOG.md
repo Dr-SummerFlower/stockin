@@ -1,5 +1,68 @@
 # 变更记录
 
+## [1.4.0] - 2026-11-28
+
+### 新增
+
+- **release**：增加 pnpm pre 与 Worker Preview ([e9dc346](https://github.com/Dr-SummerFlower/stockin/commit/e9dc3461b18174c7da1abbb0e18812aa6e2e6c1f))
+- **backup**：建立加密逻辑备份基础 ([d8c2bbd](https://github.com/Dr-SummerFlower/stockin/commit/d8c2bbd4c4f86026c5fd5cef2fdbb52a1d7731e3))
+- **backup**：完成加密逻辑备份与恢复闭环 ([242a816](https://github.com/Dr-SummerFlower/stockin/commit/242a8163ad00355ed8f0df2948ccc175d2cc94b5))
+- **server**：备份公钥入库与升级双备份、统计分页改造（schema 6） ([0d813c4](https://github.com/Dr-SummerFlower/stockin/commit/0d813c4046f3442d88f01694543767870b55d94f))
+- **web**：进货单录入页面与手机端重排 ([5daeaf0](https://github.com/Dr-SummerFlower/stockin/commit/5daeaf0e18e2ec2ab1576d4e02f9c95e436d0349))
+- **server**：进货单契约与接口实现（schema 7） ([0a16fb5](https://github.com/Dr-SummerFlower/stockin/commit/0a16fb571190eda8846b943a328f94bbd2d56b63))
+- 进货单体验增强（步进器/续行/导出/按供货商候选） ([7ca1a0d](https://github.com/Dr-SummerFlower/stockin/commit/7ca1a0d78110de364748340c8fe59fe7e9420f44))
+- **server**：Excel 导出接入美化样式并新增单张进货单导出 ([46c6e3b](https://github.com/Dr-SummerFlower/stockin/commit/46c6e3b68262581a567f862f4c03a08a14468f0a))
+- **web**：进货单详情页移除打印改为导出 xlsx ([231c77b](https://github.com/Dr-SummerFlower/stockin/commit/231c77b2a09e0de977cd9e14de3a79e8ab163195))
+
+### 修复
+
+- **release**：收敛发布流程并保留预发布构建 ([2787b2c](https://github.com/Dr-SummerFlower/stockin/commit/2787b2cd124b3e24e1d2cf1f1cb9ea2da7956d50))
+- **pre**：统一用 git tag 触发预发布 ([ddaa588](https://github.com/Dr-SummerFlower/stockin/commit/ddaa5889badd0e02f266f285c5a759b9db1720f3))
+- **pre**：限制只能在 main 分支预发布 ([55881f8](https://github.com/Dr-SummerFlower/stockin/commit/55881f8f623ea723efd0c6c6aa71c13db73daca3))
+- **web**：修正手机端多处细节布局问题 ([a2c2abf](https://github.com/Dr-SummerFlower/stockin/commit/a2c2abf27630afb836f26706dcf8d2e8f4fd83f9))
+- **shared**：对齐恢复票据签名长度上限与注释 ([6501be3](https://github.com/Dr-SummerFlower/stockin/commit/6501be3e007f543b717ed98a27f6b3d43fa77a3c))
+- **server**：修复逻辑备份调度、迁移兼容与恢复校验缺陷 ([5673ddb](https://github.com/Dr-SummerFlower/stockin/commit/5673ddb34e661fe5e4c4fbaa9116cdb1d47e8e7a))
+- **web**：恢复面板区分票据文件解析失败 ([2886cf4](https://github.com/Dr-SummerFlower/stockin/commit/2886cf4c91036c0e80fda3e2627cabb7f275b038))
+- **deploy**：透传逻辑备份公钥并隔离本地密钥目录 ([b9cb59e](https://github.com/Dr-SummerFlower/stockin/commit/b9cb59e84db3bc9c88319383eaad960752a1e791))
+- **server**：迁移 SQL 末条语句后不得残留注释（修 pre 预览 1101） ([5daec2b](https://github.com/Dr-SummerFlower/stockin/commit/5daec2b072d7c2f08900228b3e7577ed53c093bf))
+- **server**：逻辑备份排除平台内部表（修 Workers 备份卡在 running） ([20bbe05](https://github.com/Dr-SummerFlower/stockin/commit/20bbe05b0b044cf80c4bf037338be8ad6324abe4))
+- 进货单联调与审查问题修复 ([30d7701](https://github.com/Dr-SummerFlower/stockin/commit/30d7701605c49aa2cbce6dcc0c1addb552c04b31))
+- **server**：逻辑备份 tick 重入保护与终态守卫 ([b206f42](https://github.com/Dr-SummerFlower/stockin/commit/b206f42580e898bc3b1601528ba507fa947fc053))
+- 审查问题批次修复（金额双向一致性 / DO changes / HSTS / 错误原因） ([3c2b309](https://github.com/Dr-SummerFlower/stockin/commit/3c2b309d54335515991f2a8006950ad8334e695b))
+- CSP nonce 放行 CF 注入脚本 + 备份公钥运行期补播种 ([10d51e4](https://github.com/Dr-SummerFlower/stockin/commit/10d51e42e3a956f739474c2144df88cf7a088462))
+- **ci**：备份公钥 Secret 改为写入 Worker Preview 而非独立 Worker ([ca996b0](https://github.com/Dr-SummerFlower/stockin/commit/ca996b0a4bad9dd221fe83197449734a1ff83f41))
+- **web**：进货单三选二完整可编辑并整理录入排版 ([b3c1a65](https://github.com/Dr-SummerFlower/stockin/commit/b3c1a65e0fc46f30e335bb1b15ef514ef7f6a0f8))
+- **release**：每个 pre tag 生成独立预发布 Release ([81efd6e](https://github.com/Dr-SummerFlower/stockin/commit/81efd6e0b9a0a043e29f85a14c63e16a61f745e2))
+- **web**：修复手机底部「记一笔」加号偏上偏小 ([50b7551](https://github.com/Dr-SummerFlower/stockin/commit/50b7551581b1f3981760ec2f706e266ba12e4940))
+- **admin**：登录失败审计区分 login 与 error ([b9e832c](https://github.com/Dr-SummerFlower/stockin/commit/b9e832c436d13582d3e27a849bdad5f0104deeff))
+- **release**：构建版本取发布 tag，预发布显示 pre-<sha7> ([ba81007](https://github.com/Dr-SummerFlower/stockin/commit/ba81007c0c693579e72abf0a60a0995c194cf366))
+- **web**：管理台备份模式说明按实际运行时修正 ([5cd9fc9](https://github.com/Dr-SummerFlower/stockin/commit/5cd9fc9ce5703d55c7e13998e011a62e035b200e))
+- **admin**：统一开发态 localhost，OAuth 回调后回跳前端 8000 ([c76c067](https://github.com/Dr-SummerFlower/stockin/commit/c76c067e30940cc3df535f3164e0fcd24dbd76e2))
+- **server**：调整进货单导出的标题与打印日期格式 ([4d09958](https://github.com/Dr-SummerFlower/stockin/commit/4d09958128a9caadfaee09f5500349a7ab90f5c6))
+
+### 重构
+
+- **server**：单张进货单导出改为单 sheet 打印分页 ([9509281](https://github.com/Dr-SummerFlower/stockin/commit/950928109f9ef323f062760d91b42bf092e5f89b))
+
+### 测试
+
+- **server**：补齐覆盖率断层并上调门槛 ([1c443e2](https://github.com/Dr-SummerFlower/stockin/commit/1c443e28977245b487aea30eb1dc2dbd2f57c933))
+
+### 文档
+
+- 同步 README 至进货单与 Excel 新导出能力 ([c90f272](https://github.com/Dr-SummerFlower/stockin/commit/c90f2723ab2165173519dd45c5963e5317538e47))
+
+### 持续集成
+
+- **release**：Release 正文去掉完整变更记录链接 ([e334f79](https://github.com/Dr-SummerFlower/stockin/commit/e334f796e1115a2a13d6c3dd6c2c97209c0e6e46))
+
+### 杂项
+
+- **verify**：清理 verify 全链路告警（43 条 → 0） ([b3662b2](https://github.com/Dr-SummerFlower/stockin/commit/b3662b2da9fa89b5922ae23787ffd35e802a7575))
+
+### 其他
+
+- **web**：虚线框标出进货单日期组与金额组 ([4d37ea1](https://github.com/Dr-SummerFlower/stockin/commit/4d37ea1cbcc670a37dbd8fb2fa377464d3416d57))
 ## [1.3.1] - 2026-11-22
 
 ### 修复
