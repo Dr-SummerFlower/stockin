@@ -372,7 +372,7 @@ function sumPrintQuantity(items: readonly RecordView[]): number {
   return items.reduce((total, item) => total + item.quantity, 0) / SCALE.QUANTITY;
 }
 
-/** 写一页完整单据；每页都可单独打印（抬头、合计、备注、签字栏齐全）。 */
+/** 写一页完整单据；每页都可单独打印（抬头、合计、备注、打印日期齐全）。 */
 function writeOrderPrintPage(
   workbook: ExcelJS.Workbook,
   pageItems: readonly RecordView[],
@@ -380,14 +380,15 @@ function writeOrderPrintPage(
   pageCount: number,
   allItems: readonly RecordView[],
   meta: OrderPrintMeta,
+  printedAt: string,
 ): void {
   const ws = workbook.addWorksheet(`进货单-第${pageIndex + 1}页`);
   ORDER_PRINT_WIDTHS.forEach((width, index) => {
     ws.getColumn(index + 1).width = width;
   });
 
-  // 标题：多页时带页码，sheet 名避免 Excel 禁止的「/」。
-  const title = pageCount === 1 ? '进 货 单' : `进 货 单　第 ${pageIndex + 1} / ${pageCount} 页`;
+  // 标题：多页时带页码；sheet 名沿用中文页码，避免 Excel 禁止的「/」。
+  const title = pageCount === 1 ? '进货单' : `进货单(${pageIndex + 1}/${pageCount})`;
   ws.getRow(1).height = 40;
   putMerged(ws, 1, 1, 1, 10, title, {
     size: 18,
@@ -529,7 +530,7 @@ function writeOrderPrintPage(
     cursor += 1;
   }
 
-  // 备注 + 签字栏（留空手写）。
+  // 备注保留；底部签字栏改为单一打印日期（导出时刻，所有页一致）。
   ws.getRow(cursor).height = 34;
   putMerged(ws, cursor, 1, cursor, 2, '备注：', { bold: true, align: 'right' });
   putMerged(ws, cursor, 3, cursor, 10, '本单商品已当面清点，数量与金额核对无误。', {
@@ -537,10 +538,7 @@ function writeOrderPrintPage(
   });
   const signRow = cursor + 1;
   ws.getRow(signRow).height = 36;
-  putMerged(ws, signRow, 1, signRow, 2, '制单人：____________', { border: false });
-  putMerged(ws, signRow, 3, signRow, 5, '供货商签字：____________', { border: false });
-  putMerged(ws, signRow, 6, signRow, 8, '验收人：____________', { border: false });
-  putMerged(ws, signRow, 9, signRow, 10, '日期：__年__月__日', {
+  putMerged(ws, signRow, 1, signRow, 10, `打印日期： ${printedAt}`, {
     border: false,
     align: 'right',
   });
@@ -557,7 +555,7 @@ function writeOrderPrintPage(
     printArea: `A1:J${signRow}`,
     margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
   };
-  ws.headerFooter.oddFooter = '&L打印日期：&D &T&R第 &P 页 / 共 &N 页';
+  // 页脚不再放日期与页码：日期以表内导出时刻为准，页码已在标题中。
 }
 
 /**
@@ -821,7 +819,7 @@ export class ExcelService {
   /**
    * GET /api/orders/:id/export：单张进货单的打印版（销货清单样式，A4 横向）。
    *
-   * 与汇总导出的区别：这里输出一张单的抬头 + 明细 + 合计 + 签字栏，含合并
+   * 与汇总导出的区别：这里输出一张单的抬头 + 明细 + 合计 + 打印日期，含合并
    * 单元格与标题行，**不可**作为 /api/excel/import 的输入。一张单最多 200 条
    * 明细，数据量小，Node / Workers 统一用 buffer 一次写出，规避流式 writer
    * 对合并单元格与打印设置的限制。
@@ -849,8 +847,10 @@ export class ExcelService {
       }
       // 空单据也要给出一张可打印的空白单。
       if (pages.length === 0) pages.push([]);
+      // 所有页共用一次导出时刻，时钟只从 today 模块读取（时区口径唯一）。
+      const printedAt: string = formatServerDateTime(utcNowIso());
       pages.forEach((page, index) => {
-        writeOrderPrintPage(workbook, page, index, pages.length, order.items, meta);
+        writeOrderPrintPage(workbook, page, index, pages.length, order.items, meta, printedAt);
       });
       const bytes = await workbook.xlsx.writeBuffer();
       return c.body(bytes as unknown as ArrayBuffer, 200);

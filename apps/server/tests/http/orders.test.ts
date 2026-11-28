@@ -793,6 +793,23 @@ describe('单张进货单打印版导出', () => {
     return Array.from({ length: count }, (_, index) => item({ name: `打印明细${index + 1}` }));
   }
 
+  /** 底部只留「打印日期： YYYY-MM-DD HH:MM」，签字栏字段必须全部消失。 */
+  function expectPrintFooter(ws: ExcelJS.Worksheet | undefined, dateRow: number): string {
+    expect(ws).toBeDefined();
+    if (ws === undefined) return '';
+    const printed: string = String(ws.getRow(dateRow).getCell(1).value ?? '');
+    expect(printed).toMatch(/^打印日期： \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    ws.eachRow((row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const text = String(cell.value ?? '');
+        expect(text).not.toContain('制单人');
+        expect(text).not.toContain('供货商签字');
+        expect(text).not.toContain('验收人');
+      });
+    });
+    return printed;
+  }
+
   it('单页：输出完整单据，含明细区 10 行与打印设置', async () => {
     const { h, cookie } = await ready();
     const created = await h.json<{ id: number }>('/api/orders', {
@@ -811,10 +828,11 @@ describe('单张进货单打印版导出', () => {
     const sheet = workbook.getWorksheet('进货单-第1页');
     expect(sheet).toBeDefined();
     if (sheet === undefined) return;
-    expect(sheet.getRow(1).getCell(1).value).toBe('进 货 单');
+    expect(sheet.getRow(1).getCell(1).value).toBe('进货单');
     expect(sheet.getRow(5).getCell(2).value).toBe('商品名称');
     expect(sheet.getRow(6).getCell(2).value).toBe('打印明细1');
     expect(sheet.getRow(13).getCell(2).value).toBe('打印明细8');
+    expectPrintFooter(sheet, 19);
     expect(sheet.pageSetup?.orientation).toBe('landscape');
     expect(sheet.pageSetup?.fitToHeight).toBe(1);
   });
@@ -834,11 +852,14 @@ describe('单张进货单打印版导出', () => {
     expect(workbook.worksheets.length).toBe(2);
     const page1 = workbook.getWorksheet('进货单-第1页');
     const page2 = workbook.getWorksheet('进货单-第2页');
-    expect(page1?.getRow(1).getCell(1).value).toBe('进 货 单　第 1 / 2 页');
-    expect(page2?.getRow(1).getCell(1).value).toBe('进 货 单　第 2 / 2 页');
+    expect(page1?.getRow(1).getCell(1).value).toBe('进货单(1/2)');
+    expect(page2?.getRow(1).getCell(1).value).toBe('进货单(2/2)');
     expect(page1?.getRow(15).getCell(2).value).toBe('打印明细10');
     expect(page2?.getRow(6).getCell(2).value).toBe('打印明细11');
     expect(String(page2?.getRow(18).getCell(1).value ?? '')).toContain('整单总计：共 12 项');
+    // 两页共用同一导出时刻；末页多一行整单总计，日期行随之下移。
+    const firstPrinted = expectPrintFooter(page1, 19);
+    expect(expectPrintFooter(page2, 20)).toBe(firstPrinted);
   });
 
   it('单据不存在时返回 404', async () => {
