@@ -63,9 +63,23 @@ function integrityText(value: string): string {
   return INTEGRITY_TEXT[value] ?? '校验结果未知';
 }
 
-/** 备份模式 → 中文说明。 */
+/**
+ * 备份模式 → 概览里的一行说明。
+ *
+ * 只描述物理快照这一半：逻辑备份在两种运行时都能下载，笼统写「不可下载」
+ * 会让人误以为 Workers 上连逻辑备份也拿不走。
+ */
 function modeText(mode: 'filesystem' | 'pitr'): string {
-  return mode === 'filesystem' ? '本地文件（可下载）' : '平台托管（PITR，不可下载）';
+  return mode === 'filesystem'
+    ? '本地文件快照（可下载）'
+    : '平台 PITR 托管（回滚点不可下载）';
+}
+
+/** 物理快照卡片说明：PITR 下没有应用侧文件，不能说「保留最近 N 份」。 */
+function snapshotText(mode: 'filesystem' | 'pitr', keepCount: number): string {
+  return mode === 'filesystem'
+    ? `本地文件物理快照保留最近 ${keepCount} 份，可在下方列表中下载。`
+    : 'Workers 没有文件系统，物理回滚点由平台 PITR（Time Travel）托管，不生成应用侧文件快照。';
 }
 
 const AdminPage: React.FC = () => {
@@ -87,7 +101,9 @@ const AdminPage: React.FC = () => {
     const [sys, list] = await Promise.all([getAdminSystem(), listAdminBackups()]);
     setSystem(sys);
     setBackups(list.items);
-    setBackupMode(list.mode);
+    // 备份模式只认 system 一个来源：两个接口都给 mode，取两份会在概览与
+    // 物理快照卡片之间出现不一致的说法。
+    setBackupMode(sys.backupMode);
     setKeepCount(list.keepCount);
   }, []);
 
@@ -287,7 +303,12 @@ const AdminPage: React.FC = () => {
             <Descriptions.Item label="有效记录">{system.recordCount}</Descriptions.Item>
             <Descriptions.Item label="回收站记录">{system.trashCount}</Descriptions.Item>
             <Descriptions.Item label="审计日志条数">{system.logCount}</Descriptions.Item>
-            <Descriptions.Item label="物理快照保留份数">{keepCount}</Descriptions.Item>
+            {/* PITR 下没有应用侧快照文件，报「保留 N 份」只会误导。 */}
+            {system.backupMode === 'filesystem' ? (
+              <Descriptions.Item label="物理快照保留份数">{keepCount}</Descriptions.Item>
+            ) : (
+              <Descriptions.Item label="物理回滚点">平台 PITR（Time Travel）托管</Descriptions.Item>
+            )}
           </Descriptions>
         ) : (
           <Text type="secondary">概览加载失败，请刷新重试。</Text>
@@ -308,9 +329,7 @@ const AdminPage: React.FC = () => {
           </Button>
         }
       >
-        <Paragraph type="secondary">
-          平台物理快照保留最近 {keepCount} 份。{modeText(backupMode)}。
-        </Paragraph>
+        <Paragraph type="secondary">{snapshotText(backupMode, keepCount)}</Paragraph>
         <Table
           rowKey="file"
           size="small"
