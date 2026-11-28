@@ -35,6 +35,7 @@ import { createAdminGuard, createAdminSessionMiddleware } from './middleware/adm
 import { createAuthGuard } from './middleware/auth-guard';
 import { createInitGuard } from './middleware/init-guard';
 import { createCacheControlMiddleware } from './middleware/cache-control';
+import { createWebOriginRedirect } from './middleware/web-origin-redirect';
 import type { HealthService } from './services/health.service';
 import type { HeavyTaskGate } from './services/heavy-task';
 import type { AuthService } from './services/auth.service';
@@ -137,6 +138,12 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   // 业务端点（路径自带 /api 前缀，故挂在根路径下）。
   app.route('/', createApiRouter(deps));
+
+  // 开发态（配置了 WEB_ORIGIN）页面导航回前端 dev server，避免「打开 8080 白屏」。
+  // 生产同源托管不安装本中间件，行为不变。
+  if (deps.env.webOrigin !== null) {
+    app.use('*', createWebOriginRedirect(deps.env.webOrigin));
+  }
 
   // 静态 fallback：API 命中时 handler 不调用 next，本中间件不会执行。
   app.use('*', deps.staticPort.middleware());

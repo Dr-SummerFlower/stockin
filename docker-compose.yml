@@ -48,8 +48,8 @@ services:
       # 都会返回「请求来源校验失败」(403 AUTH_CSRF_FAILED)。
       # PUBLIC_ORIGINS 一旦设置即覆盖 PUBLIC_ORIGIN（env.ts 的既定优先级）。
       # 回环写法会自动等价展开到 127.0.0.1 / localhost / [::1]。
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://127.0.0.1:8080}
-      PUBLIC_ORIGINS: ${PUBLIC_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      PUBLIC_ORIGINS: ${PUBLIC_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
       NODE_ENV: production
       TZ: Asia/Shanghai
       PORT: "8080"

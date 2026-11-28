@@ -11,13 +11,14 @@ import { isUnderDirectory, loadEnv, resolveOriginScheme } from '../src/env';
 
 /** 默认来源：两种回环写法 + [::1] 展开，首项作为主来源。 */
 describe('可信来源解析', () => {
-  it('未配置时默认同时含 127.0.0.1 / localhost / [::1]，主来源为首项', () => {
+  it('未配置时默认含 localhost / 127.0.0.1 / [::1]，主来源是 localhost', () => {
     const env = loadEnv({ port: 8080, publicOrigins: '', publicOrigin: '' });
 
-    expect(env.publicOrigin).toBe('http://127.0.0.1:8080');
+    // 主来源决定 OAuth 回调地址，必须与 GitHub App 里登记的 localhost 字面量一致。
+    expect(env.publicOrigin).toBe('http://localhost:8080');
     expect(env.publicOrigins).toEqual([
-      'http://127.0.0.1:8080',
       'http://localhost:8080',
+      'http://127.0.0.1:8080',
       'http://[::1]:8080',
     ]);
   });
@@ -83,6 +84,40 @@ describe('可信来源解析', () => {
     expect(() =>
       loadEnv({ port: 8080, originScheme: 'http', publicOrigins: 'https://127.0.0.1:8080' }),
     ).toThrow(/不一致/);
+  });
+});
+
+/**
+ * 前端站点源只用于「登录后把浏览器送回前端」，不参与任何信任判定。
+ * 开发态前后端分端口（8000 / 8080）全靠它把地址栏从后端端口拉回来。
+ */
+describe('前端站点源 WEB_ORIGIN', () => {
+  it('未配置时为 null：生产同源托管，跳转用相对路径', () => {
+    expect(loadEnv({ port: 8080, publicOrigins: '', webOrigin: '' }).webOrigin).toBeNull();
+  });
+
+  it('允许与 PORT 不同的端口，且不进入可信来源集合', () => {
+    const env = loadEnv({ port: 8080, publicOrigins: '', webOrigin: 'http://localhost:8000' });
+
+    expect(env.webOrigin).toBe('http://localhost:8000');
+    expect(env.publicOrigin).toBe('http://localhost:8080');
+    // 8000 是浏览器站点源，不是后端来源；混进白名单会让 CSRF 口令形同虚设。
+    expect(env.publicOrigins).not.toContain('http://localhost:8000');
+  });
+
+  it('末尾斜杠归一化，避免拼出双斜杠地址', () => {
+    expect(
+      loadEnv({ port: 8080, publicOrigins: '', webOrigin: 'http://localhost:8000//' }).webOrigin,
+    ).toBe('http://localhost:8000');
+  });
+
+  it('带路径或 scheme 不一致直接报错，不拼半截地址', () => {
+    expect(() =>
+      loadEnv({ port: 8080, publicOrigins: '', webOrigin: 'http://localhost:8000/admin' }),
+    ).toThrow(/WEB_ORIGIN/);
+    expect(() =>
+      loadEnv({ port: 8080, publicOrigins: '', webOrigin: 'https://localhost:8000' }),
+    ).toThrow(/scheme/);
   });
 });
 

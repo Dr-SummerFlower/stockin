@@ -83,6 +83,21 @@ function adminActorOf(c: Context<AppEnv>): string {
   return c.get('adminActor') ?? 'admin:anonymous';
 }
 
+/**
+ * 浏览器侧的跳转目标。
+ *
+ * 生产由 Hono 同源托管 `web/dist`，相对路径即可；本地开发时前端 dev server
+ * 与后端不同端口（8000 / 8080），相对路径会把地址栏留在后端端口 —— 那里
+ * 没有静态产物，用户看到的就是白屏。配了 `WEB_ORIGIN` 就显式回前端：
+ * 会话 Cookie 按 host 共享（Cookie 不区分端口），跨端口仍然带着登录态。
+ *
+ * 注意这**不影响 OAuth 的 `redirect_uri`**：那个必须与 GitHub 登记的地址
+ * 逐字一致，仍由 `publicOrigin` 推导。
+ */
+function browserRedirect(c: Context<AppEnv>, path: string, webOrigin: string | null): Response {
+  return c.redirect(webOrigin === null ? path : `${webOrigin}${path}`, 302);
+}
+
 export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): void {
   api.get('/api/admin/me', (c) => {
     const admin = c.get('adminSession');
@@ -115,10 +130,10 @@ export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): vo
     clearAdminOauthStateCookie(c);
 
     if (expectedState === null || returnedState === '' || expectedState !== returnedState) {
-      return c.redirect('/admin/login?error=state', 302);
+      return browserRedirect(c, '/admin/login?error=state', deps.env.webOrigin);
     }
     if (code === '') {
-      return c.redirect('/admin/login?error=failed', 302);
+      return browserRedirect(c, '/admin/login?error=failed', deps.env.webOrigin);
     }
 
     const result = await deps.adminAuth.handleCallback(
@@ -127,13 +142,11 @@ export function registerAdminRoutes(api: Hono<AppEnv>, deps: AdminRouteDeps): vo
       c.get('clientIp') ?? '',
     );
     if (!result.ok) {
-      return c.redirect(
-        `/admin/login?error=${result.code === ErrorCode.ADMIN_FORBIDDEN ? 'forbidden' : 'failed'}`,
-        302,
-      );
+      const error: string = result.code === ErrorCode.ADMIN_FORBIDDEN ? 'forbidden' : 'failed';
+      return browserRedirect(c, `/admin/login?error=${error}`, deps.env.webOrigin);
     }
     setAdminSessionCookie(c, result.token);
-    return c.redirect('/admin', 302);
+    return browserRedirect(c, '/admin', deps.env.webOrigin);
   });
 
   api.post('/api/admin/auth/logout', (c) => {

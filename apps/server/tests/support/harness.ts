@@ -112,6 +112,8 @@ export interface HarnessOptions {
   };
   /** 逻辑备份公钥覆盖（恢复端到端测试需注入与本地私钥配对的公钥）。 */
   readonly backupPublicKey?: string;
+  /** 前端站点源覆盖（验证「开发态登录后跳回 8000」的跳转目标）。 */
+  readonly webOrigin?: string;
   /**
    * 覆盖平台的单次导出行上限。
    *
@@ -150,6 +152,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       port: TEST_PORT,
       publicOrigin: TEST_ORIGIN,
       publicOrigins: TEST_ORIGIN,
+      webOrigin: options.webOrigin ?? '',
       dataDir,
       backupDir,
       tmpDir,

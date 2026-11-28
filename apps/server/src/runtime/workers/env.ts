@@ -38,6 +38,9 @@ export function workerEnvOverrides(env: Record<string, unknown>): EnvOverrides {
     port: pick(vars, 'PORT'),
     publicOrigins: pick(vars, 'PUBLIC_ORIGINS'),
     publicOrigin: pick(vars, 'PUBLIC_ORIGIN'),
+    // 前端站点源：Workers 上 SPA 与 API 同源，通常留空；显式映射只是为了
+    // 「同一份后端代码」在两种运行时上对同一套变量名有相同语义。
+    webOrigin: pick(vars, 'WEB_ORIGIN'),
     tz: pick(vars, 'TZ'),
     originScheme: scheme === undefined ? undefined : (scheme as OriginScheme),
     cookieSecure: pick(vars, 'COOKIE_SECURE'),

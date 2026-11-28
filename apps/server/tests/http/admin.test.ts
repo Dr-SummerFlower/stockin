@@ -355,6 +355,59 @@ describe('管理员端点', () => {
     });
   });
 
+  /**
+   * 本地开发时前端 dev server 在 8000、后端在 8080：回调必须落在后端来源
+   * （GitHub 只认已登记的地址），但之后的浏览器跳转要回前端，否则地址栏停在
+   * 没有静态产物的后端端口 —— 用户看到的就是白屏。
+   */
+  describe('开发态跳转（WEB_ORIGIN）', () => {
+    const WEB_ORIGIN = 'http://localhost:8000';
+
+    beforeEach(async (): Promise<void> => {
+      h = await createHarness({ admin: ADMIN_CONFIG, webOrigin: WEB_ORIGIN });
+    });
+
+    /** 发起登录并取出 state / state Cookie，同时校验 redirect_uri 仍是后端来源。 */
+    async function startLogin(): Promise<{ state: string; stateCookie: string }> {
+      const res = await h.request('/api/admin/auth/github/start');
+      expect(res.status).toBe(302);
+      const authorize: URL = new URL(res.headers.get('location') ?? '');
+      expect(authorize.searchParams.get('redirect_uri')).toBe(
+        `${h.env.publicOrigin}/api/admin/auth/github/callback`,
+      );
+      const stateCookie: string | undefined = res.headers
+        .getSetCookie()
+        .map((item) => item.split(';')[0] as string)
+        .find((item) => item.startsWith(`${ADMIN_OAUTH_STATE_COOKIE_NAME}=`));
+      if (stateCookie === undefined) {
+        throw new Error('start 未下发 state cookie');
+      }
+      return { state: authorize.searchParams.get('state') ?? '', stateCookie };
+    }
+
+    it('成功后跳回前端源（8000），而不是后端端口（8080）', async () => {
+      const { state, stateCookie } = await startLogin();
+      stubGithubFetch([
+        jsonResponse({ access_token: 'gh-token' }),
+        jsonResponse({ id: 1001, login: 'owner', name: 'Owner' }),
+      ]);
+
+      const res = await h.request(`/api/admin/auth/github/callback?state=${state}&code=the-code`, {
+        cookie: stateCookie,
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe(`${WEB_ORIGIN}/admin`);
+    });
+
+    it('失败路径同样回前端源，错误码不丢', async () => {
+      const { stateCookie } = await startLogin();
+      const res = await h.request('/api/admin/auth/github/callback?state=forged&code=x', {
+        cookie: stateCookie,
+      });
+      expect(res.headers.get('location')).toBe(`${WEB_ORIGIN}/admin/login?error=state`);
+    });
+  });
+
   describe('维护端点（已登录管理员）', () => {
     let h: Harness;
     let adminCookie: string;

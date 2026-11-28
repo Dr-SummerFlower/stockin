@@ -21,8 +21,12 @@ const serverPort: string = env.SERVER_PORT ?? '8080';
 // 否则浏览器源（http://localhost:8000）与后端 PUBLIC_ORIGIN（http://…:8080）端口不同
 // 会触发 CSRF 403（仅写方法受 CSRF 约束，故 GET 能 200、POST 登录/退出全 403）。
 // 仅 dev 生效；生产由 Hono 同源托管 web/dist，无代理、无此问题。目标与重写源均对齐
-// PUBLIC_ORIGIN（缺省 http://127.0.0.1:8080，与后端默认一致）。
-const apiTarget: string = env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${serverPort}`;
+// PUBLIC_ORIGIN（缺省 http://localhost:8080）。
+//
+// 主机名统一写 localhost，不用 127.0.0.1：Cookie 按 **host** 隔离（不区分端口），
+// GitHub OAuth 回调又落在后端端口，一旦浏览器在 localhost、回调在 127.0.0.1，
+// state Cookie 就带不过去（表现为 `?error=state`）。同一 host 才能跨端口共用登录态。
+const apiTarget: string = env.PUBLIC_ORIGIN ?? `http://localhost:${serverPort}`;
 
 /**
  * 构建引擎开关（任务卡 01 的「一键回退」入口）。

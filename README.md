@@ -29,7 +29,7 @@ cp .env.example .env          # 编辑 .env：确认镜像标签与来源白名�
 
 也可直接 `docker compose up -d`，此时使用 `.env` 里的 `PUBLIC_ORIGINS`（不会自动探测 IP）。
 
-首次启动直接打开 `http://127.0.0.1:8080`，页面会进入 `/setup` 自助引导：
+首次启动直接打开 `http://localhost:8080`，页面会进入 `/setup` 自助引导：
 
 1. 设置管理员用户名与密码；
 2. 设置密保问题与答案（忘记密码时使用，不区分大小写）；
@@ -86,7 +86,8 @@ cp .env.example .env          # 编辑 .env：确认镜像标签与来源白名�
 | 变量                                        | 默认                             | 说明                                                                                                                                                 |
 | ------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PORT`                                      | `8080`                           | 监听端口；改它必须同步改所有来源的端口                                                                                                               |
-| `PUBLIC_ORIGINS`                            | 回环地址                         | 来源白名单，优先级高于单值 `PUBLIC_ORIGIN`                                                                                                           |
+| `PUBLIC_ORIGINS`                            | 回环地址                         | 来源白名单，优先级高于单值 `PUBLIC_ORIGIN`；**首项是主来源**，决定管理员 OAuth 的回调地址                                                                   |
+| `WEB_ORIGIN`                                | 空（= 与后端同源）               | 前端站点源，仅本地开发需要（前端 8000 / 后端 8080）；登录后把浏览器送回前端，生产留空                                                                        |
 | `ORIGIN_SCHEME`                             | `http`                           | 与来源 scheme 必须一致；`https` 时 Cookie 自动 `Secure`                                                                                              |
 | `TZ`                                        | `Asia/Shanghai`                  | 决定「今天」与临期天数的基准自然日                                                                                                                   |
 | `DATA_DIR` / `BACKUP_DIR` / `TMP_DIR`       | `./data` / `./backups` / `./tmp` | 仅 Node 裸跑；三者不得落在前端静态根之下                                                                                                             |
@@ -195,7 +196,11 @@ pnpm test             # 仅跑测试
 pnpm format           # 格式化后端与共享包源码
 ```
 
-`pnpm verify` 是发布前的唯一门禁命令（不是 `pnpm ci`）。测试通过真应用装配与真 SQLite 走 HTTP 层，不 mock 中间件或数据库；覆盖率口径覆盖 `packages/domain`、`packages/shared` 与 `apps/server/src`，阈值 70/70/70/65。
+开发态固定两个端口：**前端 8000（Umi dev server）、后端 8080（Hono）**，一律用 `localhost` 访问 `http://localhost:8000` —— 后端在 dev 下不托管静态产物，直接开 8080 只会得到白屏。主机名不要混用 `127.0.0.1`：Cookie 按 host 隔离（不区分端口），管理员 GitHub OAuth 的回调落在 8080，浏览器若在别的 host 上发起登录，state Cookie 会带不过去（`/admin/login?error=state`）。
+
+管理员登录的链路是「前端 8000 发起 → GitHub → 回调 8080 → 跳回前端 8000」：回调地址由 `PUBLIC_ORIGINS` 首项推导，必须与 GitHub OAuth App 里登记的 `http://localhost:8080/api/admin/auth/github/callback` 逐字一致；回跳目标由 `WEB_ORIGIN` 决定，本地 `.env.local` 写 `WEB_ORIGIN=http://localhost:8000` 即可。生产由 Hono 同源托管，`WEB_ORIGIN` 留空，跳转走相对路径。
+
+`pnpm verify` 是发布前的唯一门禁命令（不是 `pnpm ci`）。测试通过真应用装配与真 SQLite 走 HTTP 层，不 mock 中间件或数据库；覆盖率口径覆盖 `packages/domain`、`packages/shared` 与 `apps/server/src`，阈值 85/70/90/85（行 / 分支 / 函数 / 语句）。
 
 ### 目录结构
 

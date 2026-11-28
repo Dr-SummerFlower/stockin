@@ -88,7 +88,7 @@ ENV PORT=8080 \
     BACKUP_DIR=/app/backups \
     TMP_DIR=/app/tmp \
     WEB_DIST_DIR=/app/apps/web/dist \
-    PUBLIC_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
+    PUBLIC_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
 COPY --from=build /app/apps/server/dist/ /app/apps/server/dist/
 COPY --from=build /app/apps/web/dist/ /app/apps/web/dist/
 RUN mkdir -p /app/data /app/backups /app/tmp \

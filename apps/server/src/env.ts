@@ -6,8 +6,9 @@
  * §5.2（CSRF 按含端口的字面量精确比对）。
  *
  * 可信来源支持多值：PUBLIC_ORIGINS（逗号分隔）> PUBLIC_ORIGIN（单值，旧写法）；
- * 均未设置时默认同时含 127.0.0.1 与 localhost 两种回环写法；
+ * 均未设置时默认同时含 localhost 与 127.0.0.1 两种回环写法（localhost 为首项）；
  * 任一回环写法会自动等价展开到同机其它回环写法。
+ * 前端与后端分端口时（本地开发）用 WEB_ORIGIN 指定浏览器侧站点源。
  *
  * 所有默认值与业务常量一律取自 `@stockin/shared`，本文件不硬编码实现级常量。
  */
@@ -37,8 +38,18 @@ export interface Env {
   readonly port: number;
   /** 主来源 = `publicOrigins` 的首项（保留向后兼容：日志 / Cookie 等沿用单值）。 */
   readonly publicOrigin: string;
-  /** 全部可信来源（CSRF 逐项比对）。默认同时含 `127.0.0.1` 与 `localhost` 两种回环写法。 */
+  /** 全部可信来源（CSRF 逐项比对）。默认同时含 `localhost` 与 `127.0.0.1` 两种回环写法。 */
   readonly publicOrigins: readonly string[];
+  /**
+   * 前端站点源（浏览器地址栏里的地址）；未配置时为 `null`，表示与后端同源。
+   *
+   * 只在「前端与后端不同端口」的场景下才需要设置 —— 本地开发即如此：
+   * Umi dev server 在 `http://localhost:8000`，Hono 在 8080。此时 OAuth 回调
+   * 仍必须落在 `publicOrigin`（GitHub 只接受已登记的地址），但回调之后的
+   * 浏览器跳转要回前端，否则会停在没有静态产物的后端端口（白屏）。
+   * 生产由 Hono 同源托管 `web/dist`，留空即可，跳转一律用相对路径。
+   */
+  readonly webOrigin: string | null;
   /** 可信来源的 scheme：Node 纯 HTTP 为 `http`，Workers 为 `https`。 */
   readonly originScheme: OriginScheme;
   readonly tz: string;
@@ -80,6 +91,8 @@ export interface EnvOverrides {
   readonly publicOrigin?: string;
   /** 逗号分隔的多来源字面量，优先级高于 `publicOrigin`。 */
   readonly publicOrigins?: string;
+  /** 前端站点源（仅开发态前后端分端口时需要）。 */
+  readonly webOrigin?: string;
   /**
    * 来源 scheme。由运行时画像（`ORIGIN_SCHEME`）注入；
    * 不传时回落到 `process.env.ORIGIN_SCHEME`，再回落 `http`（=改造前行为）。
@@ -176,6 +189,34 @@ export function resolveOriginScheme(raw?: string): OriginScheme {
   throw new RangeError(`[env] ORIGIN_SCHEME 必须是 http 或 https，收到: ${raw ?? ''}`);
 }
 
+/**
+ * 解析前端站点源（`WEB_ORIGIN`）。
+ *
+ * 与可信来源不同，这里**不要求端口等于 `PORT`** —— 它存在的意义正是
+ * 「前端在另一个端口」。但仍必须是同 scheme 的原生字面量：带路径、查询串或
+ * 别的 scheme 都直接报错，否则拼出来的跳转地址会重复路径段（如
+ * `http://localhost:8000/admin` + `/admin/login`）。末尾斜杠会被归一化掉
+ * （手写配置时最常见的手误）。
+ */
+export function parseWebOrigin(raw: string | undefined, originScheme: OriginScheme): string | null {
+  const value: string = (raw ?? '').trim().replace(/\/+$/, '');
+  if (value === '') {
+    return null;
+  }
+  const match: RegExpExecArray | null = ORIGIN_PATTERN.exec(value);
+  if (match === null) {
+    throw new RangeError(
+      `[env] WEB_ORIGIN 必须是 ${originScheme}://<主机>[:<端口>] 字面量（不带路径），收到: ${value}`,
+    );
+  }
+  if ((match[1] ?? '') !== originScheme) {
+    throw new RangeError(
+      `[env] WEB_ORIGIN 的 scheme 必须与 ORIGIN_SCHEME(${originScheme}) 一致：${value}`,
+    );
+  }
+  return value;
+}
+
 function resolveDir(raw: string | undefined, cwd: string, fallback: string): string {
   return path.resolve(cwd, raw ?? fallback);
 }
@@ -199,7 +240,9 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
   );
 
   // 可信来源集合：PUBLIC_ORIGINS（逗号分隔，优先）> PUBLIC_ORIGIN（单值，旧写法）
-  // > 默认同时包含 127.0.0.1 与 localhost 两种回环写法，保证同机用不同地址都能登录。
+  // > 默认同时包含 localhost 与 127.0.0.1 两种回环写法，保证同机用不同地址都能登录。
+  // 首项是主来源（OAuth 回调、日志、Cookie 语义都沿用它），因此 localhost 排第一：
+  // 它既是浏览器眼里的安全上下文，也必须是 GitHub OAuth App 里登记的那个字面量。
   const rawOriginsCsv: string | undefined = overrides.publicOrigins ?? process.env.PUBLIC_ORIGINS;
   const legacySingle: string | undefined = overrides.publicOrigin ?? process.env.PUBLIC_ORIGIN;
 
@@ -213,7 +256,7 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     rawOrigins = [legacySingle.trim()];
   }
   if (rawOrigins.length === 0) {
-    rawOrigins = [`${originScheme}://127.0.0.1:${port}`, `${originScheme}://localhost:${port}`];
+    rawOrigins = [`${originScheme}://localhost:${port}`, `${originScheme}://127.0.0.1:${port}`];
   }
 
   const publicOrigins: string[] = [];
@@ -267,7 +310,11 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
       }
     }
   }
-  const publicOrigin: string = publicOrigins[0] ?? `${originScheme}://127.0.0.1:${port}`;
+  const publicOrigin: string = publicOrigins[0] ?? `${originScheme}://localhost:${port}`;
+  const webOrigin: string | null = parseWebOrigin(
+    overrides.webOrigin ?? process.env.WEB_ORIGIN,
+    originScheme,
+  );
 
   // HTTPS 下必须 `Secure`；纯 HTTP 下必须不带（`__Host-` 前缀因 Secure 缺失会被浏览器丢弃，
   // 故本轮仍不使用 prefix）。显式设置与环境推导冲突时直接报错，不做静默纠正。
@@ -362,6 +409,7 @@ export function loadEnv(overrides: EnvOverrides = {}): Env {
     port,
     publicOrigin,
     publicOrigins,
+    webOrigin,
     originScheme,
     tz,
     cookieSecure: derivedSecure,
