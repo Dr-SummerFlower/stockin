@@ -87,7 +87,7 @@ export const DEFAULT_PORT = 8_080;
  * 由 release.yml 在构建前用 `scripts/version.mjs --app-version` 注入。
  * 运行时读不到 package.json，所以必须是常量、不能改成读文件。
  */
-export const APP_VERSION = '1.3.1';
+export const APP_VERSION = '1.4.0';
 export const DEFAULT_TZ = 'Asia/Shanghai';
 export const NODE_VERSION_EXPECTED = '26.13.0';
 export const PNPM_MAJOR_VERSION = 12;
