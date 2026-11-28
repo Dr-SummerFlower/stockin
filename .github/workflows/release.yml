@@ -45,6 +45,12 @@ jobs:
       - name: 冻结依赖
         run: pnpm install --frozen-lockfile
 
+      # 构建版本 = 发布 tag：稳定版 v1.4.2 → 1.4.2，预发布 pre-abc1234 → pre-abc1234。
+      # 预发布版本由提交 sha 派生、无法随源码提交（自指），只能在构建期写进
+      # APP_VERSION；不写则管理台会显示上一个稳定版，与 Release 对不上。
+      - name: 写入构建版本
+        run: node scripts/version.mjs --app-version "${GITHUB_REF_NAME#v}"
+
       # fail-fast：lint → typecheck → test:coverage → build，任一失败即停并打印阶段。
       - name: 质量闸门
         run: pnpm verify
@@ -91,6 +97,8 @@ jobs:
         run: |
           npm install -g pnpm@12.15.0
           pnpm install --frozen-lockfile
+          # 与 verify 作业同一规则：构建版本取发布 tag，注入后才 build。
+          node scripts/version.mjs --app-version "${GITHUB_REF_NAME#v}"
           pnpm build
 
       # Worker 静态门禁：编译 + 校验 wrangler 配置与绑定，**不访问账号、不上传**。

@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADMIN_OAUTH_STATE_COOKIE_NAME,
   ADMIN_SESSION_COOKIE_NAME,
+  APP_VERSION,
   type BackupKeyItem,
 } from '@stockin/shared';
 import { createHarness, TEST_BACKUP_PUBLIC_KEY, type Harness } from '../support/harness';
@@ -111,6 +112,7 @@ describe('管理员端点', () => {
       const res = await h.json('/api/admin/system', authed());
       expect(res.status).toBe(200);
       const body = res.body as {
+        version: string;
         runtime: string;
         recordCount: number;
         backupMode: string;
@@ -120,6 +122,10 @@ describe('管理员端点', () => {
       expect(body.recordCount).toBe(0);
       expect(['filesystem', 'pitr']).toContain(body.backupMode);
       expect(body.adminLogins).toContain('owner');
+      // 版本必须原样来自 APP_VERSION，且形如发布 tag：稳定版 1.4.2、
+      // 预发布 pre-abc1234（CI 在构建期注入，两种形态都要能通过）。
+      expect(body.version).toBe(APP_VERSION);
+      expect(body.version).toMatch(/^(pre-[0-9a-f]{7}|\d+\.\d+\.\d+)$/);
     });
 
     it('逻辑导出 JSON 不含密码哈希 / 盐 / 密保答案 / token', async () => {

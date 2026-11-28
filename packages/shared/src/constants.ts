@@ -81,7 +81,11 @@ export const IDEMPOTENCY_TTL_HOURS = 24;
 export const DEFAULT_PORT = 8_080;
 /**
  * 应用版本（管理员系统概览与导出的 `appVersion` 字段）。
- * 发布时与五处 package.json 同步修改，避免运行时读不到 package.json。
+ *
+ * 稳定版由 `pnpm release` 随五处 package.json 一起写入；预发布的
+ * `pre-<sha7>` 不能随源码提交（它由提交 sha 派生，写死会改变 sha 自身），
+ * 由 release.yml 在构建前用 `scripts/version.mjs --app-version` 注入。
+ * 运行时读不到 package.json，所以必须是常量、不能改成读文件。
  */
 export const APP_VERSION = '1.3.1';
 export const DEFAULT_TZ = 'Asia/Shanghai';

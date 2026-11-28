@@ -57,6 +57,38 @@ const PKG_FILES = {
 };
 const CONSTANTS_FILE = 'packages/shared/src/constants.ts';
 
+/**
+ * --app-version <v>：只把发布版本写进 APP_VERSION，不改任何 package.json。
+ *
+ * 发布流水线用：稳定版取 tag 数字部分（v1.4.2 → 1.4.2），预发布原样
+ * （pre-abc1234 → pre-abc1234）。预发布版本**不可能**随源码提交——它由
+ * 提交 sha 派生，写进提交会改变 sha 自身（自指）；因此只能在构建期注入，
+ * 让「管理台显示的应用版本」与发布 tag 严格一致。
+ *
+ * 不读 git tag：release.yml 的 verify 作业是浅克隆，可能根本没有 tag 对象。
+ */
+const appVersionIdx = argv.indexOf('--app-version');
+if (appVersionIdx >= 0) {
+  const target = argv[appVersionIdx + 1];
+  if (!target || !/^(pre-[0-9a-f]{7}|\d+\.\d+\.\d+)$/.test(target)) {
+    process.stderr.write('[version] --app-version 需要形如 1.2.3 或 pre-abcdef0 的版本号\n');
+    process.exit(1);
+  }
+  const file = resolve(root, CONSTANTS_FILE);
+  const src = readFileSync(file, 'utf8');
+  const updated = src.replace(
+    /export const APP_VERSION = '[^']+';/,
+    `export const APP_VERSION = '${target}';`,
+  );
+  if (updated === src && !src.includes(`APP_VERSION = '${target}'`)) {
+    process.stderr.write('[version] 未匹配到 APP_VERSION，常量未更新\n');
+    process.exit(1);
+  }
+  if (updated !== src) writeFileSync(file, updated);
+  process.stdout.write(`[version] APP_VERSION = ${target}\n`);
+  process.exit(0);
+}
+
 // scope -> 子包。auth/db 归入 server；其余非包名 scope 不映射到子包。
 const SCOPE_TO_PKGS = {
   server: ['server'],
