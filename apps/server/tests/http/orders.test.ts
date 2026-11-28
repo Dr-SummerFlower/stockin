@@ -787,3 +787,63 @@ describe('单据导出', () => {
     expect(sheet.getRow(2).getCell(2).value).toBe('导出乙');
   });
 });
+
+describe('单张进货单打印版导出', () => {
+  function detailItems(count: number): Record<string, unknown>[] {
+    return Array.from({ length: count }, (_, index) => item({ name: `打印明细${index + 1}` }));
+  }
+
+  it('单页：输出完整单据，含明细区 10 行与打印设置', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<{ id: number }>('/api/orders', {
+      json: payload({ items: detailItems(8) }),
+      cookie,
+    });
+    expect(created.status).toBe(201);
+
+    const response: Response = await h.request(`/api/orders/${created.body.id}/export`, { cookie });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-disposition')).toContain('.xlsx');
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()) as unknown as ArrayBuffer);
+    expect(workbook.worksheets.length).toBe(1);
+    const sheet = workbook.getWorksheet('进货单-第1页');
+    expect(sheet).toBeDefined();
+    if (sheet === undefined) return;
+    expect(sheet.getRow(1).getCell(1).value).toBe('进 货 单');
+    expect(sheet.getRow(5).getCell(2).value).toBe('商品名称');
+    expect(sheet.getRow(6).getCell(2).value).toBe('打印明细1');
+    expect(sheet.getRow(13).getCell(2).value).toBe('打印明细8');
+    expect(sheet.pageSetup?.orientation).toBe('landscape');
+    expect(sheet.pageSetup?.fitToHeight).toBe(1);
+  });
+
+  it('多页：12 条拆两页，序号连续且末页给出整单总计', async () => {
+    const { h, cookie } = await ready();
+    const created = await h.json<{ id: number }>('/api/orders', {
+      json: payload({ items: detailItems(12) }),
+      cookie,
+    });
+    expect(created.status).toBe(201);
+
+    const response: Response = await h.request(`/api/orders/${created.body.id}/export`, { cookie });
+    expect(response.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()) as unknown as ArrayBuffer);
+    expect(workbook.worksheets.length).toBe(2);
+    const page1 = workbook.getWorksheet('进货单-第1页');
+    const page2 = workbook.getWorksheet('进货单-第2页');
+    expect(page1?.getRow(1).getCell(1).value).toBe('进 货 单　第 1 / 2 页');
+    expect(page2?.getRow(1).getCell(1).value).toBe('进 货 单　第 2 / 2 页');
+    expect(page1?.getRow(15).getCell(2).value).toBe('打印明细10');
+    expect(page2?.getRow(6).getCell(2).value).toBe('打印明细11');
+    expect(String(page2?.getRow(18).getCell(1).value ?? '')).toContain('整单总计：共 12 项');
+  });
+
+  it('单据不存在时返回 404', async () => {
+    const { h, cookie } = await ready();
+    const response: Response = await h.request('/api/orders/999999/export', { cookie });
+    expect(response.status).toBe(404);
+  });
+});

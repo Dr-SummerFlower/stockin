@@ -92,6 +92,27 @@ export function registerOrderRoutes(api: Hono<AppEnv>, deps: AppDeps): void {
     });
   });
 
+  /**
+   * 单张进货单打印版导出（xlsx）。
+   *
+   * 先取单据详情（不存在走统一 404 错误面），再交给 ExcelService 渲染；
+   * 路径含两个参数段，不会与 `/api/orders/:id` 冲突。
+   */
+  api.get('/api/orders/:id/export', (c) => {
+    const id: number | null = parsePositiveIdParam(c);
+    if (id === null) {
+      return errorResponse(ErrorCode.COMMON_BAD_REQUEST, c.get('requestId') ?? '');
+    }
+    const result = deps.orders.get(id);
+    if (!result.ok) {
+      return errorResponse(result.code, c.get('requestId') ?? '', result.details);
+    }
+    return deps.excel.createOrderDetailExportResponse(c, result.data, {
+      requestId: c.get('requestId') ?? '',
+      actor: c.get('actor') ?? 'user',
+    });
+  });
+
   api.get('/api/orders/next-no', (c) => {
     const result = deps.orders.nextNo(c.req.query('date'));
     return result.ok
