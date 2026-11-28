@@ -73,7 +73,7 @@ export function createFilesystemRestoreStaging(
         .filter((name) => name.endsWith('.chunk'))
         .map((name) => Number.parseInt(name.slice(0, -'.chunk'.length), 10))
         .filter((n) => Number.isInteger(n))
-        .sort((a, b) => a - b);
+        .toSorted((a, b) => a - b);
     },
 
     async deleteBatch(batchId): Promise<void> {

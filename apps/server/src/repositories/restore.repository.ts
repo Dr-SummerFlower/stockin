@@ -185,8 +185,8 @@ export class RestoreRepository {
       this.db.exec('DELETE FROM sessions');
       this.db.exec('DELETE FROM admin_sessions');
       // 再清空业务表（先子后父；本清单内无外键依赖，顺序仅作防御）。
-      // 复制后反转，避免修改常量数组（ES 目标不含 toReversed）。
-      for (const table of [...RESTORE_TABLES].reverse()) {
+      // toReversed 返回新数组，不修改常量数组。
+      for (const table of RESTORE_TABLES.toReversed()) {
         this.db.exec(`DELETE FROM ${table}`);
       }
 

@@ -79,7 +79,37 @@ export default defineConfig({
    * 即回到 webpack 引擎。`mfsu` 是 webpack 专属能力，Vite 模式下不生效，故不配置
    * （保持默认，两种引擎都不受影响）。
    */
-  ...(useVite ? { vite: {} } : {}),
+  ...(useVite
+    ? {
+        vite: {
+          build: {
+            /**
+             * Umi + AntD 的基座 chunk 约 730 kB（gzip 242 kB），个体自用场景
+             * 可接受；按默认 500 kB 会每次误报。以实际体积上调阈值，不做拆包
+             * （拆包会牺牲首屏请求数，收益不抵复杂度）。
+             */
+            chunkSizeWarningLimit: 800,
+            rollupOptions: {
+              /**
+               * zod / react-helmet-async 源码里的 PURE 标注注释位置
+               * Rollup 无法解读，逐条打印 INVALID_ANNOTATION。上游包不可改，
+               * 该注释只影响 tree-shaking 微优化且已被 Rollup 安全移除，
+               * 故按 code 精确抑制，其余警告照常透传。
+               */
+              onwarn(
+                warning: { code?: string },
+                defaultHandler: (warning: { code?: string }) => void,
+              ) {
+                if (warning.code === 'INVALID_ANNOTATION') {
+                  return;
+                }
+                defaultHandler(warning);
+              },
+            },
+          },
+        },
+      }
+    : {}),
   /**
    * 压缩器（两种引擎取值不同，原因见下）。
    *

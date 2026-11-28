@@ -96,8 +96,8 @@ export function encodeChunkPlaintext(chunk: ChunkPlaintext): Uint8Array {
 
 /** manifest 的规范化 JSON 字节（entry 按 seq 升序）。 */
 export function encodeManifest(entries: readonly ManifestEntry[]): Uint8Array {
-  // 复制后排序，避免修改入参（oxlint 的 toSorted 建议与本仓库 ES 目标冲突，保持 copy + sort）。
-  const ordered: ManifestEntry[] = [...entries].sort((a, b) => a.seq - b.seq);
+  // toSorted 返回新数组，不修改只读入参。
+  const ordered: ManifestEntry[] = entries.toSorted((a, b) => a.seq - b.seq);
   const stable = ordered.map((entry) => ({
     seq: entry.seq,
     table: entry.table,

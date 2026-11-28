@@ -39,12 +39,15 @@ function toCount(value: unknown): number {
   return 0;
 }
 
+// 端口对外是 `unknown[]`（不绑定任何驱动），驱动侧要求确切的 SQLInputValue；
+// 绑定值的合法性由 SQLite 在运行期校验，这里只做类型收窄。
+function bind(params: unknown[]): SQLInputValue[] {
+  return params as SQLInputValue[];
+}
+
 /** 包一层语句，抹平 `RunResult` 字段差异。 */
 function wrapStatement(db: DatabaseSync, sql: string): StatementPort {
   const statement = db.prepare(sql);
-  // 端口对外是 `unknown[]`（不绑定任何驱动），驱动侧要求确切的 SQLInputValue；
-  // 绑定值的合法性由 SQLite 在运行期校验，这里只做类型收窄。
-  const bind = (params: unknown[]): SQLInputValue[] => params as SQLInputValue[];
   return {
     get: (...params: unknown[]): unknown => statement.get(...bind(params)),
     all: (...params: unknown[]): unknown[] => statement.all(...bind(params)),

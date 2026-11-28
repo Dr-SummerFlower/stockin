@@ -17,10 +17,23 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { join, resolve } from 'node:path';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin, type RollupLog } from 'vite';
 
 /** 包根目录（本配置文件所在目录）。Node 26 支持 `import.meta.dirname`。 */
 const packageRoot: string = import.meta.dirname;
+
+/**
+ * zod 4.6.x 源码里两处 `@__PURE__` 说明注释位置在 Rollup 看来非法，构建时
+ * 逐条打印 INVALID_ANNOTATION（Rollup 会自动移除，产物行为不变）。上游不可改
+ * 且 4.6.7 已是最新版；按 code 精确抑制这一类噪声，其余日志原样透传。
+ * Vite 7 的 client / ssr 是独立 Rollup 实例，需分别挂载 onwarn。
+ */
+function onWarn(warning: RollupLog, defaultHandler: (warning: RollupLog) => void): void {
+  if (warning.code === 'INVALID_ANNOTATION') {
+    return;
+  }
+  defaultHandler(warning);
+}
 
 /**
  * Node 内置模块一律 external（`fs` 与 `node:fs` 两种写法都覆盖）。
@@ -75,6 +88,10 @@ export default defineConfig({
   // 后端无前端资源，关闭 publicDir 探测，避免误把静态目录当资产根。
   publicDir: false,
   plugins: [copyMigrations()],
+  environments: {
+    client: { build: { rollupOptions: { onwarn: onWarn } } },
+    ssr: { build: { rollupOptions: { onwarn: onWarn } } },
+  },
   resolve: {
     /**
      * `@stockin/shared` 与 `@stockin/domain` 必须指向 **TS 源码**。

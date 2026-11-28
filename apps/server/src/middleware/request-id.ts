@@ -12,10 +12,17 @@ import { requestId } from 'hono/request-id';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../types/hono';
 
+/** 供 hono/request-id 使用的自生成函数（忽略入站头，每次调用生成新 ID）。 */
+function generateRequestId(): string {
+  return randomUUID();
+}
+
 /** 自生成 requestId 的中间件（含响应头下发）。 */
 export function createRequestIdMiddleware(): MiddlewareHandler<AppEnv> {
-  const generator = (): string => randomUUID();
-  const official = requestId({ headerName: '', generator }) as MiddlewareHandler<AppEnv>;
+  const official = requestId({
+    headerName: '',
+    generator: generateRequestId,
+  }) as MiddlewareHandler<AppEnv>;
 
   return async (c, next): Promise<void> => {
     await official(c, next);

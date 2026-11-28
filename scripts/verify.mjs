@@ -39,10 +39,22 @@ for (let index = 0; index < total; index += 1) {
 
   process.stdout.write(`\n[verify] 阶段 ${position}：${stage.label} 开始\n`);
 
+  // node:sqlite 在 Node 26 仍是实验特性，每个 worker 进程启动都会打印一条
+  // ExperimentalWarning。项目已锁定 Node 26 且运行时就是它，提示无信息量；
+  // 仅在 verify 的子进程里按 warning code 精确抑制，不改动应用运行行为。
+  const flag = '--disable-warning=ExperimentalWarning';
+  const existingNodeOptions = process.env.NODE_OPTIONS ?? '';
+  const env = {
+    ...process.env,
+    NODE_OPTIONS: existingNodeOptions.includes(flag)
+      ? existingNodeOptions
+      : [existingNodeOptions, flag].filter(Boolean).join(' '),
+  };
+
   const result = spawnSync(stage.command, {
     stdio: 'inherit',
     shell: true,
-    env: process.env,
+    env,
   });
 
   const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);

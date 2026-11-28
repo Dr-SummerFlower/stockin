@@ -18,10 +18,22 @@
  */
 import { builtinModules } from 'node:module';
 import { resolve } from 'node:path';
-import { defineConfig } from 'vite';
+import { defineConfig, type RollupLog } from 'vite';
 
 /** 包根目录（本配置文件所在目录）。 */
 const packageRoot: string = import.meta.dirname;
+
+/**
+ * zod 4.6.x 源码里两处 `@__PURE__` 说明注释位置在 Rollup 看来非法，构建时
+ * 逐条打印 INVALID_ANNOTATION（Rollup 会自动移除，产物行为不变）。上游不可改
+ * 且 4.6.7 已是最新版；按 code 精确抑制这一类噪声，其余日志原样透传。
+ */
+function onWarn(warning: RollupLog, defaultHandler: (warning: RollupLog) => void): void {
+  if (warning.code === 'INVALID_ANNOTATION') {
+    return;
+  }
+  defaultHandler(warning);
+}
 
 /**
  * workerd 提供的 Node 内置模块一律 external。
@@ -53,6 +65,9 @@ const toNodePrefixed = (id: string): string | undefined =>
 export default defineConfig({
   root: packageRoot,
   publicDir: false,
+  environments: {
+    ssr: { build: { rollupOptions: { onwarn: onWarn } } },
+  },
   resolve: {
     // 与 Node 构建同源：workspace 包必须指向 TS 源码，否则具名导出解析不到。
     alias: [

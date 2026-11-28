@@ -12,7 +12,9 @@
     "prefer-const": "warn",
     "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
     "no-throw-literal": "error",
-    "import/no-duplicates": "warn"
+    "import/no-duplicates": "warn",
+    // SQLite 内部伪列名固定为 __rowid，无法改名；只允许这一个标识符。
+    "no-underscore-dangle": ["warn", { "allow": ["__rowid"] }]
   },
   "env": {
     "node": true,

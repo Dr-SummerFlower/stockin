@@ -34,6 +34,14 @@ function safeBatchId(batchId: string): string {
   return batchId;
 }
 
+function dataKey(batchId: string, seq: number): string {
+  return `restore:${safeBatchId(batchId)}:${seq}`;
+}
+
+function consumedKey(batchId: string): string {
+  return `restore:${safeBatchId(batchId)}:consumed`;
+}
+
 /** DO KV 读回的值统一转成 Uint8Array。 */
 function toBytes(value: unknown): Uint8Array | null {
   if (value === undefined || value === null) {
@@ -65,9 +73,6 @@ export function createKvRestoreStaging(options: KvRestoreStagingOptions): Restor
   const storage = options.storage;
   const runExclusive: <T>(fn: () => Promise<T>) => Promise<T> =
     options.runExclusive ?? (<T>(fn: () => Promise<T>): Promise<T> => fn());
-  const dataKey = (batchId: string, seq: number): string =>
-    `restore:${safeBatchId(batchId)}:${seq}`;
-  const consumedKey = (batchId: string): string => `restore:${safeBatchId(batchId)}:consumed`;
 
   return {
     async putChunk(batchId, seq, data): Promise<void> {
@@ -93,7 +98,7 @@ export function createKvRestoreStaging(options: KvRestoreStagingOptions): Restor
           seqs.push(Number.parseInt(tail, 10));
         }
       }
-      return seqs.sort((a, b) => a - b);
+      return seqs.toSorted((a, b) => a - b);
     },
 
     async deleteBatch(batchId): Promise<void> {

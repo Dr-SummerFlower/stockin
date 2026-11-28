@@ -12,7 +12,6 @@ import {
   DB_SRC_AUTO,
   decodeFieldSource,
   encodeFieldSource,
-  type FieldSource,
   type OrderView,
   type RecordFields,
   type RecordSources,
@@ -231,14 +230,13 @@ export function toRecordSources(row: RecordRow): RecordSources {
 
 /** API 三态 → DB 6 个 INTEGER（encodeFieldSource 为唯一真源，EMPTY 落 0）。 */
 export function toDbSourceFlags(sources: RecordSources): DbSourceFlags {
-  const flag = (source: FieldSource): number => encodeFieldSource(source);
   return {
-    production_date_src: flag(sources.productionDateSrc),
-    shelf_life_src: flag(sources.shelfLifeSrc),
-    expiry_date_src: flag(sources.expiryDateSrc),
-    unit_price_src: flag(sources.unitPriceSrc),
-    quantity_src: flag(sources.quantitySrc),
-    amount_src: flag(sources.amountSrc),
+    production_date_src: encodeFieldSource(sources.productionDateSrc),
+    shelf_life_src: encodeFieldSource(sources.shelfLifeSrc),
+    expiry_date_src: encodeFieldSource(sources.expiryDateSrc),
+    unit_price_src: encodeFieldSource(sources.unitPriceSrc),
+    quantity_src: encodeFieldSource(sources.quantitySrc),
+    amount_src: encodeFieldSource(sources.amountSrc),
   };
 }
 
