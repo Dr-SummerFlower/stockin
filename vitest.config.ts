@@ -71,11 +71,20 @@ export default defineConfig({
         'apps/server/src/worker.ts',
         'apps/server/src/cli/**',
       ],
+      /**
+       * 覆盖率门槛（2026-11-27 上调）。
+       *
+       * 旧门槛 70/65/70/70 是「口径扩到全后端」时的保底线，实际长期停在
+       * 85.6/68.4/89.2/85.5，等于没有约束力。补齐 admin-auth OAuth、
+       * schema 回滚闸门、错误信封等空白后实测 89.2/72.9/93.3/89.1，
+       * 门槛提到略低于实测值的位置：新增代码没配套用例会立刻失败，
+       * 但不至于为一行分支把门槛调回去。
+       */
       thresholds: {
-        lines: 70,
-        functions: 70,
-        statements: 70,
-        branches: 65,
+        lines: 85,
+        functions: 90,
+        statements: 85,
+        branches: 70,
       },
     },
   },

@@ -7,8 +7,14 @@
  */
 import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EXCEL_HEADER_TEXTS } from '@stockin/shared';
+import {
+  EXCEL_HEADER_TEXTS,
+  IMPORT_MAX_FILE_BYTES,
+  IMPORT_MAX_ROWS,
+  ORDER_EXPORT_HEADER_TEXTS,
+} from '@stockin/shared';
 import { createHarness, type Harness } from '../support/harness';
+import { heavyTaskGate } from '../../src/services/heavy-task';
 
 let harness: Harness | null = null;
 
@@ -435,5 +441,213 @@ describe('Excel 导入', () => {
     // 不是 ZIP 容器：EXCEL_UNSUPPORTED_FILE 映射 400（文件本身不合法，不是行错误）。
     expect(notZip.status).toBe(400);
     expect(notZip.body.code).toBe('EXCEL_UNSUPPORTED_FILE');
+  });
+});
+
+/**
+ * 上传校验链的「拒绝侧」：公式注入、多表、行数上限、体积上限、信号量。
+ *
+ * 这些分支平时只在异常输入上走到，但每一条都是一道资源或注入防线；
+ * 一旦被放宽而无人察觉，攻击面就变成「传一个文件把进程内存吃光」。
+ */
+describe('导入安全链', () => {
+  /** 造一个 xlsx 并在指定单元格塞公式（exceljs 读回为 {formula,result} 对象）。 */
+  async function workbookWithFormula(): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('进货记录');
+    sheet.addRow([...EXCEL_HEADER_TEXTS]);
+    sheet.addRow([...VALID_ROW]);
+    sheet.getRow(2).getCell(7).value = { formula: '1+1', result: '3.0000' } as never;
+    return Buffer.from((await workbook.xlsx.writeBuffer()) as ArrayBuffer);
+  }
+
+  it('公式单元格被拒绝（EXCEL_FORMULA_FORBIDDEN），且整批不落库', async () => {
+    const { h, cookie } = await ready();
+    const buffer: Buffer = await workbookWithFormula();
+
+    const response = await h.json<{ code: string; details: { issues: { code: string }[] } }>(
+      '/api/excel/import',
+      { method: 'POST', body: uploadBody(buffer), cookie },
+    );
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('EXCEL_ROW_INVALID');
+    expect(response.body.details.issues.map((issue) => issue.code)).toContain(
+      'EXCEL_FORMULA_FORBIDDEN',
+    );
+
+    const list = await h.json<{ total: number }>('/api/records', { cookie });
+    expect(list.body.total).toBe(0);
+  });
+
+  it('含多个工作表时拒绝（导入只接受单表）', async () => {
+    const { h, cookie } = await ready();
+    const workbook = new ExcelJS.Workbook();
+    const first = workbook.addWorksheet('进货记录');
+    first.addRow([...EXCEL_HEADER_TEXTS]);
+    first.addRow([...VALID_ROW]);
+    workbook.addWorksheet('附注');
+    const buffer = Buffer.from((await workbook.xlsx.writeBuffer()) as ArrayBuffer);
+
+    const response = await h.json<{ code: string }>('/api/excel/import', {
+      method: 'POST',
+      body: uploadBody(buffer),
+      cookie,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('EXCEL_UNSUPPORTED_FILE');
+  });
+
+  it('数据行超过 1000 上限时返回 413 并指出超限行号，不落库', async () => {
+    const { h, cookie } = await ready();
+    const rows: string[][] = Array.from({ length: IMPORT_MAX_ROWS + 1 }, (_, index) => [
+      `超限商品${index}`,
+      ...VALID_ROW.slice(1),
+    ]);
+    const buffer: Buffer = await buildWorkbook(rows);
+
+    const response = await h.json<{ code: string; details: { code: string; row: number } }>(
+      '/api/excel/import',
+      { method: 'POST', body: uploadBody(buffer), cookie },
+    );
+
+    expect(response.status).toBe(413);
+    expect(response.body.code).toBe('EXCEL_TOO_MANY_ROWS');
+    // 错误行号是 Excel 物理行号（表头 1，首条数据 2，第 1001 条数据在第 1002 行）。
+    expect(response.body.details.code).toBe('EXCEL_TOO_MANY_ROWS');
+    expect(response.body.details.row).toBe(IMPORT_MAX_ROWS + 2);
+
+    const list = await h.json<{ total: number }>('/api/records', { cookie });
+    expect(list.body.total).toBe(0);
+  });
+
+  it('文件字节数超过 2MB 时按 413 拒绝（在解析 ZIP 之前）', async () => {
+    const { h, cookie } = await ready();
+    const oversized: Buffer = Buffer.alloc(IMPORT_MAX_FILE_BYTES + 1);
+    oversized.writeUInt32LE(0x04_03_4b_50, 0);
+
+    const response = await h.json<{ code: string }>('/api/excel/import', {
+      method: 'POST',
+      body: uploadBody(oversized),
+      cookie,
+    });
+
+    expect(response.status).toBe(413);
+    expect(response.body.code).toBe('VALID_BODY_TOO_LARGE');
+  });
+
+  it('导入正在执行（信号量被占用）时返回 503，不排队也不半途写入', async () => {
+    const { h, cookie } = await ready();
+    const buffer: Buffer = await buildWorkbook([VALID_ROW]);
+
+    expect(heavyTaskGate.acquire()).toBe(true);
+    try {
+      const response = await h.json<{ code: string }>('/api/excel/import', {
+        method: 'POST',
+        body: uploadBody(buffer),
+        cookie,
+      });
+      expect(response.status).toBe(503);
+      expect(response.body.code).toBe('COMMON_BUSY');
+    } finally {
+      heavyTaskGate.release();
+    }
+  });
+
+  it('ZIP 魔数正确但结构损坏（无 EOCD）时按 400 拒绝', async () => {
+    const { h, cookie } = await ready();
+    // 头部像 ZIP，但整体不是合法归档：解压体积无法估算，不能放行去解析。
+    const broken: Buffer = Buffer.alloc(1_024);
+    broken.writeUInt32LE(0x04_03_4b_50, 0);
+
+    const response = await h.json<{ code: string }>('/api/excel/import', {
+      method: 'POST',
+      body: uploadBody(broken),
+      cookie,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('EXCEL_UNSUPPORTED_FILE');
+  });
+});
+
+/**
+ * 单元格取值兼容。
+ *
+ * 用户从 Excel 复制粘贴时，同一个「看起来是文本」的格子实际可能是
+ * Date 对象、富文本或超链接对象。这些形态必须被正确降级成文本，
+ * 否则整行会被判为「结构不合法」而无法导入。
+ */
+describe('单元格取值兼容', () => {
+  it('日期单元格按 UTC 年月日转成 YYYY-MM-DD', async () => {
+    const { h, cookie } = await ready();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('进货记录');
+    sheet.addRow([...EXCEL_HEADER_TEXTS]);
+    sheet.addRow([...VALID_ROW]);
+    sheet.getRow(2).getCell(2).value = new Date(Date.UTC(2026, 10, 10));
+    const buffer = Buffer.from((await workbook.xlsx.writeBuffer()) as ArrayBuffer);
+
+    const response = await h.json<{ acceptedRows: number }>('/api/excel/import', {
+      method: 'POST',
+      body: uploadBody(buffer),
+      cookie,
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.acceptedRows).toBe(1);
+
+    const list = await h.json<{ items: { purchaseDate: string }[] }>('/api/records', { cookie });
+    expect(list.body.items[0]?.purchaseDate).toBe('2026-11-10');
+  });
+
+  it('富文本与带超链接的单元格取纯文本，链接本身被丢弃', async () => {
+    const { h, cookie } = await ready();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('进货记录');
+    sheet.addRow([...EXCEL_HEADER_TEXTS]);
+    sheet.addRow([...VALID_ROW]);
+    sheet.getRow(2).getCell(1).value = { richText: [{ text: '富文本' }, { text: '花卷' }] };
+    sheet.getRow(3).getCell(2).value = {
+      text: '2026-11-11',
+      hyperlink: 'https://evil.example/',
+    } as never;
+    sheet.getRow(3).getCell(1).value = '超链接花卷';
+    sheet.getRow(3).getCell(4).value = '30天';
+    sheet.getRow(3).getCell(7).value = '3.0000';
+    sheet.getRow(3).getCell(8).value = '2.000';
+    sheet.getRow(3).getCell(9).value = '6.00';
+    const buffer = Buffer.from((await workbook.xlsx.writeBuffer()) as ArrayBuffer);
+
+    const response = await h.json<{ acceptedRows: number }>('/api/excel/import', {
+      method: 'POST',
+      body: uploadBody(buffer),
+      cookie,
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.acceptedRows).toBe(2);
+
+    const list = await h.json<{ items: { name: string; purchaseDate: string }[] }>('/api/records', {
+      cookie,
+    });
+    const names: string[] = list.body.items.map((item) => item.name);
+    expect(names).toContain('富文本花卷');
+    const linked = list.body.items.find((item) => item.name === '超链接花卷');
+    expect(linked?.purchaseDate).toBe('2026-11-11');
+  });
+});
+
+/** 单据导出的空结果分支：不给数据行也不能报错。 */
+describe('单据导出边界', () => {
+  it('零命中时只产出表头行', async () => {
+    const { h, cookie } = await ready();
+    const response: Response = await h.request('/api/orders/export', { cookie });
+
+    expect(response.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()) as unknown as ArrayBuffer);
+    const sheet = workbook.worksheets[0];
+    expect(sheet?.rowCount).toBe(1);
+    expect(sheet?.getRow(1).getCell(1).value).toBe(ORDER_EXPORT_HEADER_TEXTS[0]);
   });
 });

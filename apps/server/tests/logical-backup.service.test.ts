@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ErrorCode } from '@stockin/shared';
 import { openDatabase } from '../src/runtime/node/db.factory';
 import { closeDatabase, type Db } from '../src/repositories/db';
 import { createPragmaVersionStore } from '../src/runtime/node/version-store.pragma';
@@ -22,7 +23,10 @@ import {
   LOGICAL_BACKUP_CHUNK_ROWS,
   LogicalBackupRepository,
 } from '../src/repositories/logical-backup.repository';
-import { LogicalBackupService } from '../src/services/logical-backup.service';
+import {
+  LogicalBackupService,
+  type LogicalBackupServiceDeps,
+} from '../src/services/logical-backup.service';
 import { seedDefaultBackupKey } from '../src/services/backup-key.service';
 import {
   decryptBackupChunk,
@@ -200,5 +204,120 @@ describe('LogicalBackupService', () => {
       restoredRecords += payload.rows.length;
     }
     expect(restoredRecords).toBe(recordCount);
+  });
+});
+
+/** 复用的依赖装配：各用例只覆盖自己关心的那一项。 */
+function makeDeps(overrides: Partial<LogicalBackupServiceDeps> = {}): LogicalBackupServiceDeps {
+  return {
+    db,
+    repo,
+    settings: new SettingsRepository(db),
+    meta: new MetaRepository(db),
+    logs: new OperationLogRepository(db),
+    scheduler,
+    keys: createTestBackupKeys(db),
+    ...overrides,
+  };
+}
+
+/**
+ * 失败收敛与定时判定。
+ *
+ * 这三条都是「备份静默失效」的真实形态：失败任务不落终态会让后续入队永远
+ * 返回 BUSY（备份按钮点了没反应）；间隔判定写反会让每日备份要么不跑、
+ * 要么每次都重跑；进程被 kill 留下的 pending 任务不清掉同样永久占锁。
+ */
+describe('失败收敛与定时判定', () => {
+  it('加密公钥不可用时入队立刻失败，不留下 pending 任务占锁', async () => {
+    const broken = new LogicalBackupService(
+      makeDeps({
+        keys: {
+          enabled: true,
+          activePublicKey: (): string => 'not-a-valid-public-key',
+          verifyPublicKeys: (): readonly string[] => [],
+        },
+      }),
+    );
+
+    const result = await broken.enqueue('manual');
+    expect(result).toEqual({ ok: false, code: ErrorCode.COMMON_INTERNAL });
+    expect(repo.hasActiveJob()).toBe(false);
+  });
+
+  it('分块推进抛错时任务与备份都落 failed，锁被释放后可重新入队', async () => {
+    const failingRepo = new Proxy(repo, {
+      get(target, prop, receiver): unknown {
+        if (prop === 'readRows') {
+          return (): never => {
+            throw new Error('模拟读块失败');
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as LogicalBackupRepository;
+    const svc = new LogicalBackupService(makeDeps({ repo: failingRepo }));
+
+    insertRecords(1);
+    expect((await svc.enqueue('manual')).ok).toBe(true);
+    await svc.tick();
+
+    const job = db
+      .prepare('SELECT status, error FROM backup_jobs ORDER BY created_at DESC LIMIT 1')
+      .get() as { status: string; error: string | null };
+    expect(job.status).toBe('failed');
+    expect(job.error).toContain('模拟读块失败');
+
+    const backup = db
+      .prepare('SELECT status FROM backups ORDER BY created_at DESC LIMIT 1')
+      .get() as { status: string };
+    expect(backup.status).toBe('failed');
+    expect(repo.hasActiveJob()).toBe(false);
+
+    // 关键：失败之后必须能重新入队（否则就是「点了没反应」）。
+    expect((await service.enqueue('manual')).ok).toBe(true);
+  });
+
+  it('定时判定：不足间隔不入队，超过间隔才入队', async () => {
+    insertRecords(1);
+    expect((await service.enqueue('manual')).ok).toBe(true);
+    while (await service.tick()) {
+      // 推进到 ready
+    }
+    expect(repo.listReady()).toHaveLength(1);
+
+    const nowMs: number = Date.now();
+    expect(await service.triggerScheduled(nowMs)).toEqual({ ok: true, data: null });
+
+    const due = await service.triggerScheduled(nowMs + 400 * 86_400_000);
+    expect(due.ok).toBe(true);
+    if (!due.ok) {
+      throw new Error('预期到期后入队成功');
+    }
+    expect(due.data?.jobId).toBeTruthy();
+  });
+
+  it('关闭逻辑备份时不排队（返回 ok + null），不是报错', async () => {
+    const disabled = new LogicalBackupService(
+      makeDeps({
+        keys: { enabled: false, activePublicKey: (): string => '', verifyPublicKeys: () => [] },
+      }),
+    );
+    expect(await disabled.triggerScheduled()).toEqual({ ok: true, data: null });
+  });
+
+  it('卡死任务按阈值作废，恢复可入队；阈值内不误杀', async () => {
+    expect((await service.enqueue('manual')).ok).toBe(true);
+    db.prepare("UPDATE backup_jobs SET updated_at = ? WHERE status IN ('pending', 'running')").run(
+      new Date(Date.now() - 20 * 60_000).toISOString(),
+    );
+
+    // 30 分钟阈值下这条 20 分钟前的任务还不算卡死。
+    expect(service.abandonStaleJobs(Date.now(), 30 * 60_000)).toBe(0);
+    // 默认 10 分钟阈值下判为卡死。
+    expect(service.abandonStaleJobs(Date.now())).toBe(1);
+    expect(repo.hasActiveJob()).toBe(false);
+
+    expect((await service.enqueue('manual')).ok).toBe(true);
   });
 });

@@ -13,9 +13,13 @@
  * AdminAuthService 的纯逻辑单测覆盖），这里只验证会话之后的授权链。
  */
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ADMIN_SESSION_COOKIE_NAME } from '@stockin/shared';
-import { createHarness, type Harness } from '../support/harness';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ADMIN_OAUTH_STATE_COOKIE_NAME,
+  ADMIN_SESSION_COOKIE_NAME,
+  type BackupKeyItem,
+} from '@stockin/shared';
+import { createHarness, TEST_BACKUP_PUBLIC_KEY, type Harness } from '../support/harness';
 import { hashSessionToken } from '../../src/lib/crypto';
 import { utcAfterHoursIso, utcAfterMinutesIso, utcNowIso } from '../../src/lib/today';
 
@@ -27,7 +31,11 @@ const ADMIN_CONFIG = {
 
 describe('管理员端点', () => {
   let h: Harness;
-  afterEach((): void => h?.close());
+  afterEach((): void => {
+    // OAuth 用例替换了全局 fetch，必须逐例还原，避免污染其它文件。
+    vi.unstubAllGlobals();
+    h?.close();
+  });
 
   describe('未配置 OAuth', () => {
     beforeEach(async (): Promise<void> => {
@@ -49,6 +57,15 @@ describe('管理员端点', () => {
     it('店主侧不受影响：init-status 仍正常', async () => {
       const res = await h.json('/api/auth/init-status');
       expect(res.status).toBe(200);
+    });
+
+    it('未配置时回调同样返回 503，不会尝试访问 GitHub', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      const res = await h.json('/api/admin/auth/github/callback?state=x&code=y');
+      expect(res.status).toBe(503);
+      expect((res.body as { code: string }).code).toBe('ADMIN_NOT_CONFIGURED');
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -222,7 +239,361 @@ describe('管理员端点', () => {
       expect(begun.body.windowMs).toBe(30 * 60 * 1000);
     });
   });
+
+  describe('OAuth 回调（假 GitHub）', () => {
+    let h: Harness;
+
+    beforeEach(async (): Promise<void> => {
+      h = (await openAdminHarness()).h;
+    });
+
+    /** 走一遍 /start，取出 state 与对应的 HttpOnly Cookie。 */
+    async function startLogin(): Promise<{ state: string; stateCookie: string }> {
+      const res = await h.request('/api/admin/auth/github/start');
+      expect(res.status).toBe(302);
+      const state: string =
+        new URL(res.headers.get('location') ?? '').searchParams.get('state') ?? '';
+      const stateCookie: string | undefined = res.headers
+        .getSetCookie()
+        .map((item) => item.split(';')[0] as string)
+        .find((item) => item.startsWith(`${ADMIN_OAUTH_STATE_COOKIE_NAME}=`));
+      if (stateCookie === undefined) {
+        throw new Error('start 未下发 state cookie');
+      }
+      return { state, stateCookie };
+    }
+
+    it('成功回调：换 token → 白名单通过 → 下发管理员会话并可访问受保护端点', async () => {
+      const { state, stateCookie } = await startLogin();
+      stubGithubFetch([
+        jsonResponse({ access_token: 'gh-token' }),
+        jsonResponse({ id: 1001, login: 'owner', name: 'Owner' }),
+      ]);
+      const before = countAdminLogs(h, 'ADMIN_LOGIN');
+
+      const res = await h.request(`/api/admin/auth/github/callback?state=${state}&code=the-code`, {
+        cookie: stateCookie,
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/admin');
+      expect(countAdminLogs(h, 'ADMIN_LOGIN')).toBe(before + 1);
+
+      const sessionCookie: string | undefined = res.headers
+        .getSetCookie()
+        .map((item) => item.split(';')[0] as string)
+        .find((item) => item.startsWith(`${ADMIN_SESSION_COOKIE_NAME}=`));
+      expect(sessionCookie).toBeDefined();
+
+      const me = await h.json('/api/admin/me', { cookie: sessionCookie });
+      expect(me.body).toMatchObject({ authenticated: true, login: 'owner' });
+    });
+
+    it('state 不符 → 回登录页并报 state 错误，且不访问 GitHub', async () => {
+      const { stateCookie } = await startLogin();
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const res = await h.request('/api/admin/auth/github/callback?state=forged&code=x', {
+        cookie: stateCookie,
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/admin/login?error=state');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('没有 state Cookie（如直接打开回调 URL）→ 同样按 state 错误处理', async () => {
+      const res = await h.request('/api/admin/auth/github/callback?state=abc&code=x');
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/admin/login?error=state');
+    });
+
+    it('state 正确但缺 code → 回登录页 failed', async () => {
+      const { state, stateCookie } = await startLogin();
+      const res = await h.request(`/api/admin/auth/github/callback?state=${state}`, {
+        cookie: stateCookie,
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/admin/login?error=failed');
+    });
+
+    it('换 token 失败 → failed，并在审计 detail 里留下 token-exchange 原因', async () => {
+      const { state, stateCookie } = await startLogin();
+      stubGithubFetch([jsonResponse({ error: 'bad_verification_code' }, 400)]);
+
+      const res = await h.request(`/api/admin/auth/github/callback?state=${state}&code=bad`, {
+        cookie: stateCookie,
+      });
+      expect(res.headers.get('location')).toBe('/admin/login?error=failed');
+
+      const row = h.deps.db
+        .prepare(
+          "SELECT detail FROM operation_logs WHERE action = 'ADMIN_LOGIN_FAILED' ORDER BY id DESC LIMIT 1",
+        )
+        .get() as { detail: string } | undefined;
+      expect(row?.detail).toContain('token-exchange');
+    });
+
+    it('白名单外账号 → forbidden，且写 ADMIN_LOGIN_FAILED 审计', async () => {
+      const { state, stateCookie } = await startLogin();
+      stubGithubFetch([
+        jsonResponse({ access_token: 'gh-token' }),
+        jsonResponse({ id: 7, login: 'intruder' }),
+      ]);
+      const before = countAdminLogs(h, 'ADMIN_LOGIN_FAILED');
+
+      const res = await h.request(`/api/admin/auth/github/callback?state=${state}&code=c`, {
+        cookie: stateCookie,
+      });
+      expect(res.headers.get('location')).toBe('/admin/login?error=forbidden');
+      expect(countAdminLogs(h, 'ADMIN_LOGIN_FAILED')).toBe(before + 1);
+    });
+  });
+
+  describe('维护端点（已登录管理员）', () => {
+    let h: Harness;
+    let adminCookie: string;
+
+    beforeEach(async (): Promise<void> => {
+      const opened = await openAdminHarness();
+      h = opened.h;
+      adminCookie = opened.adminCookie;
+    });
+
+    const authed = (): { cookie: string } => ({ cookie: adminCookie });
+
+    it('登出：吊销当前会话并清除 Cookie，之后 me 变为未登录', async () => {
+      const res = await h.json('/api/admin/auth/logout', { ...authed(), method: 'POST' });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true });
+
+      const me = await h.json('/api/admin/me', authed());
+      expect(me.body).toMatchObject({ authenticated: false });
+    });
+
+    it('物理备份：触发 → 列表可见 → 下载 gzip 字节', async () => {
+      const triggered = await h.json<{ status: string; meta: { file: string } | null }>(
+        '/api/admin/backups',
+        { ...authed(), method: 'POST' },
+      );
+      expect(triggered.status).toBe(200);
+      expect(triggered.body.status).toBe('ok');
+      expect(triggered.body.meta).not.toBeNull();
+
+      const list = await h.json<{
+        items: { file: string; gzipFile: string; sizeBytes: number }[];
+        mode: string;
+        keepCount: number;
+      }>('/api/admin/backups', authed());
+      expect(list.status).toBe(200);
+      expect(list.body.mode).toBe('filesystem');
+      expect(list.body.items.length).toBeGreaterThan(0);
+
+      const file: string = list.body.items[0]?.file ?? '';
+      const download = await h.request(
+        `/api/admin/backups/${encodeURIComponent(file)}/download`,
+        authed(),
+      );
+      expect(download.status).toBe(200);
+      expect(download.headers.get('content-type')).toBe('application/gzip');
+      expect(download.headers.get('content-disposition')).toContain('.db.gz');
+      expect((await download.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    });
+
+    it('备份公钥：列表 → 非法/重复拒绝 → 新增并激活 → 删除旧钥 → 拒绝删除使用中的钥', async () => {
+      const initial = await h.json<{ items: BackupKeyItem[]; enabled: boolean }>(
+        '/api/admin/backup-keys',
+        authed(),
+      );
+      expect(initial.status).toBe(200);
+      expect(initial.body.enabled).toBe(true);
+      const oldActive = initial.body.items.find((item) => item.active);
+      expect(oldActive).toBeDefined();
+
+      // 形状就不合法（含非法字符）→ 由 zod 拦在路由层。
+      const malformed = await h.json('/api/admin/backup-keys', {
+        ...authed(),
+        method: 'POST',
+        json: { publicKey: 'not-a-key' },
+      });
+      expect(malformed.status).toBe(422);
+      expect((malformed.body as { code: string }).code).toBe('VALID_FAILED');
+
+      // 形状像 base64、长度够，但不是 P-256 SPKI → 由服务端 WebCrypto 校验拦下。
+      const notAKey = await h.json('/api/admin/backup-keys', {
+        ...authed(),
+        method: 'POST',
+        json: { publicKey: 'A'.repeat(160) },
+      });
+      expect(notAKey.status).toBe(422);
+      expect((notAKey.body as { code: string }).code).toBe('BACKUP_KEY_INVALID');
+
+      const duplicate = await h.json('/api/admin/backup-keys', {
+        ...authed(),
+        method: 'POST',
+        json: { publicKey: TEST_BACKUP_PUBLIC_KEY },
+      });
+      expect(duplicate.status).toBe(422);
+
+      const publicKey: string = await generateSpkiPublicKey();
+      const added = await h.json<{ items: BackupKeyItem[] }>('/api/admin/backup-keys', {
+        ...authed(),
+        method: 'POST',
+        json: { publicKey, label: '轮换钥', activate: true },
+      });
+      expect(added.status).toBe(200);
+      const rotated = added.body.items.find((item) => item.active && item.label === '轮换钥');
+      expect(rotated).toBeDefined();
+
+      // 旧钥已非 active，可以删除。
+      const removed = await h.json(`/api/admin/backup-keys/${oldActive?.keyId ?? ''}`, {
+        ...authed(),
+        method: 'DELETE',
+      });
+      expect(removed.status).toBe(200);
+
+      // 使用中的钥拒绝删除。
+      const inUse = await h.json(`/api/admin/backup-keys/${rotated?.keyId ?? ''}`, {
+        ...authed(),
+        method: 'DELETE',
+      });
+      expect(inUse.status).toBe(409);
+      expect((inUse.body as { code: string }).code).toBe('BACKUP_KEY_IN_USE');
+
+      const missing = await h.json('/api/admin/backup-keys/nope/activate', {
+        ...authed(),
+        method: 'POST',
+      });
+      expect(missing.status).toBe(404);
+    });
+
+    it('恢复：分片上传成功、非法 seq 拒绝、验签失败不落库', async () => {
+      const begun = await h.json<{ batchId: string }>('/api/admin/restore/begin', {
+        ...authed(),
+        method: 'POST',
+      });
+      const batchId: string = begun.body.batchId;
+
+      const uploaded = await h.request(`/api/admin/restore/${batchId}/chunk/0`, {
+        ...authed(),
+        method: 'PUT',
+        body: new Uint8Array([1, 2, 3, 4]),
+      });
+      expect(uploaded.status).toBe(200);
+
+      const badSeq = await h.json(`/api/admin/restore/${batchId}/chunk/abc`, {
+        ...authed(),
+        method: 'PUT',
+        body: new Uint8Array([1]),
+      });
+      expect(badSeq.status).toBe(422);
+
+      const badTicket = await h.json('/api/admin/restore/commit', {
+        ...authed(),
+        method: 'POST',
+        json: {
+          batchId,
+          ticket: {
+            payload: {
+              v: 1,
+              batchId,
+              issuedAt: new Date().toISOString(),
+              dataSha256: 'a'.repeat(64),
+              schemaVersion: 7,
+              keyId: 'k-1',
+            },
+            signature: 'A'.repeat(16),
+          },
+        },
+      });
+      expect(badTicket.status).toBe(403);
+      expect((badTicket.body as { code: string }).code).toBe('BACKUP_INVALID_TICKET');
+
+      const invalidBody = await h.json('/api/admin/restore/commit', {
+        ...authed(),
+        method: 'POST',
+        json: { batchId },
+      });
+      expect(invalidBody.status).toBe(422);
+    });
+
+    it('备份间隔：只改物理间隔时也回显，另一项保持原值', async () => {
+      const res = await h.json<{
+        logicalBackupIntervalDays: number;
+        physicalBackupIntervalDays: number;
+      }>('/api/admin/backup-settings', {
+        ...authed(),
+        method: 'PUT',
+        json: { physicalBackupIntervalDays: 10 },
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.physicalBackupIntervalDays).toBe(10);
+      expect(res.body.logicalBackupIntervalDays).toBe(7);
+    });
+
+    it('重置店主密码：请求体不合法时 422，不影响现有凭据', async () => {
+      const res = await h.json('/api/admin/owner-credentials', {
+        ...authed(),
+        method: 'POST',
+        json: {},
+      });
+      expect(res.status).toBe(422);
+      expect((res.body as { code: string }).code).toBe('VALID_FAILED');
+    });
+
+    it('逻辑备份下载：id 不存在或未就绪 → 404', async () => {
+      const res = await h.json('/api/admin/logical-backups/no-such-id/download', authed());
+      expect(res.status).toBe(404);
+      expect((res.body as { code: string }).code).toBe('COMMON_NOT_FOUND');
+    });
+  });
 });
+
+/** 建一个已完成 setup 且注入了管理员会话的测试台。 */
+async function openAdminHarness(): Promise<{ h: Harness; adminCookie: string }> {
+  const h: Harness = await createHarness({ admin: ADMIN_CONFIG });
+  await h.completeSetup('shopowner', 'owner-pass-123');
+  const account = h.deps.repositories.adminAccounts.upsert('owner', 1001, 'Owner', utcNowIso());
+  const token: string = `admin-token-${randomUUID()}`;
+  h.deps.repositories.adminSessions.create({
+    id: randomUUID(),
+    tokenHash: hashSessionToken(token),
+    adminId: account.id,
+    idleExpiresAt: utcAfterMinutesIso(30),
+    absoluteExpiresAt: utcAfterHoursIso(12),
+    createdAt: utcNowIso(),
+  });
+  return { h, adminCookie: `${ADMIN_SESSION_COOKIE_NAME}=${token}` };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** 按顺序返回预置响应；`Error` 表示该次 fetch 直接抛错。 */
+function stubGithubFetch(items: readonly (Response | Error)[]): void {
+  const mock = vi.fn();
+  for (const item of items) {
+    if (item instanceof Error) {
+      mock.mockRejectedValueOnce(item);
+    } else {
+      mock.mockResolvedValueOnce(item);
+    }
+  }
+  vi.stubGlobal('fetch', mock);
+}
+
+/** 现场生成一把合法 P-256 SPKI 公钥（base64），用于公钥轮换用例。 */
+async function generateSpkiPublicKey(): Promise<string> {
+  const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
+  const spki: ArrayBuffer = await crypto.subtle.exportKey('spki', pair.publicKey);
+  return Buffer.from(spki).toString('base64');
+}
 
 /** 直接数审计表中某动作的行数（append-only）。 */
 function countAdminLogs(h: Harness, action: string): number {
