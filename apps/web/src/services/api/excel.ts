@@ -45,3 +45,16 @@ export function exportExcel(
     signal,
   });
 }
+
+/**
+ * 导出单张进货单的打印版（xlsx，销货清单版式，10 条/页自动分页）。
+ *
+ * 该文件含合并单元格与标题行，**不可**作为 `/api/excel/import` 的输入；
+ * 用途是线下打印，替代页面上的浏览器打印按钮。
+ */
+export function exportOrderExcel(
+  orderId: number,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  return download(`/api/orders/${orderId}/export`, { signal });
+}

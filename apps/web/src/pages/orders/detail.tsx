@@ -6,13 +6,13 @@
  * 手机档改卡片，字段按「商品 / 日期 / 金额」优先级重排。
  */
 import React, { useEffect, useState } from 'react';
-import { App as AntdApp, Button, Modal, Spin, Table, Tooltip } from 'antd';
+import { App as AntdApp, Button, Modal, Spin, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'umi';
 import type { OrderDetailView, RecordView } from '@stockin/shared';
+import { exportOrderExcel } from '@/services/api/excel';
 import { deleteOrder, getOrder } from '@/services/api/order';
 import { errorMessage } from '@/services/request';
-import { getSettings } from '@/services/api/settings';
 import ErrorView from '@/components/ErrorView';
 import Icon from '@/components/Icon';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -35,25 +35,12 @@ const OrderDetailPage: React.FC = () => {
   const { isMobile } = useBreakpoint();
   const { message: holderMessage } = AntdApp.useApp();
   const [deleting, setDeleting] = useState<boolean>(false);
+  const [exporting, setExporting] = useState<boolean>(false);
 
   const [order, setOrder] = useState<OrderDetailView | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<unknown>(null);
   const [reloadKey, setReloadKey] = useState<number>(0);
-  /** 打印抬头用的店铺名（取不到就不显示，不阻塞页面）。 */
-  const [shopName, setShopName] = useState<string>('');
-
-  useEffect((): (() => void) => {
-    let active = true;
-    void getSettings()
-      .then((settings): void => {
-        if (active) setShopName(settings.shopName ?? '');
-      })
-      .catch((): void => undefined);
-    return (): void => {
-      active = false;
-    };
-  }, []);
 
   useEffect((): (() => void) => {
     let active = true;
@@ -152,6 +139,20 @@ const OrderDetailPage: React.FC = () => {
     },
   ];
 
+  /** 导出打印版进货单 xlsx（替代浏览器打印，服务端按 10 条/页自动分页）。 */
+  const doExport = async (): Promise<void> => {
+    if (order === null) return;
+    setExporting(true);
+    try {
+      const result = await exportOrderExcel(order.id);
+      holderMessage.success(`已开始下载 ${result.filename}`);
+    } catch (cause) {
+      holderMessage.error(errorMessage(cause, '导出失败'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="stockin-page" style={{ textAlign: 'center', padding: 48 }}>
@@ -187,14 +188,6 @@ const OrderDetailPage: React.FC = () => {
 
   return (
     <div className="stockin-page">
-      {/* 仅打印时出现：店铺名 + 单据抬头（屏幕上由导航与票条承担同样的信息） */}
-      <div className="stockin-print-only stockin-print-head">
-        <b>{shopName === '' ? '进货单' : shopName}</b>
-        <span>
-          {order.orderNo} · {order.supplier} · {order.purchaseDate}
-        </span>
-      </div>
-
       <div className="stockin-page-head">
         <div>
           <h1 className="stockin-page-title">
@@ -210,15 +203,14 @@ const OrderDetailPage: React.FC = () => {
           >
             返回列表
           </Button>
-          <Tooltip title="浏览器打印 / 存 PDF">
-            <Button
-              icon={<Icon name="download" size="sm" />}
-              onClick={(): void => window.print()}
-              style={{ minHeight: TOUCH_TARGET_MIN_PX }}
-            >
-              打印
-            </Button>
-          </Tooltip>
+          <Button
+            icon={<Icon name="download" size="sm" />}
+            loading={exporting}
+            onClick={(): void => void doExport()}
+            style={{ minHeight: TOUCH_TARGET_MIN_PX }}
+          >
+            导出进货单
+          </Button>
           {/* F-13：编辑暂不可用（无 PUT 契约），不放假按钮；删除复用已有端点。 */}
           <Button
             danger
